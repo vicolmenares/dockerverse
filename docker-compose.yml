@@ -55,7 +55,7 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        - PUBLIC_API_URL=/api
+        - PUBLIC_API_URL=
     container_name: dockerverse-frontend
     restart: unless-stopped
     expose:
