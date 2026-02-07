@@ -26,6 +26,8 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/websocket/v2"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/pquerna/otp"
+	"github.com/pquerna/otp/totp"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -2088,7 +2090,7 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 
 	// Setup TOTP - Generate secret and QR code URL
 	protected.Post("/auth/totp/setup", func(c *fiber.Ctx) error {
-		username := c.Locals("username").(string)
+		username := c.Locals("user").(*User).Username
 
 		secret, url, err := store.SetupTOTP(username)
 		if err != nil {
@@ -2103,7 +2105,7 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 
 	// Enable TOTP - Verify code and activate 2FA
 	protected.Post("/auth/totp/enable", func(c *fiber.Ctx) error {
-		username := c.Locals("username").(string)
+		username := c.Locals("user").(*User).Username
 
 		var req struct {
 			Code string `json:"code"`
@@ -2125,7 +2127,7 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 
 	// Disable TOTP - Requires password confirmation
 	protected.Post("/auth/totp/disable", func(c *fiber.Ctx) error {
-		username := c.Locals("username").(string)
+		username := c.Locals("user").(*User).Username
 
 		var req struct {
 			Password string `json:"password"`
@@ -2144,7 +2146,7 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 
 	// Get TOTP status
 	protected.Get("/auth/totp/status", func(c *fiber.Ctx) error {
-		username := c.Locals("username").(string)
+		username := c.Locals("user").(*User).Username
 		user := store.GetUser(username)
 		if user == nil {
 			return c.Status(404).JSON(fiber.Map{"error": "user not found"})
@@ -2158,7 +2160,7 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 
 	// Regenerate recovery codes
 	protected.Post("/auth/totp/regenerate-recovery", func(c *fiber.Ctx) error {
-		username := c.Locals("username").(string)
+		username := c.Locals("user").(*User).Username
 
 		var req struct {
 			Password string `json:"password"`
