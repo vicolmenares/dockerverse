@@ -1,0 +1,95 @@
+# =============================================================================
+# DOCKERVERSE UNIFIED - Docker Compose Configuration
+# =============================================================================
+# Single container deployment with Go backend, SvelteKit frontend, and Nginx
+# Using s6-overlay for process supervision
+#
+# Usage:
+#   Build:    docker compose -f docker-compose.unified.yml build
+#   Start:    docker compose -f docker-compose.unified.yml up -d
+#   Stop:     docker compose -f docker-compose.unified.yml down
+#   Logs:     docker compose -f docker-compose.unified.yml logs -f
+#
+# Author: Victor Heredia
+# Date: 2026-02-07
+# =============================================================================
+
+version: '3.8'
+
+services:
+  dockerverse:
+    build:
+      context: .
+      dockerfile: Dockerfile.unified
+    image: dockerverse:unified
+    container_name: dockerverse
+    restart: unless-stopped
+    
+    # Single port exposed - Nginx handles all routing
+    ports:
+      - "3007:80"
+    
+    # Required volumes
+    volumes:
+      # Docker socket for container management (read-only for security)
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Nginx cache persistence
+      - nginx_cache:/var/cache/nginx
+      # Optional: logs persistence
+      - logs:/var/log/dockerverse
+    
+    # Environment variables
+    environment:
+      # Backend configuration
+      - PORT=3001
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      - JWT_SECRET=${JWT_SECRET:-dockerverse-super-secret-key-2026}
+      # Frontend configuration
+      - NODE_ENV=production
+      - ORIGIN=${ORIGIN:-http://localhost:3007}
+      # s6-overlay configuration
+      - S6_VERBOSITY=1
+      - S6_BEHAVIOUR_IF_STAGE2_FAILS=2
+      - S6_CMD_WAIT_FOR_SERVICES_MAXTIME=30000
+      # Timezone
+      - TZ=${TZ:-America/Mexico_City}
+    
+    # Use the same network as other containers
+    networks:
+      - container_network_ipv4
+    
+    # Container labels
+    labels:
+      - "com.dockerverse.service=unified"
+      - "com.dockerverse.version=1.0.0"
+      - "com.dockerverse.description=Docker Dashboard - All-in-one"
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 15s
+      retries: 3
+    
+    # Resource limits (optional, adjust as needed)
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 128M
+
+# Persistent volumes
+volumes:
+  nginx_cache:
+    name: dockerverse_nginx_cache
+  logs:
+    name: dockerverse_logs
+
+# Network configuration - use existing external network
+networks:
+  container_network_ipv4:
+    external: true

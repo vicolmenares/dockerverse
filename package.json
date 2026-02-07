@@ -1,0 +1,20 @@
+{
+  "name": "dockerverse",
+  "version": "1.0.0",
+  "description": "A modern, real-time Docker monitoring and management portal built with **Svelte 5 + SvelteKit** frontend and **Go + Fiber** backend.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "@playwright/test": "^1.58.2",
+    "playwright": "^1.58.2"
+  },
+  "dependencies": {
+    "playwright-core": "^1.58.2"
+  }
+}

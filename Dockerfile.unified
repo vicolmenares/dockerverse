@@ -1,0 +1,326 @@
+# ============================================================================
+# DOCKERVERSE UNIFIED CONTAINER
+# ============================================================================
+# Multi-stage build combining Go backend, SvelteKit frontend, and Nginx
+# Using s6-overlay for process supervision
+# 
+# Author: Victor Heredia
+# Date: 2026-02-07
+# Version: 1.0.0
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# Stage 1: Build Go Backend
+# ----------------------------------------------------------------------------
+FROM golang:1.22-alpine AS backend-builder
+
+WORKDIR /build
+
+# Install build dependencies
+RUN apk add --no-cache git upx
+
+# Copy go files
+COPY backend/go.mod ./
+COPY backend/*.go ./
+
+# Download dependencies and build optimized binary
+RUN go mod tidy && \
+    CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
+    go build -ldflags="-s -w -extldflags '-static'" \
+    -trimpath -o dockerverse . && \
+    # Compress binary with UPX (reduces ~60%)
+    upx --best --lzma dockerverse || true
+
+# ----------------------------------------------------------------------------
+# Stage 2: Build SvelteKit Frontend
+# ----------------------------------------------------------------------------
+FROM node:20-alpine AS frontend-builder
+
+WORKDIR /build
+
+# Build argument - API calls go through nginx on same container
+ARG PUBLIC_API_URL=
+ENV PUBLIC_API_URL=$PUBLIC_API_URL
+
+# Copy package files
+COPY frontend/package.json ./
+
+# Install dependencies
+RUN npm install --legacy-peer-deps
+
+# Copy source
+COPY frontend/ .
+
+# Build production assets
+RUN echo "Building frontend with PUBLIC_API_URL=${PUBLIC_API_URL}" && \
+    npm run build
+
+# ----------------------------------------------------------------------------
+# Stage 3: Runtime with s6-overlay
+# ----------------------------------------------------------------------------
+FROM alpine:3.21 AS runtime
+
+# s6-overlay version
+ARG S6_OVERLAY_VERSION=3.2.2.0
+
+# Labels for container metadata
+LABEL org.opencontainers.image.title="Dockerverse Unified"
+LABEL org.opencontainers.image.description="Docker Dashboard - All-in-one container"
+LABEL org.opencontainers.image.version="1.0.0"
+LABEL org.opencontainers.image.authors="Victor Heredia"
+LABEL org.opencontainers.image.created="2026-02-07"
+LABEL com.dockerverse.service="unified"
+
+# Install runtime dependencies
+RUN apk add --no-cache \
+    # Runtime essentials
+    ca-certificates \
+    tzdata \
+    curl \
+    # Nginx
+    nginx \
+    # Node.js runtime for SvelteKit
+    nodejs \
+    npm \
+    # s6-overlay dependencies
+    xz \
+    && rm -rf /var/cache/apk/*
+
+# Install s6-overlay
+ADD https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-noarch.tar.xz /tmp
+ADD https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-aarch64.tar.xz /tmp
+RUN tar -C / -Jxpf /tmp/s6-overlay-noarch.tar.xz && \
+    tar -C / -Jxpf /tmp/s6-overlay-aarch64.tar.xz && \
+    rm /tmp/*.tar.xz
+
+# Create application user and directories
+RUN addgroup -S dockerverse && \
+    adduser -S -G dockerverse dockerverse && \
+    mkdir -p /app/backend /app/frontend /var/log/dockerverse \
+    /var/cache/nginx /run/nginx && \
+    chown -R dockerverse:dockerverse /app /var/log/dockerverse && \
+    chown -R nginx:nginx /var/cache/nginx /run/nginx
+
+# ----------------------------------------------------------------------------
+# Copy built artifacts
+# ----------------------------------------------------------------------------
+
+# Backend binary
+COPY --from=backend-builder /build/dockerverse /app/backend/
+
+# Frontend build
+COPY --from=frontend-builder /build/build /app/frontend/build
+COPY --from=frontend-builder /build/package.json /app/frontend/
+COPY --from=frontend-builder /build/node_modules /app/frontend/node_modules
+
+# Set ownership
+RUN chown -R dockerverse:dockerverse /app
+
+# ----------------------------------------------------------------------------
+# Nginx Configuration
+# ----------------------------------------------------------------------------
+COPY <<'NGINX_CONF' /etc/nginx/nginx.conf
+worker_processes auto;
+error_log /var/log/nginx/error.log warn;
+pid /run/nginx/nginx.pid;
+
+events {
+    worker_connections 1024;
+    use epoll;
+    multi_accept on;
+}
+
+http {
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+
+    # Optimized logging
+    log_format main '$remote_addr - $remote_user [$time_local] "$request" '
+                    '$status $body_bytes_sent "$http_referer" '
+                    '"$http_user_agent" rt=$request_time';
+
+    access_log /var/log/nginx/access.log main buffer=16k flush=5s;
+
+    # Performance
+    sendfile on;
+    tcp_nopush on;
+    tcp_nodelay on;
+    keepalive_timeout 65;
+    types_hash_max_size 2048;
+
+    # Gzip compression (level 6 is optimal balance)
+    gzip on;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_comp_level 6;
+    gzip_buffers 16 8k;
+    gzip_http_version 1.1;
+    gzip_min_length 256;
+    gzip_types
+        text/plain
+        text/css
+        text/xml
+        text/javascript
+        application/json
+        application/javascript
+        application/x-javascript
+        application/xml
+        application/xml+rss
+        application/vnd.ms-fontobject
+        application/x-font-ttf
+        font/opentype
+        image/svg+xml
+        image/x-icon;
+
+    # Proxy cache
+    proxy_cache_path /var/cache/nginx levels=1:2 keys_zone=static_cache:10m max_size=100m inactive=60m use_temp_path=off;
+
+    # Rate limiting
+    limit_req_zone $binary_remote_addr zone=api_limit:10m rate=50r/s;
+
+    # Upstream - localhost communication (fastest)
+    upstream frontend {
+        server 127.0.0.1:3000;
+        keepalive 32;
+    }
+
+    upstream backend {
+        server 127.0.0.1:3001;
+        keepalive 32;
+    }
+
+    server {
+        listen 80;
+        listen [::]:80;
+        server_name _;
+
+        # Security headers
+        add_header X-Frame-Options "SAMEORIGIN" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-XSS-Protection "1; mode=block" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+        # Frontend
+        location / {
+            proxy_pass http://frontend;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection 'upgrade';
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_cache_bypass $http_upgrade;
+        }
+
+        # Static assets with long cache
+        location ~* ^/_app/immutable/ {
+            proxy_pass http://frontend;
+            proxy_cache static_cache;
+            proxy_cache_valid 200 1y;
+            add_header Cache-Control "public, max-age=31536000, immutable";
+            add_header X-Cache-Status $upstream_cache_status;
+        }
+
+        # API endpoints
+        location /api/ {
+            limit_req zone=api_limit burst=100 nodelay;
+            proxy_pass http://backend/api/;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            add_header Cache-Control "no-store, no-cache, must-revalidate";
+        }
+
+        # WebSocket for terminal
+        location /ws/ {
+            proxy_pass http://backend/ws/;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_read_timeout 86400;
+            proxy_send_timeout 86400;
+        }
+
+        # SSE for events
+        location /api/events {
+            proxy_pass http://backend/api/events;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header Connection '';
+            proxy_buffering off;
+            proxy_cache off;
+            chunked_transfer_encoding off;
+            proxy_read_timeout 86400;
+        }
+
+        # Health check
+        location /health {
+            access_log off;
+            return 200 "OK\n";
+            add_header Content-Type text/plain;
+        }
+    }
+}
+NGINX_CONF
+
+# ----------------------------------------------------------------------------
+# s6-overlay service definitions (using shell scripts for compatibility)
+# ----------------------------------------------------------------------------
+
+# Backend service
+RUN mkdir -p /etc/s6-overlay/s6-rc.d/backend/dependencies.d && \
+    echo "longrun" > /etc/s6-overlay/s6-rc.d/backend/type && \
+    touch /etc/s6-overlay/s6-rc.d/backend/dependencies.d/base && \
+    touch /etc/s6-overlay/s6-rc.d/user/contents.d/backend && \
+    printf '#!/bin/sh\nexec 2>&1\ncd /app/backend\nexec ./dockerverse\n' > /etc/s6-overlay/s6-rc.d/backend/run && \
+    chmod +x /etc/s6-overlay/s6-rc.d/backend/run
+
+# Frontend service
+RUN mkdir -p /etc/s6-overlay/s6-rc.d/frontend/dependencies.d && \
+    echo "longrun" > /etc/s6-overlay/s6-rc.d/frontend/type && \
+    touch /etc/s6-overlay/s6-rc.d/frontend/dependencies.d/base && \
+    touch /etc/s6-overlay/s6-rc.d/frontend/dependencies.d/backend && \
+    touch /etc/s6-overlay/s6-rc.d/user/contents.d/frontend && \
+    printf '#!/bin/sh\nexec 2>&1\ncd /app/frontend\nexport PORT=3000\nexport NODE_ENV=production\nexport ORIGIN=http://localhost\nexec node build\n' > /etc/s6-overlay/s6-rc.d/frontend/run && \
+    chmod +x /etc/s6-overlay/s6-rc.d/frontend/run
+
+# Nginx service (depends on backend and frontend)
+RUN mkdir -p /etc/s6-overlay/s6-rc.d/nginx/dependencies.d && \
+    echo "longrun" > /etc/s6-overlay/s6-rc.d/nginx/type && \
+    touch /etc/s6-overlay/s6-rc.d/nginx/dependencies.d/base && \
+    touch /etc/s6-overlay/s6-rc.d/nginx/dependencies.d/backend && \
+    touch /etc/s6-overlay/s6-rc.d/nginx/dependencies.d/frontend && \
+    touch /etc/s6-overlay/s6-rc.d/user/contents.d/nginx && \
+    printf '#!/bin/sh\nexec 2>&1\nsleep 3\nexec nginx -g "daemon off;"\n' > /etc/s6-overlay/s6-rc.d/nginx/run && \
+    chmod +x /etc/s6-overlay/s6-rc.d/nginx/run
+
+# ----------------------------------------------------------------------------
+# Environment variables
+# ----------------------------------------------------------------------------
+ENV S6_VERBOSITY=1 \
+    S6_BEHAVIOUR_IF_STAGE2_FAILS=2 \
+    S6_CMD_WAIT_FOR_SERVICES_MAXTIME=30000 \
+    PORT=3001 \
+    DOCKER_HOST=unix:///var/run/docker.sock \
+    JWT_SECRET=dockerverse-super-secret-key-2026 \
+    NODE_ENV=production \
+    TZ=America/Mexico_City
+
+# ----------------------------------------------------------------------------
+# Health check
+# ----------------------------------------------------------------------------
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost/health || exit 1
+
+# Expose only the main port
+EXPOSE 80
+
+# Entrypoint is s6-overlay init
+ENTRYPOINT ["/init"]

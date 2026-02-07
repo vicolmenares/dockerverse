@@ -1,0 +1,80 @@
+version: '3.8'
+
+services:
+  # Nginx reverse proxy with compression
+  nginx:
+    image: nginx:alpine
+    container_name: dockerverse-nginx
+    restart: unless-stopped
+    ports:
+      - "3007:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - nginx_cache:/var/cache/nginx
+    depends_on:
+      - frontend
+      - backend
+    networks:
+      - dockerverse-net
+    labels:
+      - "com.dockerverse.service=nginx"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Backend API (Go + Fiber)
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: dockerverse-backend
+    restart: unless-stopped
+    expose:
+      - "3001"
+    ports:
+      - "3006:3001"  # Keep direct access for debugging
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      - PORT=3001
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      - APPRISE_URL=http://apprise:8000
+      - JWT_SECRET=dockerverse-super-secret-key-2026
+    networks:
+      - dockerverse-net
+      - container_network_ipv4
+    labels:
+      - "com.dockerverse.service=backend"
+
+  # Frontend (SvelteKit + Node)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        - PUBLIC_API_URL=/api
+    container_name: dockerverse-frontend
+    restart: unless-stopped
+    expose:
+      - "3000"
+    environment:
+      - NODE_ENV=production
+      - ORIGIN=https://docker-connect.nerdslabs.com
+    depends_on:
+      - backend
+    networks:
+      - dockerverse-net
+    labels:
+      - "com.dockerverse.service=frontend"
+
+volumes:
+  nginx_cache:
+
+networks:
+  dockerverse-net:
+    driver: bridge
+    name: dockerverse-net
+  container_network_ipv4:
+    external: true
