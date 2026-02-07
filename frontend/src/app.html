@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="es" class="dark">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<meta name="theme-color" content="#1a1b26" />
+		<meta name="description" content="DockerVerse - Multi-Host Docker Management" />
+		
+		<!-- DNS Prefetch & Preconnect for API -->
+		<link rel="dns-prefetch" href="https://docker-connect.nerdslabs.com" />
+		<link rel="preconnect" href="https://docker-connect.nerdslabs.com" crossorigin />
+		
+		<!-- Preload critical fonts (if any custom fonts) -->
+		<link rel="preload" as="style" href="%sveltekit.assets%/app.css" />
+		
+		<!-- Icon -->
+		<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐳</text></svg>" />
+		
+		<title>DockerVerse</title>
+		%sveltekit.head%
+		
+		<!-- Inline critical CSS for instant render -->
+		<style>
+			:root { --bg-primary: #1a1b26; }
+			body { background: var(--bg-primary); margin: 0; }
+			.loading-screen { display: flex; align-items: center; justify-content: center; height: 100vh; background: var(--bg-primary); }
+			.loading-spinner { width: 40px; height: 40px; border: 3px solid #3b82f6; border-top-color: transparent; border-radius: 50%; animation: spin 1s linear infinite; }
+			@keyframes spin { to { transform: rotate(360deg); } }
+		</style>
+	</head>
+	<body data-sveltekit-preload-data="hover" data-sveltekit-preload-code="eager">
+		<div style="display: contents">%sveltekit.body%</div>
+		
+		<!-- Register Service Worker -->
+		<script>
+			if ('serviceWorker' in navigator) {
+				window.addEventListener('load', () => {
+					navigator.serviceWorker.register('/sw.js').catch(() => {});
+				});
+			}
+		</script>
+	</body>
+</html>
+
