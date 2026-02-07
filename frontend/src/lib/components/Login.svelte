@@ -802,7 +802,7 @@
 
     <!-- Footer -->
     <div class="mt-8 text-center text-sm text-foreground-muted">
-      <p>DockerVerse v1.0.0</p>
+      <p>DockerVerse v2.0.0</p>
     </div>
   </div>
 </div>
