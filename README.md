@@ -4,7 +4,7 @@
 > 
 > A modern, real-time Docker monitoring and management portal built with **Svelte 5 + SvelteKit** frontend and **Go + Fiber** backend.
 
-![DockerVerse](https://img.shields.io/badge/DockerVerse-v2.0.0-blue)
+![DockerVerse](https://img.shields.io/badge/DockerVerse-v2.0.1-blue)
 ![Svelte](https://img.shields.io/badge/Svelte-5.0-orange)
 ![Go](https://img.shields.io/badge/Go-1.22+-cyan)
 ![License](https://img.shields.io/badge/License-MIT-green)
@@ -35,20 +35,20 @@
 ## 🏗️ Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    Docker Container                          │
-│                    (dockerverse:unified)                     │
-│                                                              │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │                    s6-overlay                        │   │
-│  │              (Process Supervisor)                    │   │
-│  └─────────────────────────────────────────────────────┘   │
-│           │                │                │               │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────┐    │
-│  │   Nginx     │  │  Go Backend │  │ SvelteKit Node  │    │
-│  │  (Port 80)  │  │ (Port 3001) │  │   (Port 3000)   │    │
-│  └─────────────┘  └─────────────┘  └─────────────────┘    │
-└─────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                  Docker Compose Stack                         │
+│                                                               │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────┐      │
+│  │   Nginx     │  │  Go Backend │  │ SvelteKit Node  │      │
+│  │  :3007→:80  │──│  :3006→3001 │  │   (Port 3000)   │      │
+│  └──────┬──────┘  └──────┬──────┘  └────────┬────────┘      │
+│         │                │                   │               │
+│         └─── /api/* ─────┘                   │               │
+│         └─── /* ─────────────────────────────┘               │
+│                                                               │
+│  Volume: backend_data:/data (users, settings persistence)    │
+│  Volume: nginx_cache (static asset caching)                  │
+└──────────────────────────────────────────────────────────────┘
 ```
 
 ## 🚀 Quick Start
@@ -62,11 +62,11 @@
 
 ```bash
 # Clone repository
-git clone https://github.com/YOUR_USERNAME/dockerverse.git
+git clone https://github.com/vicolmenares/dockerverse.git
 cd dockerverse
 
 # Deploy
-docker-compose -f docker-compose.unified.yml up -d
+docker compose up -d
 
 # Access at http://localhost:3007
 # Default credentials: admin / admin123
@@ -111,6 +111,13 @@ See [DEVELOPMENT_CONTINUATION_GUIDE.md](./DEVELOPMENT_CONTINUATION_GUIDE.md) for
 | Container | Alpine Linux, s6-overlay, Nginx |
 
 ## 📋 Version History
+
+### v2.0.1 (February 2026)
+- 🐛 Fix TOTP endpoint panics (missing import + wrong Locals key)
+- 🐛 Fix AUTH_STORAGE_KEY undefined causing avatar persistence failure
+- 🐛 Fix profile save using wrong HTTP method (PUT → PATCH)
+- 🐛 Fix version strings (1.0.0 → 2.0.0) in Settings and Login
+- 💾 Add backend_data volume for user/settings persistence
 
 ### v2.0.0 (February 2026)
 - 🔐 TOTP/2FA authentication

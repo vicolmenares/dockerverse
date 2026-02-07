@@ -494,18 +494,20 @@
     if (!file) return;
 
     // Validate file type
-    if (!file.type.startsWith('image/')) {
-      avatarState.error = $language === 'es' 
-        ? 'Solo se permiten imágenes' 
-        : 'Only images are allowed';
+    if (!file.type.startsWith("image/")) {
+      avatarState.error =
+        $language === "es"
+          ? "Solo se permiten imágenes"
+          : "Only images are allowed";
       return;
     }
 
     // Validate file size (500KB max)
     if (file.size > 500 * 1024) {
-      avatarState.error = $language === 'es' 
-        ? 'La imagen no puede superar 500KB' 
-        : 'Image must be under 500KB';
+      avatarState.error =
+        $language === "es"
+          ? "La imagen no puede superar 500KB"
+          : "Image must be under 500KB";
       return;
     }
 
@@ -515,13 +517,16 @@
     try {
       await uploadAvatar(file);
     } catch (err) {
-      avatarState.error = err instanceof Error 
-        ? err.message 
-        : ($language === 'es' ? 'Error al subir avatar' : 'Failed to upload avatar');
+      avatarState.error =
+        err instanceof Error
+          ? err.message
+          : $language === "es"
+            ? "Error al subir avatar"
+            : "Failed to upload avatar";
     } finally {
       avatarState.loading = false;
       // Reset input for re-selection
-      input.value = '';
+      input.value = "";
     }
   }
 
@@ -532,9 +537,12 @@
     try {
       await deleteAvatar();
     } catch (err) {
-      avatarState.error = err instanceof Error 
-        ? err.message 
-        : ($language === 'es' ? 'Error al eliminar avatar' : 'Failed to delete avatar');
+      avatarState.error =
+        err instanceof Error
+          ? err.message
+          : $language === "es"
+            ? "Error al eliminar avatar"
+            : "Failed to delete avatar";
     } finally {
       avatarState.loading = false;
     }
@@ -548,21 +556,18 @@
     const token = localStorage.getItem("auth_access_token");
 
     try {
-      const res = await fetch(
-        `${API_BASE}/api/users/${$currentUser?.username}`,
-        {
-          method: "PUT",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            firstName: profileForm.firstName,
-            lastName: profileForm.lastName,
-            email: profileForm.email,
-          }),
+      const res = await fetch(`${API_BASE}/api/auth/profile`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
         },
-      );
+        body: JSON.stringify({
+          firstName: profileForm.firstName,
+          lastName: profileForm.lastName,
+          email: profileForm.email,
+        }),
+      });
 
       if (res.ok) {
         profileForm.success = true;
@@ -1092,7 +1097,7 @@
               bind:this={avatarInput}
               onchange={handleAvatarChange}
             />
-            
+
             <!-- Avatar display -->
             <button
               onclick={triggerAvatarUpload}
@@ -1106,13 +1111,17 @@
                   class="w-full h-full object-cover"
                 />
               {:else}
-                <div class="w-full h-full bg-primary/20 flex items-center justify-center">
+                <div
+                  class="w-full h-full bg-primary/20 flex items-center justify-center"
+                >
                   <User class="w-12 h-12 text-primary" />
                 </div>
               {/if}
-              
+
               <!-- Hover overlay -->
-              <div class="absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+              <div
+                class="absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+              >
                 {#if avatarState.loading}
                   <RefreshCw class="w-6 h-6 text-white animate-spin" />
                 {:else}
@@ -1131,7 +1140,7 @@
                 <Upload class="w-4 h-4" />
                 {st.changeAvatar}
               </button>
-              
+
               {#if $currentUser?.avatar}
                 <span class="text-foreground-muted">|</span>
                 <button
@@ -1140,7 +1149,7 @@
                   class="flex items-center gap-2 text-sm text-stopped hover:text-stopped/80 disabled:opacity-50"
                 >
                   <Trash2 class="w-4 h-4" />
-                  {$language === 'es' ? 'Eliminar' : 'Remove'}
+                  {$language === "es" ? "Eliminar" : "Remove"}
                 </button>
               {/if}
             </div>
@@ -1149,10 +1158,10 @@
             {#if avatarState.error}
               <p class="mt-2 text-sm text-stopped">{avatarState.error}</p>
             {/if}
-            
+
             <!-- Size hint -->
             <p class="mt-1 text-xs text-foreground-muted">
-              {$language === 'es' ? 'Máximo 500KB' : 'Max 500KB'}
+              {$language === "es" ? "Máximo 500KB" : "Max 500KB"}
             </p>
           </div>
 
@@ -2077,11 +2086,11 @@
           <div class="space-y-3">
             <div class="flex justify-between p-3 bg-background rounded-lg">
               <span class="text-foreground-muted">{st.version}</span>
-              <span class="text-foreground font-medium">1.0.0</span>
+              <span class="text-foreground font-medium">2.0.0</span>
             </div>
             <div class="flex justify-between p-3 bg-background rounded-lg">
               <span class="text-foreground-muted">{st.buildDate}</span>
-              <span class="text-foreground font-medium">2026-02-06</span>
+              <span class="text-foreground font-medium">2026-02-07</span>
             </div>
             <div class="flex justify-between p-3 bg-background rounded-lg">
               <span class="text-foreground-muted">{st.license}</span>

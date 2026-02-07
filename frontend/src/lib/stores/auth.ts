@@ -2,6 +2,9 @@ import { writable, derived, get } from 'svelte/store';
 import { browser } from '$app/environment';
 import { API_BASE } from '$lib/api/docker';
 
+// Auth storage key constant
+const AUTH_STORAGE_KEY = 'auth';
+
 // =============================================================================
 // Activity Tracking for Auto-Logout
 // =============================================================================
