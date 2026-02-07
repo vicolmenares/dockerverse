@@ -3,6 +3,61 @@ import { browser } from '$app/environment';
 import { API_BASE } from '$lib/api/docker';
 
 // =============================================================================
+// Activity Tracking for Auto-Logout
+// =============================================================================
+
+const INACTIVITY_TIMEOUT = 30 * 60 * 1000; // 30 minutes in milliseconds
+const ACTIVITY_CHECK_INTERVAL = 60 * 1000; // Check every minute
+
+let lastActivityTime = Date.now();
+let activityCheckInterval: ReturnType<typeof setInterval> | null = null;
+let logoutCallback: (() => void) | null = null;
+
+export function updateActivity() {
+	lastActivityTime = Date.now();
+}
+
+export function setupActivityTracking(onLogout: () => void) {
+	if (!browser) return;
+	
+	logoutCallback = onLogout;
+	
+	// Track user activity
+	const events = ['mousedown', 'mousemove', 'keydown', 'scroll', 'touchstart', 'click'];
+	events.forEach(event => {
+		document.addEventListener(event, updateActivity, { passive: true });
+	});
+	
+	// Check for inactivity periodically
+	activityCheckInterval = setInterval(() => {
+		const timeSinceActivity = Date.now() - lastActivityTime;
+		if (timeSinceActivity >= INACTIVITY_TIMEOUT) {
+			console.log('[Auth] Auto-logout due to inactivity');
+			logoutCallback?.();
+		}
+	}, ACTIVITY_CHECK_INTERVAL);
+}
+
+export function cleanupActivityTracking() {
+	if (!browser) return;
+	
+	const events = ['mousedown', 'mousemove', 'keydown', 'scroll', 'touchstart', 'click'];
+	events.forEach(event => {
+		document.removeEventListener(event, updateActivity);
+	});
+	
+	if (activityCheckInterval) {
+		clearInterval(activityCheckInterval);
+		activityCheckInterval = null;
+	}
+}
+
+export function getTimeUntilLogout(): number {
+	const remaining = INACTIVITY_TIMEOUT - (Date.now() - lastActivityTime);
+	return Math.max(0, remaining);
+}
+
+// =============================================================================
 // Types - OIDC/Keycloak compatible
 // =============================================================================
 
@@ -37,6 +92,15 @@ export interface LoginCredentials {
 	username: string;
 	password: string;
 	rememberMe?: boolean;
+	totpCode?: string;
+	recoveryCode?: string;
+}
+
+export interface LoginResult {
+	success: boolean;
+	requiresTOTP?: boolean;
+	tempToken?: string;
+	error?: string;
 }
 
 export interface AuthConfig {
@@ -105,7 +169,7 @@ function createAuthStore() {
 		subscribe,
 		
 		// Login with credentials
-		login: async (credentials: LoginCredentials): Promise<boolean> => {
+		login: async (credentials: LoginCredentials): Promise<LoginResult> => {
 			update(s => ({ ...s, isLoading: true, error: null }));
 			
 			try {
@@ -113,22 +177,43 @@ function createAuthStore() {
 				
 				if (config.provider === 'keycloak') {
 					// Future Keycloak integration
-					return await loginWithKeycloak(credentials, config);
+					const success = await loginWithKeycloak(credentials, config);
+					return { success };
 				}
 				
 				// Local authentication
 				const response = await fetch(`${API_BASE}/api/auth/login`, {
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify(credentials)
+					body: JSON.stringify({
+						username: credentials.username,
+						password: credentials.password,
+						rememberMe: credentials.rememberMe,
+						totpCode: credentials.totpCode,
+						recoveryCode: credentials.recoveryCode
+					})
 				});
 
 				if (!response.ok) {
 					const error = await response.json();
-					throw new Error(error.message || 'Invalid credentials');
+					update(s => ({ ...s, isLoading: false }));
+					return { 
+						success: false, 
+						error: error.error || error.message || 'Invalid credentials' 
+					};
 				}
 
 				const data = await response.json();
+				
+				// Check if 2FA is required
+				if (data.requiresTOTP) {
+					update(s => ({ ...s, isLoading: false }));
+					return {
+						success: false,
+						requiresTOTP: true,
+						tempToken: data.tempToken
+					};
+				}
 				
 				// Map backend role (string) to frontend roles (array)
 				const user = {
@@ -154,11 +239,11 @@ function createAuthStore() {
 					localStorage.setItem('auth', JSON.stringify(newState));
 				}
 
-				return true;
+				return { success: true };
 			} catch (e) {
 				const error = e instanceof Error ? e.message : 'Login failed';
 				update(s => ({ ...s, isLoading: false, error }));
-				return false;
+				return { success: false, error };
 			}
 		},
 
@@ -371,4 +456,92 @@ export const authError = derived(auth, $auth => $auth.error);
 export function getAuthHeaders(): Record<string, string> {
 	const token = auth.getAccessToken();
 	return token ? { 'Authorization': `Bearer ${token}` } : {};
+}
+
+// Avatar API functions
+export async function uploadAvatar(file: File): Promise<string> {
+	return new Promise((resolve, reject) => {
+		const reader = new FileReader();
+		reader.onload = async () => {
+			const base64Data = reader.result as string;
+			
+			try {
+				const response = await fetch(`${API_BASE}/api/auth/avatar`, {
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json',
+						...getAuthHeaders()
+					},
+					body: JSON.stringify({ avatar: base64Data })
+				});
+				
+				if (!response.ok) {
+					const error = await response.json();
+					throw new Error(error.error || 'Failed to upload avatar');
+				}
+				
+				const data = await response.json();
+				
+				// Update user in store
+				auth.update(state => {
+					if (state.user) {
+						return {
+							...state,
+							user: { ...state.user, avatar: data.avatar }
+						};
+					}
+					return state;
+				});
+				
+				// Update in localStorage
+				const stored = localStorage.getItem(AUTH_STORAGE_KEY);
+				if (stored) {
+					const parsed = JSON.parse(stored);
+					if (parsed.user) {
+						parsed.user.avatar = data.avatar;
+						localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(parsed));
+					}
+				}
+				
+				resolve(data.avatar);
+			} catch (e) {
+				reject(e);
+			}
+		};
+		reader.onerror = () => reject(new Error('Failed to read file'));
+		reader.readAsDataURL(file);
+	});
+}
+
+export async function deleteAvatar(): Promise<void> {
+	const response = await fetch(`${API_BASE}/api/auth/avatar`, {
+		method: 'DELETE',
+		headers: getAuthHeaders()
+	});
+	
+	if (!response.ok) {
+		const error = await response.json();
+		throw new Error(error.error || 'Failed to delete avatar');
+	}
+	
+	// Update user in store
+	auth.update(state => {
+		if (state.user) {
+			return {
+				...state,
+				user: { ...state.user, avatar: undefined }
+			};
+		}
+		return state;
+	});
+	
+	// Update in localStorage
+	const stored = localStorage.getItem(AUTH_STORAGE_KEY);
+	if (stored) {
+		const parsed = JSON.parse(stored);
+		if (parsed.user) {
+			delete parsed.user.avatar;
+			localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(parsed));
+		}
+	}
 }

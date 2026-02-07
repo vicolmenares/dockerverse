@@ -1,11 +1,19 @@
 <script lang="ts">
-  import { Cpu, HardDrive, Server, Check } from "lucide-svelte";
+  import {
+    Cpu,
+    HardDrive,
+    Server,
+    ChevronDown,
+    ChevronUp,
+  } from "lucide-svelte";
   import type { Host } from "$lib/api/docker";
   import { selectedHost, language, translations } from "$lib/stores/docker";
+  import ResourceChart from "./ResourceChart.svelte";
 
   let { host, onclick }: { host: Host; onclick?: () => void } = $props();
 
   let isSelected = $derived($selectedHost === host.id);
+  let showResources = $state(false);
   let t = $derived(translations[$language]);
 
   function handleClick() {
@@ -113,4 +121,28 @@
       ></div>
     </div>
   </div>
+
+  <!-- Expand/Collapse Resource Charts -->
+  {#if host.online}
+    <button
+      class="mt-3 w-full flex items-center justify-center gap-1 py-1.5 text-xs text-foreground-muted hover:text-foreground hover:bg-background-tertiary/50 rounded-lg transition-colors"
+      onclick={(e) => {
+        e.stopPropagation();
+        showResources = !showResources;
+      }}
+    >
+      {#if showResources}
+        <ChevronUp class="w-4 h-4" />
+        <span>{t.hideResources || "Hide resources"}</span>
+      {:else}
+        <ChevronDown class="w-4 h-4" />
+        <span>{t.showResources || "Show resources"}</span>
+      {/if}
+    </button>
+  {/if}
+
+  <!-- Resource Charts -->
+  {#if showResources && host.online}
+    <ResourceChart {host} />
+  {/if}
 </div>

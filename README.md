@@ -1,41 +1,53 @@
 # DockerVerse 🐳
 
-A modern, real-time Docker monitoring and management portal built with **Svelte 5 + SvelteKit** frontend and **Go + Fiber** backend.
+> **Multi-Host Docker Management Dashboard**
+> 
+> A modern, real-time Docker monitoring and management portal built with **Svelte 5 + SvelteKit** frontend and **Go + Fiber** backend.
 
-![DockerVerse](https://img.shields.io/badge/DockerVerse-v1.0-blue)
+![DockerVerse](https://img.shields.io/badge/DockerVerse-v2.0.0-blue)
 ![Svelte](https://img.shields.io/badge/Svelte-5.0-orange)
-![Go](https://img.shields.io/badge/Go-1.21+-cyan)
+![Go](https://img.shields.io/badge/Go-1.22+-cyan)
+![License](https://img.shields.io/badge/License-MIT-green)
 
 ## ✨ Features
 
-- **Real-time Dashboard**: Live metrics (CPU, Memory, Network) via SSE streaming
-- **Multi-host Support**: Monitor containers across multiple Docker hosts
-- **Web Terminal**: Interactive terminal (exec) powered by xterm.js
-- **Log Viewer**: Stream and download container logs with ANSI color support
-- **Container Management**: Start, stop, restart containers with one click
-- **Command Palette**: Quick search (⌘K / Ctrl+K) for instant container access
-- **Modern UI**: Tokyo Night dark theme with smooth animations
+### Core Features
+- **🖥️ Multi-host Dashboard**: Monitor containers across multiple Docker hosts
+- **📊 Real-time Metrics**: Live CPU, Memory, Network, Disk stats with sparkline charts
+- **🔲 Web Terminal**: Interactive terminal with 5 themes, search, and auto-reconnection
+- **📋 Log Viewer**: Advanced filtering by date, time, and log level
+- **🎛️ Container Management**: Start, stop, restart containers with one click
+- **⌨️ Command Palette**: Quick search (⌘K / Ctrl+K) for instant access
+
+### Security (v2.0.0)
+- **🔐 JWT Authentication**: Access + Refresh tokens with rotation
+- **📱 2FA/TOTP**: Two-factor authentication with QR code setup
+- **🔑 Recovery Codes**: 10 backup codes for 2FA recovery
+- **⏰ Auto-logout**: Automatic logout after 30 min of inactivity
+- **👤 Avatar Upload**: Personalized user profiles
+
+### Monitoring (v2.0.0)
+- **📈 Resource Charts**: Expandable sparkline graphs under each host
+- **🔄 Image Updates**: Watchtower-style update detection
+- **🔔 Updates Counter**: Badge showing pending image updates
+- **🌐 Multi-language**: Full Spanish/English support
 
 ## 🏗️ Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                       DockerVerse                           │
-├─────────────────────────────────────────────────────────────┤
-│  Frontend (Svelte 5 + SvelteKit)                           │
-│  ├── Dashboard with real-time metrics                       │
-│  ├── Terminal (xterm.js + WebSocket)                       │
-│  └── Logs viewer (SSE streaming)                           │
-├─────────────────────────────────────────────────────────────┤
-│  Backend (Go + Fiber)                                       │
-│  ├── REST API for container management                      │
-│  ├── SSE for metrics streaming                              │
-│  ├── WebSocket for terminal sessions                        │
-│  └── Docker SDK for multi-host management                   │
-├─────────────────────────────────────────────────────────────┤
-│  Docker Hosts                                               │
-│  ├── raspi1 (local via unix socket)                        │
-│  └── raspi2 (remote via TCP 2375)                          │
+│                    Docker Container                          │
+│                    (dockerverse:unified)                     │
+│                                                              │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │                    s6-overlay                        │   │
+│  │              (Process Supervisor)                    │   │
+│  └─────────────────────────────────────────────────────┘   │
+│           │                │                │               │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────┐    │
+│  │   Nginx     │  │  Go Backend │  │ SvelteKit Node  │    │
+│  │  (Port 80)  │  │ (Port 3001) │  │   (Port 3000)   │    │
+│  └─────────────┘  └─────────────┘  └─────────────────┘    │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -43,148 +55,94 @@ A modern, real-time Docker monitoring and management portal built with **Svelte 
 
 ### Prerequisites
 
-- Docker & Docker Compose
-- Node.js 20+ (for local development)
-- Go 1.21+ (for local development)
+- Docker & Docker Compose v2
+- For development: Node.js 20+, Go 1.22+
 
 ### Deploy with Docker Compose
 
 ```bash
-# Clone and navigate to the project
+# Clone repository
+git clone https://github.com/YOUR_USERNAME/dockerverse.git
 cd dockerverse
 
-# Build and start all services
-docker-compose up -d --build
+# Deploy
+docker-compose -f docker-compose.unified.yml up -d
 
-# Access the portal
-open http://localhost:3000
+# Access at http://localhost:3007
+# Default credentials: admin / admin123
 ```
 
-### Local Development
+### Development Setup
 
-**Backend:**
+#### macOS
 ```bash
-cd backend
-go mod download
-go run main.go
-# API runs on http://localhost:3001
+chmod +x setup-mac.sh
+./setup-mac.sh
 ```
 
-**Frontend:**
-```bash
-cd frontend
-npm install
-npm run dev
-# Dev server runs on http://localhost:5173
-```
+See [DEVELOPMENT_CONTINUATION_GUIDE.md](./DEVELOPMENT_CONTINUATION_GUIDE.md) for complete setup instructions.
 
 ## 🔧 Configuration
 
 ### Environment Variables
 
-**Backend (.env):**
-```env
-PORT=3001
-DOCKER_HOST=unix:///var/run/docker.sock
-```
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PORT` | 3001 | Backend API port |
+| `JWT_SECRET` | dockerverse-secret | JWT signing key |
+| `TZ` | America/Mexico_City | Timezone |
 
-**Frontend (.env):**
-```env
-PUBLIC_API_URL=http://localhost:3001
-```
+### Ports
 
-### Adding Remote Docker Hosts
+| Port | Service |
+|------|---------|
+| 3007 | Production (Nginx) |
+| 3000 | Frontend dev server |
+| 3001 | Backend API |
 
-Edit `backend/main.go` and add hosts to the `dockerConfigs` map:
+## 📦 Tech Stack
 
-```go
-dockerConfigs := map[string]string{
-    "raspi1": "unix:///var/run/docker.sock",
-    "raspi2": "tcp://192.168.1.146:2375",
-    "server": "tcp://10.0.0.50:2375",
-}
-```
+| Component | Technology |
+|-----------|------------|
+| Backend | Go 1.22, Fiber v2, Docker SDK |
+| Frontend | SvelteKit 2.x, Svelte 5, TailwindCSS 3.4 |
+| Terminal | xterm.js with search addon |
+| Icons | Lucide Svelte |
+| Container | Alpine Linux, s6-overlay, Nginx |
 
-> **Note:** For remote hosts, ensure Docker daemon is configured to accept TCP connections.
+## 📋 Version History
 
-## 📁 Project Structure
+### v2.0.0 (February 2026)
+- 🔐 TOTP/2FA authentication
+- 📈 Resource sparkline charts
+- 🔄 Image update detection
+- 🎨 Terminal themes (5 options)
+- 🔍 Terminal search (Ctrl+F)
+- 📋 Advanced log filtering
+- ⏰ Auto-logout (30 min)
+- 👤 Avatar upload
 
-```
-dockerverse/
-├── backend/
-│   ├── main.go           # Go backend with Fiber
-│   ├── Dockerfile        # Multi-stage Go build
-│   └── go.mod
-├── frontend/
-│   ├── src/
-│   │   ├── routes/
-│   │   │   ├── +layout.svelte
-│   │   │   └── +page.svelte
-│   │   └── lib/
-│   │       ├── api/docker.ts       # API client
-│   │       ├── stores/docker.ts    # Svelte stores
-│   │       └── components/
-│   │           ├── HostCard.svelte
-│   │           ├── ContainerCard.svelte
-│   │           ├── Terminal.svelte
-│   │           ├── LogViewer.svelte
-│   │           └── CommandPalette.svelte
-│   ├── Dockerfile        # Multi-stage Node build
-│   └── package.json
-└── docker-compose.yml
-```
+### v1.0.0 (January 2026)
+- Initial release
+- Multi-host dashboard
+- Container management
+- Web terminal
+- Log viewer
+- JWT authentication
 
-## 🌐 DNS & Proxy Setup
+## 📄 Documentation
 
-### AdGuard Home DNS Entry
-Add a rewrite rule pointing to your Docker host:
-```
-docker-connect.nerdslabs.com → 192.168.1.145
-```
-
-### Nginx Proxy Manager
-Create a Proxy Host:
-- **Domain:** docker-connect.nerdslabs.com
-- **Forward Host:** 192.168.1.145
-- **Forward Port:** 3000
-- **SSL:** Request Let's Encrypt certificate
-
-## 🎨 Design System
-
-The UI uses a Tokyo Night-inspired color palette:
-
-| Color | Hex | Usage |
-|-------|-----|-------|
-| Background | `#1a1b26` | Main background |
-| Secondary | `#24283b` | Cards, panels |
-| Primary | `#7aa2f7` | Accents, buttons |
-| Running | `#9ece6a` | Running state |
-| Stopped | `#f7768e` | Stopped state |
-| Paused | `#e0af68` | Paused state |
-
-## 📝 API Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/containers` | List all containers |
-| GET | `/api/hosts` | List all hosts with stats |
-| GET | `/api/search?q=` | Search containers |
-| GET | `/api/stats/stream` | SSE stats stream |
-| POST | `/api/hosts/:id/containers/:cid/:action` | Container action |
-| GET | `/api/hosts/:id/containers/:cid/logs` | Get logs |
-| WS | `/ws/terminal/:hostId/:containerId` | Terminal WebSocket |
-
-## 🛠️ Tech Stack
-
-- **Frontend:** Svelte 5, SvelteKit, TypeScript, Tailwind CSS, xterm.js
-- **Backend:** Go, Fiber, Docker SDK
-- **Real-time:** Server-Sent Events, WebSockets
-- **Deployment:** Docker, Docker Compose
+- [Development Guide](./DEVELOPMENT_CONTINUATION_GUIDE.md) - Complete setup and continuation guide
+- [Architecture](./UNIFIED_CONTAINER_ARCHITECTURE.md) - Container architecture details
 
 ## 📄 License
 
-MIT License - feel free to use and modify!
+MIT License - see [LICENSE](LICENSE) for details.
+
+## 👤 Author
+
+**Victor Heredia**
 
 ---
 
-Built with 💙 for the homelab community
+*Built with ❤️ for Docker enthusiasts*

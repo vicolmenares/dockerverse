@@ -9,6 +9,7 @@ require (
 	github.com/gofiber/contrib/fiberi18n/v2 v2.0.0
 	github.com/creack/pty v1.1.21
 	github.com/golang-jwt/jwt/v5 v5.2.1
+	github.com/pquerna/otp v1.4.0
 	golang.org/x/crypto v0.25.0
 )
 
