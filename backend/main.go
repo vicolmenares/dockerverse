@@ -119,10 +119,14 @@ type User struct {
 	Email          string    `json:"email"`
 	FirstName      string    `json:"firstName"`
 	LastName       string    `json:"lastName"`
+	Avatar         string    `json:"avatar,omitempty"` // Base64 encoded avatar or URL
 	PasswordHash   string    `json:"passwordHash,omitempty"`
 	Role           string    `json:"role"` // "admin" or "user"
 	EmailConfirmed bool      `json:"emailConfirmed"`
 	ConfirmToken   string    `json:"-"`
+	TOTPSecret     string    `json:"-"`           // TOTP secret (not exposed to API)
+	TOTPEnabled    bool      `json:"totpEnabled"` // Whether 2FA is enabled
+	RecoveryCodes  []string  `json:"-"`           // Recovery codes (not exposed to API)
 	CreatedAt      time.Time `json:"createdAt"`
 	LastLogin      time.Time `json:"lastLogin,omitempty"`
 }
@@ -197,14 +201,18 @@ type JWTClaims struct {
 }
 
 type LoginRequest struct {
-	Username   string `json:"username"`
-	Password   string `json:"password"`
-	RememberMe bool   `json:"rememberMe"`
+	Username     string `json:"username"`
+	Password     string `json:"password"`
+	RememberMe   bool   `json:"rememberMe"`
+	TOTPCode     string `json:"totpCode,omitempty"`
+	RecoveryCode string `json:"recoveryCode,omitempty"`
 }
 
 type LoginResponse struct {
-	User   *User      `json:"user"`
-	Tokens AuthTokens `json:"tokens"`
+	User         *User      `json:"user"`
+	Tokens       AuthTokens `json:"tokens"`
+	RequiresTOTP bool       `json:"requiresTOTP,omitempty"`
+	TempToken    string     `json:"tempToken,omitempty"` // Temporary token for 2FA verification
 }
 
 type AuthTokens struct {
@@ -238,6 +246,24 @@ type NotifyRequest struct {
 	Tags    string `json:"tags,omitempty"`
 	Channel string `json:"channel,omitempty"` // telegram, email, both, or empty for all
 }
+
+// Image update tracking
+type ImageUpdate struct {
+	ContainerID   string `json:"containerId"`
+	ContainerName string `json:"containerName"`
+	Image         string `json:"image"`
+	HostID        string `json:"hostId"`
+	CurrentDigest string `json:"currentDigest"`
+	LatestDigest  string `json:"latestDigest,omitempty"`
+	HasUpdate     bool   `json:"hasUpdate"`
+	CheckedAt     int64  `json:"checkedAt"`
+}
+
+// Update check cache
+var (
+	updateCache   = make(map[string]*ImageUpdate) // containerID -> update info
+	updateCacheMu sync.RWMutex
+)
 
 // =============================================================================
 // User Store
@@ -326,9 +352,11 @@ func (u *User) SafeUser() *User {
 		Email:          u.Email,
 		FirstName:      u.FirstName,
 		LastName:       u.LastName,
+		Avatar:         u.Avatar,
 		PasswordHash:   "", // Never expose in API
 		Role:           u.Role,
 		EmailConfirmed: u.EmailConfirmed,
+		TOTPEnabled:    u.TOTPEnabled,
 		CreatedAt:      u.CreatedAt,
 		LastLogin:      u.LastLogin,
 	}
@@ -527,6 +555,166 @@ func (s *UserStore) GetSettings() AppSettings {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.Settings
+}
+
+// TOTP Functions
+func (s *UserStore) SetupTOTP(username string) (secret string, url string, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	user, exists := s.Users[username]
+	if !exists {
+		return "", "", fmt.Errorf("user not found")
+	}
+
+	key, err := totp.Generate(totp.GenerateOpts{
+		Issuer:      "DockerVerse",
+		AccountName: user.Email,
+		SecretSize:  32,
+		Algorithm:   otp.AlgorithmSHA256,
+	})
+	if err != nil {
+		return "", "", err
+	}
+
+	// Store secret (not yet enabled until confirmed)
+	user.TOTPSecret = key.Secret()
+	s.save()
+
+	return key.Secret(), key.URL(), nil
+}
+
+func (s *UserStore) EnableTOTP(username string, code string) ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	user, exists := s.Users[username]
+	if !exists {
+		return nil, fmt.Errorf("user not found")
+	}
+
+	if user.TOTPSecret == "" {
+		return nil, fmt.Errorf("TOTP not set up")
+	}
+
+	// Validate the code
+	if !totp.Validate(code, user.TOTPSecret) {
+		return nil, fmt.Errorf("invalid code")
+	}
+
+	// Generate recovery codes
+	recoveryCodes := make([]string, 10)
+	for i := 0; i < 10; i++ {
+		code := make([]byte, 8)
+		rand.Read(code)
+		recoveryCodes[i] = fmt.Sprintf("%x", code)[:16]
+	}
+
+	user.TOTPEnabled = true
+	user.RecoveryCodes = recoveryCodes
+	s.save()
+
+	return recoveryCodes, nil
+}
+
+func (s *UserStore) DisableTOTP(username string, password string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	user, exists := s.Users[username]
+	if !exists {
+		return fmt.Errorf("user not found")
+	}
+
+	// Verify password
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
+		return fmt.Errorf("invalid password")
+	}
+
+	user.TOTPSecret = ""
+	user.TOTPEnabled = false
+	user.RecoveryCodes = nil
+	s.save()
+
+	return nil
+}
+
+func (s *UserStore) UseRecoveryCode(username string, code string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	user, exists := s.Users[username]
+	if !exists {
+		return false, fmt.Errorf("user not found")
+	}
+
+	// Find and remove the recovery code
+	for i, rc := range user.RecoveryCodes {
+		if rc == code {
+			// Remove the used code
+			user.RecoveryCodes = append(user.RecoveryCodes[:i], user.RecoveryCodes[i+1:]...)
+			s.save()
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+func (s *UserStore) GetRecoveryCodesCount(username string) int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	user, exists := s.Users[username]
+	if !exists {
+		return 0
+	}
+	return len(user.RecoveryCodes)
+}
+
+func (s *UserStore) RegenerateRecoveryCodes(username string, password string) ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	user, exists := s.Users[username]
+	if !exists {
+		return nil, fmt.Errorf("user not found")
+	}
+
+	// Verify password
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
+		return nil, fmt.Errorf("invalid password")
+	}
+
+	if !user.TOTPEnabled {
+		return nil, fmt.Errorf("TOTP not enabled")
+	}
+
+	// Generate new recovery codes
+	recoveryCodes := make([]string, 10)
+	for i := 0; i < 10; i++ {
+		code := make([]byte, 8)
+		rand.Read(code)
+		recoveryCodes[i] = fmt.Sprintf("%x", code)[:16]
+	}
+
+	user.RecoveryCodes = recoveryCodes
+	s.save()
+
+	return recoveryCodes, nil
+}
+
+// Generate a temporary token for 2FA verification step
+func generateTempToken(username string) (string, error) {
+	claims := jwt.RegisteredClaims{
+		Subject:   username,
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(5 * time.Minute)), // Short-lived
+		IssuedAt:  jwt.NewNumericDate(time.Now()),
+		Issuer:    "dockerverse-2fa",
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString(jwtSecret)
 }
 
 // =============================================================================
@@ -1674,6 +1862,36 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 			return c.Status(401).JSON(fiber.Map{"error": "invalid credentials"})
 		}
 
+		// Check if user has TOTP enabled
+		if user.TOTPEnabled && user.TOTPSecret != "" {
+			// If no TOTP code provided, return that 2FA is required
+			if req.TOTPCode == "" && req.RecoveryCode == "" {
+				// Generate a temporary token for the 2FA step
+				tempToken, err := generateTempToken(user.Username)
+				if err != nil {
+					return c.Status(500).JSON(fiber.Map{"error": "failed to generate temp token"})
+				}
+				return c.JSON(LoginResponse{
+					RequiresTOTP: true,
+					TempToken:    tempToken,
+				})
+			}
+
+			// Verify TOTP code or recovery code
+			if req.TOTPCode != "" {
+				valid := totp.Validate(req.TOTPCode, user.TOTPSecret)
+				if !valid {
+					return c.Status(401).JSON(fiber.Map{"error": "invalid 2FA code"})
+				}
+			} else if req.RecoveryCode != "" {
+				// Check recovery code
+				valid, err := store.UseRecoveryCode(user.Username, req.RecoveryCode)
+				if err != nil || !valid {
+					return c.Status(401).JSON(fiber.Map{"error": "invalid recovery code"})
+				}
+			}
+		}
+
 		tokens, err := generateTokens(user, req.RememberMe)
 		if err != nil {
 			return c.Status(500).JSON(fiber.Map{"error": "failed to generate tokens"})
@@ -1864,6 +2082,99 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 
 	protected := api.Group("", jwtMiddleware(store))
 
+	// =========================
+	// TOTP/2FA routes (require auth)
+	// =========================
+
+	// Setup TOTP - Generate secret and QR code URL
+	protected.Post("/auth/totp/setup", func(c *fiber.Ctx) error {
+		username := c.Locals("username").(string)
+
+		secret, url, err := store.SetupTOTP(username)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+
+		return c.JSON(fiber.Map{
+			"secret": secret,
+			"url":    url,
+		})
+	})
+
+	// Enable TOTP - Verify code and activate 2FA
+	protected.Post("/auth/totp/enable", func(c *fiber.Ctx) error {
+		username := c.Locals("username").(string)
+
+		var req struct {
+			Code string `json:"code"`
+		}
+		if err := c.BodyParser(&req); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid request"})
+		}
+
+		recoveryCodes, err := store.EnableTOTP(username, req.Code)
+		if err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+		}
+
+		return c.JSON(fiber.Map{
+			"success":       true,
+			"recoveryCodes": recoveryCodes,
+		})
+	})
+
+	// Disable TOTP - Requires password confirmation
+	protected.Post("/auth/totp/disable", func(c *fiber.Ctx) error {
+		username := c.Locals("username").(string)
+
+		var req struct {
+			Password string `json:"password"`
+		}
+		if err := c.BodyParser(&req); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid request"})
+		}
+
+		err := store.DisableTOTP(username, req.Password)
+		if err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+		}
+
+		return c.JSON(fiber.Map{"success": true})
+	})
+
+	// Get TOTP status
+	protected.Get("/auth/totp/status", func(c *fiber.Ctx) error {
+		username := c.Locals("username").(string)
+		user := store.GetUser(username)
+		if user == nil {
+			return c.Status(404).JSON(fiber.Map{"error": "user not found"})
+		}
+
+		return c.JSON(fiber.Map{
+			"enabled":       user.TOTPEnabled,
+			"recoveryCount": store.GetRecoveryCodesCount(username),
+		})
+	})
+
+	// Regenerate recovery codes
+	protected.Post("/auth/totp/regenerate-recovery", func(c *fiber.Ctx) error {
+		username := c.Locals("username").(string)
+
+		var req struct {
+			Password string `json:"password"`
+		}
+		if err := c.BodyParser(&req); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid request"})
+		}
+
+		codes, err := store.RegenerateRecoveryCodes(username, req.Password)
+		if err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+		}
+
+		return c.JSON(fiber.Map{"recoveryCodes": codes})
+	})
+
 	// Auth
 	protected.Post("/auth/logout", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"success": true})
@@ -1889,6 +2200,53 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 		}
 
 		return c.JSON(fiber.Map{"user": updated.SafeUser()})
+	})
+
+	// Avatar upload endpoint
+	protected.Post("/auth/avatar", func(c *fiber.Ctx) error {
+		user := c.Locals("user").(*User)
+
+		var req struct {
+			Avatar string `json:"avatar"` // Base64 encoded image data URI
+		}
+		if err := c.BodyParser(&req); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid request"})
+		}
+
+		// Validate base64 image (should start with data:image/)
+		if req.Avatar != "" && !strings.HasPrefix(req.Avatar, "data:image/") {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid image format"})
+		}
+
+		// Limit size (roughly 500KB base64 ~ 375KB image)
+		if len(req.Avatar) > 500000 {
+			return c.Status(400).JSON(fiber.Map{"error": "image too large (max 500KB)"})
+		}
+
+		// Update user's avatar
+		store.mu.Lock()
+		if u, ok := store.Users[user.Username]; ok {
+			u.Avatar = req.Avatar
+		}
+		store.mu.Unlock()
+		store.save()
+
+		// Return updated user
+		return c.JSON(fiber.Map{"success": true, "avatar": req.Avatar})
+	})
+
+	// Delete avatar endpoint
+	protected.Delete("/auth/avatar", func(c *fiber.Ctx) error {
+		user := c.Locals("user").(*User)
+
+		store.mu.Lock()
+		if u, ok := store.Users[user.Username]; ok {
+			u.Avatar = ""
+		}
+		store.mu.Unlock()
+		store.save()
+
+		return c.JSON(fiber.Map{"success": true})
 	})
 
 	protected.Post("/auth/password", func(c *fiber.Ctx) error {
@@ -2116,6 +2474,32 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 		}
 		return c.JSON(stats)
+	})
+
+	// Image updates check
+	protected.Get("/updates", func(c *fiber.Ctx) error {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		containers, err := dm.GetAllContainers(ctx)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+
+		updates := checkImageUpdates(ctx, containers, dm)
+		return c.JSON(updates)
+	})
+
+	// Force update check for a specific container
+	protected.Post("/updates/:hostId/:containerId/check", func(c *fiber.Ctx) error {
+		hostID := c.Params("hostId")
+		containerID := c.Params("containerId")
+
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+
+		update := checkSingleImageUpdate(ctx, hostID, containerID, dm)
+		return c.JSON(update)
 	})
 
 	// Container actions
@@ -2386,6 +2770,150 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 	api.Get("/health", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"status": "ok", "timestamp": time.Now().Unix()})
 	})
+}
+
+// =============================================================================
+// Image Update Check Functions
+// =============================================================================
+
+// checkImageUpdates checks all containers for available image updates
+func checkImageUpdates(ctx context.Context, containers []ContainerInfo, dm *DockerManager) []ImageUpdate {
+	var updates []ImageUpdate
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+
+	// Limit concurrency to avoid overwhelming Docker hosts
+	sem := make(chan struct{}, 5)
+
+	for _, c := range containers {
+		// Skip containers that are not running
+		if c.State != "running" {
+			continue
+		}
+
+		wg.Add(1)
+		go func(container ContainerInfo) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+
+			update := checkContainerUpdate(ctx, container, dm)
+			if update != nil {
+				mu.Lock()
+				updates = append(updates, *update)
+				mu.Unlock()
+			}
+		}(c)
+	}
+
+	wg.Wait()
+	return updates
+}
+
+// checkSingleImageUpdate forces an update check for a specific container
+func checkSingleImageUpdate(ctx context.Context, hostID, containerID string, dm *DockerManager) *ImageUpdate {
+	dm.mu.RLock()
+	cli, ok := dm.clients[hostID]
+	dm.mu.RUnlock()
+	if !ok {
+		return nil
+	}
+
+	inspect, err := cli.ContainerInspect(ctx, containerID)
+	if err != nil {
+		return nil
+	}
+
+	container := ContainerInfo{
+		ID:     containerID,
+		Name:   strings.TrimPrefix(inspect.Name, "/"),
+		Image:  inspect.Config.Image,
+		HostID: hostID,
+	}
+
+	return checkContainerUpdate(ctx, container, dm)
+}
+
+// checkContainerUpdate checks if a container's image has an update available
+func checkContainerUpdate(ctx context.Context, container ContainerInfo, dm *DockerManager) *ImageUpdate {
+	// Check cache first (valid for 5 minutes)
+	updateCacheMu.RLock()
+	if cached, ok := updateCache[container.ID]; ok {
+		if time.Now().Unix()-cached.CheckedAt < 300 {
+			updateCacheMu.RUnlock()
+			return cached
+		}
+	}
+	updateCacheMu.RUnlock()
+
+	dm.mu.RLock()
+	cli, ok := dm.clients[container.HostID]
+	dm.mu.RUnlock()
+	if !ok {
+		return nil
+	}
+
+	// Get current image info
+	imageInspect, _, err := cli.ImageInspectWithRaw(ctx, container.Image)
+	if err != nil {
+		return nil
+	}
+
+	currentDigest := ""
+	if len(imageInspect.RepoDigests) > 0 {
+		currentDigest = imageInspect.RepoDigests[0]
+	}
+
+	// For now, we'll compare image creation time
+	// In a full implementation, you'd pull the manifest from the registry
+	// without downloading the image to check for updates
+
+	update := &ImageUpdate{
+		ContainerID:   container.ID,
+		ContainerName: container.Name,
+		Image:         container.Image,
+		HostID:        container.HostID,
+		CurrentDigest: currentDigest,
+		HasUpdate:     false, // We'll mark this true based on labels or registry check
+		CheckedAt:     time.Now().Unix(),
+	}
+
+	// Check for watchtower labels
+	// com.centurylinklabs.watchtower.enable=true means managed by watchtower
+	// We can also look for com.centurylinklabs.watchtower.latest-update
+	if dm.clients[container.HostID] != nil {
+		inspect, err := cli.ContainerInspect(ctx, container.ID)
+		if err == nil {
+			labels := inspect.Config.Labels
+			if val, ok := labels["com.centurylinklabs.watchtower.enable"]; ok && val == "false" {
+				// Container is explicitly excluded from updates
+				update.HasUpdate = false
+			}
+			// Check if image was recently checked for updates
+			// This is a placeholder - in production you'd query the registry
+		}
+	}
+
+	// Simple heuristic: if the image uses :latest tag, it might have updates
+	if strings.Contains(container.Image, ":latest") || !strings.Contains(container.Image, ":") {
+		// Images with :latest tag or no tag (defaults to latest) might have updates
+		// We'd need to check the registry to be sure
+		// For now, we mark these as "potentially updateable"
+		update.HasUpdate = false // Set to false until we implement registry check
+	}
+
+	// Cache the result
+	updateCacheMu.Lock()
+	updateCache[container.ID] = update
+	updateCacheMu.Unlock()
+
+	return update
 }
 
 func parseDockerLogs(data []byte) []string {

@@ -30,10 +30,23 @@
     Cpu,
     MemoryStick,
     RefreshCw,
+    Upload,
   } from "lucide-svelte";
   import { language, translations, type Language } from "$lib/stores/docker";
-  import { auth, currentUser } from "$lib/stores/auth";
+  import {
+    auth,
+    currentUser,
+    uploadAvatar,
+    deleteAvatar,
+  } from "$lib/stores/auth";
   import { API_BASE } from "$lib/api/docker";
+
+  // Avatar state
+  let avatarState = $state({
+    loading: false,
+    error: null as string | null,
+  });
+  let avatarInput: HTMLInputElement | null = $state(null);
 
   let { onclose }: { onclose: () => void } = $props();
 
@@ -41,7 +54,7 @@
   type SettingsView =
     | "main"
     | "profile"
-    | "password"
+    | "security"
     | "notifications"
     | "appearance"
     | "language"
@@ -49,6 +62,22 @@
     | "about"
     | "users";
   let currentView = $state<SettingsView>("main");
+
+  // TOTP/2FA State
+  let totpState = $state({
+    enabled: false,
+    setupMode: false,
+    secret: "",
+    qrUrl: "",
+    verifyCode: "",
+    recoveryCodes: [] as string[],
+    recoveryCount: 0,
+    loading: false,
+    error: null as string | null,
+    showRecoveryCodes: false,
+    confirmDisable: false,
+    disablePassword: "",
+  });
 
   // Users list (loaded from API)
   let usersList = $state<any[]>([]);
@@ -223,6 +252,30 @@
       license: "Licencia",
       documentation: "Documentación",
       reportBug: "Reportar un problema",
+      // Security / 2FA
+      security: "Seguridad",
+      securityDesc: "Contraseña y autenticación de dos factores",
+      twoFactorAuth: "Autenticación de Dos Factores (2FA)",
+      twoFactorDesc: "Añade una capa extra de seguridad a tu cuenta",
+      twoFactorEnabled: "2FA Activado",
+      twoFactorDisabled: "2FA Desactivado",
+      enable2FA: "Activar 2FA",
+      disable2FA: "Desactivar 2FA",
+      setup2FA: "Configurar 2FA",
+      verify2FA: "Verificar código",
+      scanQRCode: "Escanea el código QR con tu app de autenticación",
+      manualEntry: "O ingresa manualmente este código:",
+      enterCode: "Ingresa el código de 6 dígitos",
+      recoveryCodes: "Códigos de Recuperación",
+      recoveryCodesDesc:
+        "Guarda estos códigos en un lugar seguro. Úsalos si pierdes acceso a tu app de autenticación.",
+      regenerateCodes: "Regenerar Códigos",
+      codesRemaining: "códigos restantes",
+      invalidCode: "Código inválido",
+      confirmDisableTitle: "Desactivar 2FA",
+      confirmDisableDesc:
+        "¿Estás seguro de que deseas desactivar la autenticación de dos factores?",
+      enterPassword: "Ingresa tu contraseña para confirmar",
     },
     en: {
       settings: "Settings",
@@ -318,12 +371,36 @@
       license: "License",
       documentation: "Documentation",
       reportBug: "Report a bug",
+      // Security / 2FA
+      security: "Security",
+      securityDesc: "Password and two-factor authentication",
+      twoFactorAuth: "Two-Factor Authentication (2FA)",
+      twoFactorDesc: "Add an extra layer of security to your account",
+      twoFactorEnabled: "2FA Enabled",
+      twoFactorDisabled: "2FA Disabled",
+      enable2FA: "Enable 2FA",
+      disable2FA: "Disable 2FA",
+      setup2FA: "Setup 2FA",
+      verify2FA: "Verify code",
+      scanQRCode: "Scan the QR code with your authenticator app",
+      manualEntry: "Or manually enter this code:",
+      enterCode: "Enter the 6-digit code",
+      recoveryCodes: "Recovery Codes",
+      recoveryCodesDesc:
+        "Save these codes in a safe place. Use them if you lose access to your authenticator app.",
+      regenerateCodes: "Regenerate Codes",
+      codesRemaining: "codes remaining",
+      invalidCode: "Invalid code",
+      confirmDisableTitle: "Disable 2FA",
+      confirmDisableDesc:
+        "Are you sure you want to disable two-factor authentication?",
+      enterPassword: "Enter your password to confirm",
     },
   };
 
   let st = $derived(settingsText[$language]);
 
-  // Menu items (removed apprise, unified into notifications)
+  // Menu items (security replaces password, includes 2FA)
   let menuItems = $derived([
     ...($currentUser?.roles?.includes("admin")
       ? [
@@ -336,7 +413,7 @@
         ]
       : []),
     { id: "profile", icon: User, label: st.profile, desc: st.profileDesc },
-    { id: "password", icon: Lock, label: st.password, desc: st.passwordDesc },
+    { id: "security", icon: Shield, label: st.security, desc: st.securityDesc },
     {
       id: "notifications",
       icon: Bell,
@@ -406,6 +483,63 @@
     }
   }
 
+  // Avatar functions
+  function triggerAvatarUpload() {
+    avatarInput?.click();
+  }
+
+  async function handleAvatarChange(event: Event) {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+
+    // Validate file type
+    if (!file.type.startsWith('image/')) {
+      avatarState.error = $language === 'es' 
+        ? 'Solo se permiten imágenes' 
+        : 'Only images are allowed';
+      return;
+    }
+
+    // Validate file size (500KB max)
+    if (file.size > 500 * 1024) {
+      avatarState.error = $language === 'es' 
+        ? 'La imagen no puede superar 500KB' 
+        : 'Image must be under 500KB';
+      return;
+    }
+
+    avatarState.loading = true;
+    avatarState.error = null;
+
+    try {
+      await uploadAvatar(file);
+    } catch (err) {
+      avatarState.error = err instanceof Error 
+        ? err.message 
+        : ($language === 'es' ? 'Error al subir avatar' : 'Failed to upload avatar');
+    } finally {
+      avatarState.loading = false;
+      // Reset input for re-selection
+      input.value = '';
+    }
+  }
+
+  async function handleDeleteAvatar() {
+    avatarState.loading = true;
+    avatarState.error = null;
+
+    try {
+      await deleteAvatar();
+    } catch (err) {
+      avatarState.error = err instanceof Error 
+        ? err.message 
+        : ($language === 'es' ? 'Error al eliminar avatar' : 'Failed to delete avatar');
+    } finally {
+      avatarState.loading = false;
+    }
+  }
+
   async function saveProfile() {
     profileForm.error = null;
     profileForm.success = false;
@@ -448,6 +582,183 @@
       profileForm.loading = false;
     }
   }
+
+  // TOTP Functions
+  async function loadTOTPStatus() {
+    const token = localStorage.getItem("auth_access_token");
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/totp/status`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        totpState.enabled = data.enabled;
+        totpState.recoveryCount = data.recoveryCount || 0;
+      }
+    } catch (err) {
+      console.error("Failed to load TOTP status:", err);
+    }
+  }
+
+  async function setupTOTP() {
+    totpState.loading = true;
+    totpState.error = null;
+    const token = localStorage.getItem("auth_access_token");
+
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/totp/setup`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        totpState.secret = data.secret;
+        totpState.qrUrl = data.url;
+        totpState.setupMode = true;
+      } else {
+        const err = await res.json();
+        totpState.error = err.error || "Failed to setup 2FA";
+      }
+    } catch (err) {
+      totpState.error =
+        $language === "es" ? "Error de conexión" : "Connection error";
+    } finally {
+      totpState.loading = false;
+    }
+  }
+
+  async function enableTOTP() {
+    if (!totpState.verifyCode || totpState.verifyCode.length !== 6) {
+      totpState.error = st.invalidCode;
+      return;
+    }
+
+    totpState.loading = true;
+    totpState.error = null;
+    const token = localStorage.getItem("auth_access_token");
+
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/totp/enable`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ code: totpState.verifyCode }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        totpState.enabled = true;
+        totpState.setupMode = false;
+        totpState.recoveryCodes = data.recoveryCodes || [];
+        totpState.showRecoveryCodes = true;
+        totpState.verifyCode = "";
+        auth.refreshUser();
+      } else {
+        const err = await res.json();
+        totpState.error = err.error || st.invalidCode;
+      }
+    } catch (err) {
+      totpState.error =
+        $language === "es" ? "Error de conexión" : "Connection error";
+    } finally {
+      totpState.loading = false;
+    }
+  }
+
+  async function disableTOTP() {
+    if (!totpState.disablePassword) {
+      totpState.error =
+        $language === "es" ? "Ingresa tu contraseña" : "Enter your password";
+      return;
+    }
+
+    totpState.loading = true;
+    totpState.error = null;
+    const token = localStorage.getItem("auth_access_token");
+
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/totp/disable`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ password: totpState.disablePassword }),
+      });
+
+      if (res.ok) {
+        totpState.enabled = false;
+        totpState.confirmDisable = false;
+        totpState.disablePassword = "";
+        totpState.recoveryCodes = [];
+        totpState.recoveryCount = 0;
+        auth.refreshUser();
+      } else {
+        const err = await res.json();
+        totpState.error = err.error || "Failed to disable 2FA";
+      }
+    } catch (err) {
+      totpState.error =
+        $language === "es" ? "Error de conexión" : "Connection error";
+    } finally {
+      totpState.loading = false;
+    }
+  }
+
+  async function regenerateRecoveryCodes() {
+    if (!totpState.disablePassword) {
+      totpState.error =
+        $language === "es" ? "Ingresa tu contraseña" : "Enter your password";
+      return;
+    }
+
+    totpState.loading = true;
+    totpState.error = null;
+    const token = localStorage.getItem("auth_access_token");
+
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/totp/regenerate-recovery`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ password: totpState.disablePassword }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        totpState.recoveryCodes = data.recoveryCodes || [];
+        totpState.recoveryCount = data.recoveryCodes?.length || 0;
+        totpState.showRecoveryCodes = true;
+        totpState.disablePassword = "";
+      } else {
+        const err = await res.json();
+        totpState.error = err.error || "Failed to regenerate codes";
+      }
+    } catch (err) {
+      totpState.error =
+        $language === "es" ? "Error de conexión" : "Connection error";
+    } finally {
+      totpState.loading = false;
+    }
+  }
+
+  // Generate QR code data URL from otpauth URL
+  function generateQRCodeUrl(otpauthUrl: string): string {
+    // Use a QR code API service
+    return `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(otpauthUrl)}`;
+  }
+
+  // Load TOTP status when security view is opened
+  $effect(() => {
+    if (currentView === "security") {
+      loadTOTPStatus();
+    }
+  });
 
   function clearCache() {
     localStorage.clear();
@@ -773,17 +1084,76 @@
 
           <!-- Avatar -->
           <div class="flex flex-col items-center">
-            <div
-              class="w-24 h-24 bg-primary/20 rounded-full flex items-center justify-center mb-3"
-            >
-              <User class="w-12 h-12 text-primary" />
-            </div>
+            <!-- Hidden file input -->
+            <input
+              type="file"
+              accept="image/*"
+              class="hidden"
+              bind:this={avatarInput}
+              onchange={handleAvatarChange}
+            />
+            
+            <!-- Avatar display -->
             <button
-              class="flex items-center gap-2 text-sm text-primary hover:text-primary/80"
+              onclick={triggerAvatarUpload}
+              disabled={avatarState.loading}
+              class="relative w-24 h-24 rounded-full mb-3 group overflow-hidden focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 focus:ring-offset-background disabled:opacity-50"
             >
-              <Camera class="w-4 h-4" />
-              {st.changeAvatar}
+              {#if $currentUser?.avatar}
+                <img
+                  src={$currentUser.avatar}
+                  alt="Avatar"
+                  class="w-full h-full object-cover"
+                />
+              {:else}
+                <div class="w-full h-full bg-primary/20 flex items-center justify-center">
+                  <User class="w-12 h-12 text-primary" />
+                </div>
+              {/if}
+              
+              <!-- Hover overlay -->
+              <div class="absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                {#if avatarState.loading}
+                  <RefreshCw class="w-6 h-6 text-white animate-spin" />
+                {:else}
+                  <Camera class="w-6 h-6 text-white" />
+                {/if}
+              </div>
             </button>
+
+            <!-- Avatar actions -->
+            <div class="flex items-center gap-2">
+              <button
+                onclick={triggerAvatarUpload}
+                disabled={avatarState.loading}
+                class="flex items-center gap-2 text-sm text-primary hover:text-primary/80 disabled:opacity-50"
+              >
+                <Upload class="w-4 h-4" />
+                {st.changeAvatar}
+              </button>
+              
+              {#if $currentUser?.avatar}
+                <span class="text-foreground-muted">|</span>
+                <button
+                  onclick={handleDeleteAvatar}
+                  disabled={avatarState.loading}
+                  class="flex items-center gap-2 text-sm text-stopped hover:text-stopped/80 disabled:opacity-50"
+                >
+                  <Trash2 class="w-4 h-4" />
+                  {$language === 'es' ? 'Eliminar' : 'Remove'}
+                </button>
+              {/if}
+            </div>
+
+            <!-- Avatar error -->
+            {#if avatarState.error}
+              <p class="mt-2 text-sm text-stopped">{avatarState.error}</p>
+            {/if}
+            
+            <!-- Size hint -->
+            <p class="mt-1 text-xs text-foreground-muted">
+              {$language === 'es' ? 'Máximo 500KB' : 'Max 500KB'}
+            </p>
           </div>
 
           <!-- Form -->
@@ -845,75 +1215,330 @@
             {st.save}
           </button>
         </div>
-      {:else if currentView === "password"}
-        <!-- Password -->
-        <div class="p-4 space-y-4">
-          {#if passwordForm.success}
-            <div
-              class="flex items-center gap-2 p-3 bg-running/10 border border-running/30 rounded-lg text-running text-sm"
+      {:else if currentView === "security"}
+        <!-- Security: Password + 2FA -->
+        <div class="p-4 space-y-6">
+          <!-- Password Section -->
+          <div class="space-y-4">
+            <h3
+              class="text-lg font-semibold text-foreground flex items-center gap-2"
             >
-              <Check class="w-4 h-4" />
-              {st.passwordChanged}
-            </div>
-          {/if}
+              <Lock class="w-5 h-5 text-primary" />
+              {st.password}
+            </h3>
 
-          {#if passwordForm.error}
-            <div
-              class="flex items-center gap-2 p-3 bg-stopped/10 border border-stopped/30 rounded-lg text-stopped text-sm"
-            >
-              {passwordForm.error}
-            </div>
-          {/if}
-
-          <div>
-            <label class="block text-sm font-medium text-foreground mb-1"
-              >{st.currentPassword}</label
-            >
-            <input
-              type="password"
-              bind:value={passwordForm.current}
-              class="w-full px-3 py-2 bg-background border border-border rounded-lg text-foreground"
-            />
-          </div>
-          <div>
-            <label class="block text-sm font-medium text-foreground mb-1"
-              >{st.newPassword}</label
-            >
-            <input
-              type="password"
-              bind:value={passwordForm.new}
-              class="w-full px-3 py-2 bg-background border border-border rounded-lg text-foreground"
-            />
-            <p class="text-xs text-foreground-muted mt-1">
-              {st.passwordRequirements}
-            </p>
-          </div>
-          <div>
-            <label class="block text-sm font-medium text-foreground mb-1"
-              >{st.confirmPassword}</label
-            >
-            <input
-              type="password"
-              bind:value={passwordForm.confirm}
-              class="w-full px-3 py-2 bg-background border border-border rounded-lg text-foreground"
-            />
-          </div>
-
-          <button
-            onclick={handlePasswordChange}
-            disabled={!passwordForm.current ||
-              !passwordForm.new ||
-              !passwordForm.confirm ||
-              passwordForm.loading}
-            class="w-full py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-          >
-            {#if passwordForm.loading}
-              <RefreshCw class="w-4 h-4 animate-spin" />
-              {$language === "es" ? "Guardando..." : "Saving..."}
-            {:else}
-              {st.save}
+            {#if passwordForm.success}
+              <div
+                class="flex items-center gap-2 p-3 bg-running/10 border border-running/30 rounded-lg text-running text-sm"
+              >
+                <Check class="w-4 h-4" />
+                {st.passwordChanged}
+              </div>
             {/if}
-          </button>
+
+            {#if passwordForm.error}
+              <div
+                class="flex items-center gap-2 p-3 bg-stopped/10 border border-stopped/30 rounded-lg text-stopped text-sm"
+              >
+                {passwordForm.error}
+              </div>
+            {/if}
+
+            <div>
+              <label class="block text-sm font-medium text-foreground mb-1"
+                >{st.currentPassword}</label
+              >
+              <input
+                type="password"
+                bind:value={passwordForm.current}
+                class="w-full px-3 py-2 bg-background border border-border rounded-lg text-foreground"
+              />
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-foreground mb-1"
+                >{st.newPassword}</label
+              >
+              <input
+                type="password"
+                bind:value={passwordForm.new}
+                class="w-full px-3 py-2 bg-background border border-border rounded-lg text-foreground"
+              />
+              <p class="text-xs text-foreground-muted mt-1">
+                {st.passwordRequirements}
+              </p>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-foreground mb-1"
+                >{st.confirmPassword}</label
+              >
+              <input
+                type="password"
+                bind:value={passwordForm.confirm}
+                class="w-full px-3 py-2 bg-background border border-border rounded-lg text-foreground"
+              />
+            </div>
+
+            <button
+              onclick={handlePasswordChange}
+              disabled={!passwordForm.current ||
+                !passwordForm.new ||
+                !passwordForm.confirm ||
+                passwordForm.loading}
+              class="w-full py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+            >
+              {#if passwordForm.loading}
+                <RefreshCw class="w-4 h-4 animate-spin" />
+                {$language === "es" ? "Guardando..." : "Saving..."}
+              {:else}
+                {st.save}
+              {/if}
+            </button>
+          </div>
+
+          <!-- Divider -->
+          <hr class="border-border" />
+
+          <!-- Two-Factor Authentication Section -->
+          <div class="space-y-4">
+            <h3
+              class="text-lg font-semibold text-foreground flex items-center gap-2"
+            >
+              <Shield class="w-5 h-5 text-primary" />
+              {st.twoFactorAuth}
+            </h3>
+            <p class="text-sm text-foreground-muted">{st.twoFactorDesc}</p>
+
+            {#if totpState.error}
+              <div
+                class="flex items-center gap-2 p-3 bg-stopped/10 border border-stopped/30 rounded-lg text-stopped text-sm"
+              >
+                {totpState.error}
+              </div>
+            {/if}
+
+            <!-- Status Badge -->
+            <div
+              class="flex items-center justify-between p-4 bg-background-tertiary rounded-lg"
+            >
+              <div class="flex items-center gap-3">
+                {#if totpState.enabled}
+                  <div
+                    class="w-10 h-10 bg-running/20 rounded-full flex items-center justify-center"
+                  >
+                    <Check class="w-5 h-5 text-running" />
+                  </div>
+                  <div>
+                    <p class="font-medium text-foreground">
+                      {st.twoFactorEnabled}
+                    </p>
+                    <p class="text-xs text-foreground-muted">
+                      {totpState.recoveryCount}
+                      {st.codesRemaining}
+                    </p>
+                  </div>
+                {:else}
+                  <div
+                    class="w-10 h-10 bg-foreground-muted/20 rounded-full flex items-center justify-center"
+                  >
+                    <Shield class="w-5 h-5 text-foreground-muted" />
+                  </div>
+                  <div>
+                    <p class="font-medium text-foreground">
+                      {st.twoFactorDisabled}
+                    </p>
+                  </div>
+                {/if}
+              </div>
+            </div>
+
+            <!-- Setup 2FA Flow -->
+            {#if !totpState.enabled}
+              {#if !totpState.setupMode}
+                <button
+                  onclick={setupTOTP}
+                  disabled={totpState.loading}
+                  class="w-full py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {#if totpState.loading}
+                    <RefreshCw class="w-4 h-4 animate-spin" />
+                  {:else}
+                    <Key class="w-4 h-4" />
+                  {/if}
+                  {st.setup2FA}
+                </button>
+              {:else}
+                <!-- QR Code and Setup -->
+                <div
+                  class="space-y-4 p-4 bg-background rounded-lg border border-border"
+                >
+                  <p class="text-sm text-foreground-muted text-center">
+                    {st.scanQRCode}
+                  </p>
+
+                  <div class="flex justify-center">
+                    <img
+                      src={generateQRCodeUrl(totpState.qrUrl)}
+                      alt="QR Code"
+                      class="w-48 h-48 rounded-lg bg-white p-2"
+                    />
+                  </div>
+
+                  <div class="text-center">
+                    <p class="text-xs text-foreground-muted mb-2">
+                      {st.manualEntry}
+                    </p>
+                    <div
+                      class="inline-flex items-center gap-2 px-3 py-2 bg-background-tertiary rounded-lg"
+                    >
+                      <code class="text-sm font-mono text-primary select-all"
+                        >{totpState.secret}</code
+                      >
+                    </div>
+                  </div>
+
+                  <div>
+                    <label
+                      class="block text-sm font-medium text-foreground mb-1"
+                      >{st.enterCode}</label
+                    >
+                    <input
+                      type="text"
+                      bind:value={totpState.verifyCode}
+                      placeholder="000000"
+                      maxlength="6"
+                      class="w-full px-3 py-2 bg-background border border-border rounded-lg text-foreground text-center text-lg font-mono tracking-widest"
+                    />
+                  </div>
+
+                  <div class="flex gap-2">
+                    <button
+                      onclick={() => {
+                        totpState.setupMode = false;
+                        totpState.error = null;
+                      }}
+                      class="flex-1 py-2 border border-border text-foreground rounded-lg hover:bg-background-tertiary transition-colors"
+                    >
+                      {st.cancel}
+                    </button>
+                    <button
+                      onclick={enableTOTP}
+                      disabled={totpState.loading ||
+                        totpState.verifyCode.length !== 6}
+                      class="flex-1 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                    >
+                      {#if totpState.loading}
+                        <RefreshCw class="w-4 h-4 animate-spin" />
+                      {/if}
+                      {st.verify2FA}
+                    </button>
+                  </div>
+                </div>
+              {/if}
+            {:else}
+              <!-- 2FA Enabled - Show disable option and recovery codes -->
+              <div class="space-y-3">
+                {#if !totpState.confirmDisable}
+                  <button
+                    onclick={() => (totpState.confirmDisable = true)}
+                    class="w-full py-2 border border-stopped/50 text-stopped rounded-lg hover:bg-stopped/10 transition-colors"
+                  >
+                    {st.disable2FA}
+                  </button>
+
+                  <button
+                    onclick={() =>
+                      (totpState.showRecoveryCodes =
+                        !totpState.showRecoveryCodes)}
+                    class="w-full py-2 border border-border text-foreground rounded-lg hover:bg-background-tertiary transition-colors"
+                  >
+                    {st.regenerateCodes}
+                  </button>
+                {:else}
+                  <!-- Confirm Disable -->
+                  <div
+                    class="p-4 bg-stopped/5 border border-stopped/30 rounded-lg space-y-3"
+                  >
+                    <p class="text-sm text-stopped font-medium">
+                      {st.confirmDisableTitle}
+                    </p>
+                    <p class="text-sm text-foreground-muted">
+                      {st.confirmDisableDesc}
+                    </p>
+
+                    <div>
+                      <label
+                        class="block text-sm font-medium text-foreground mb-1"
+                        >{st.enterPassword}</label
+                      >
+                      <input
+                        type="password"
+                        bind:value={totpState.disablePassword}
+                        class="w-full px-3 py-2 bg-background border border-border rounded-lg text-foreground"
+                      />
+                    </div>
+
+                    <div class="flex gap-2">
+                      <button
+                        onclick={() => {
+                          totpState.confirmDisable = false;
+                          totpState.disablePassword = "";
+                          totpState.error = null;
+                        }}
+                        class="flex-1 py-2 border border-border text-foreground rounded-lg hover:bg-background-tertiary transition-colors"
+                      >
+                        {st.cancel}
+                      </button>
+                      <button
+                        onclick={disableTOTP}
+                        disabled={totpState.loading ||
+                          !totpState.disablePassword}
+                        class="flex-1 py-2 bg-stopped text-white rounded-lg hover:bg-stopped/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                      >
+                        {#if totpState.loading}
+                          <RefreshCw class="w-4 h-4 animate-spin" />
+                        {/if}
+                        {st.disable2FA}
+                      </button>
+                    </div>
+                  </div>
+                {/if}
+              </div>
+            {/if}
+
+            <!-- Recovery Codes Modal/Section -->
+            {#if totpState.showRecoveryCodes && totpState.recoveryCodes.length > 0}
+              <div
+                class="p-4 bg-primary/5 border border-primary/30 rounded-lg space-y-3"
+              >
+                <h4 class="font-medium text-foreground">{st.recoveryCodes}</h4>
+                <p class="text-xs text-foreground-muted">
+                  {st.recoveryCodesDesc}
+                </p>
+
+                <div class="grid grid-cols-2 gap-2">
+                  {#each totpState.recoveryCodes as code}
+                    <div
+                      class="px-3 py-2 bg-background rounded border border-border font-mono text-sm text-center select-all"
+                    >
+                      {code}
+                    </div>
+                  {/each}
+                </div>
+
+                <button
+                  onclick={() => {
+                    totpState.showRecoveryCodes = false;
+                    totpState.recoveryCodes = [];
+                  }}
+                  class="w-full py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors"
+                >
+                  {$language === "es"
+                    ? "Entendido, los guardé"
+                    : "Got it, I saved them"}
+                </button>
+              </div>
+            {/if}
+          </div>
         </div>
       {:else if currentView === "users"}
         <!-- Users Management (Admin Only) -->

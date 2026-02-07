@@ -64,6 +64,17 @@ export interface Host {
 	online: boolean;
 }
 
+export interface ImageUpdate {
+	containerId: string;
+	containerName: string;
+	image: string;
+	hostId: string;
+	currentDigest: string;
+	latestDigest?: string;
+	hasUpdate: boolean;
+	checkedAt: number;
+}
+
 // API Functions
 export async function fetchContainers(): Promise<Container[]> {
 	const res = await fetch(`${API_BASE}/api/containers`, { headers: getAuthHeaders() });
@@ -89,6 +100,22 @@ export async function containerAction(hostId: string, containerId: string, actio
 		headers: getAuthHeaders()
 	});
 	if (!res.ok) throw new Error(`Failed to ${action} container`);
+}
+
+// Image updates API
+export async function fetchImageUpdates(): Promise<ImageUpdate[]> {
+	const res = await fetch(`${API_BASE}/api/updates`, { headers: getAuthHeaders() });
+	if (!res.ok) throw new Error('Failed to fetch image updates');
+	return res.json();
+}
+
+export async function checkImageUpdate(hostId: string, containerId: string): Promise<ImageUpdate> {
+	const res = await fetch(`${API_BASE}/api/updates/${hostId}/${containerId}/check`, {
+		method: 'POST',
+		headers: getAuthHeaders()
+	});
+	if (!res.ok) throw new Error('Failed to check for image update');
+	return res.json();
 }
 
 // SSE Event Source with callbacks for all message types

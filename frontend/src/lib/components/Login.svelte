@@ -13,6 +13,7 @@
     ArrowLeft,
     Check,
     Key,
+    Shield,
   } from "lucide-svelte";
 
   let username = $state("");
@@ -21,6 +22,12 @@
   let showPassword = $state(false);
   let isLoading = $state(false);
   let error = $state<string | null>(null);
+
+  // 2FA State
+  let requires2FA = $state(false);
+  let totpCode = $state("");
+  let useRecoveryCode = $state(false);
+  let recoveryCode = $state("");
 
   // Forgot password state
   type ForgotView =
@@ -75,6 +82,15 @@
       successTitle: "¡Contraseña Actualizada!",
       successMessage: "Ya puedes iniciar sesión con tu nueva contraseña",
       backToLogin: "Volver al inicio de sesión",
+      // 2FA
+      twoFactorTitle: "Verificación de Dos Factores",
+      twoFactorSubtitle: "Ingresa el código de tu app de autenticación",
+      enterTotpCode: "Código de 6 dígitos",
+      verify: "Verificar",
+      useRecoveryCode: "Usar código de recuperación",
+      useAuthApp: "Usar app de autenticación",
+      recoveryCodePlaceholder: "Código de recuperación",
+      invalidTotpCode: "Código de verificación inválido",
     },
     en: {
       title: "Welcome to DockerVerse",
@@ -105,6 +121,15 @@
       successTitle: "Password Updated!",
       successMessage: "You can now sign in with your new password",
       backToLogin: "Back to login",
+      // 2FA
+      twoFactorTitle: "Two-Factor Verification",
+      twoFactorSubtitle: "Enter the code from your authenticator app",
+      enterTotpCode: "6-digit code",
+      verify: "Verify",
+      useRecoveryCode: "Use recovery code",
+      useAuthApp: "Use authenticator app",
+      recoveryCodePlaceholder: "Recovery code",
+      invalidTotpCode: "Invalid verification code",
     },
   };
 
@@ -116,20 +141,40 @@
     isLoading = true;
 
     try {
-      const success = await auth.login({
+      const result = await auth.login({
         username,
         password,
         rememberMe,
+        totpCode: requires2FA ? totpCode : undefined,
+        recoveryCode: requires2FA && useRecoveryCode ? recoveryCode : undefined,
       });
 
-      if (!success) {
-        error = lt.errorInvalid;
+      if (result.requiresTOTP) {
+        requires2FA = true;
+        isLoading = false;
+        return;
+      }
+
+      if (!result.success) {
+        if (requires2FA) {
+          error = lt.invalidTotpCode;
+        } else {
+          error = result.error || lt.errorInvalid;
+        }
       }
     } catch (e) {
       error = lt.errorNetwork;
     } finally {
       isLoading = false;
     }
+  }
+
+  function handleBack2FA() {
+    requires2FA = false;
+    totpCode = "";
+    recoveryCode = "";
+    useRecoveryCode = false;
+    error = null;
   }
 
   function handleKeydown(e: KeyboardEvent) {
@@ -269,123 +314,266 @@
     <!-- Form Card -->
     <div class="card p-8 shadow-2xl">
       {#if forgotView === "login"}
-        <!-- Login Form -->
-        <form onsubmit={handleSubmit} class="space-y-6">
-          <!-- Error Message -->
-          {#if error}
-            <div
-              class="flex items-center gap-2 p-3 bg-stopped/10 border border-stopped/30 rounded-lg text-stopped text-sm"
-            >
-              <AlertCircle class="w-4 h-4 flex-shrink-0" />
-              <span>{error}</span>
-            </div>
-          {/if}
-
-          <!-- Username -->
-          <div class="space-y-2">
-            <label
-              for="username"
-              class="block text-sm font-medium text-foreground"
-            >
-              {lt.username}
-            </label>
-            <div class="relative">
-              <User
-                class="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-foreground-muted"
-              />
-              <input
-                id="username"
-                type="text"
-                bind:value={username}
-                onkeydown={handleKeydown}
-                class="w-full pl-10 pr-4 py-3 bg-background-secondary border border-border rounded-lg
-							     text-foreground placeholder:text-foreground-muted
-							     focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary
-							     transition-all duration-200"
-                placeholder={lt.username.toLowerCase()}
-                required
-                autocomplete="username"
-              />
-            </div>
-          </div>
-
-          <!-- Password -->
-          <div class="space-y-2">
-            <label
-              for="password"
-              class="block text-sm font-medium text-foreground"
-            >
-              {lt.password}
-            </label>
-            <div class="relative">
-              <Lock
-                class="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-foreground-muted"
-              />
-              <input
-                id="password"
-                type={showPassword ? "text" : "password"}
-                bind:value={password}
-                onkeydown={handleKeydown}
-                class="w-full pl-10 pr-12 py-3 bg-background-secondary border border-border rounded-lg
-							     text-foreground placeholder:text-foreground-muted
-							     focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary
-							     transition-all duration-200"
-                placeholder="••••••••"
-                required
-                autocomplete="current-password"
-              />
-              <button
-                type="button"
-                onclick={() => (showPassword = !showPassword)}
-                class="absolute right-3 top-1/2 -translate-y-1/2 text-foreground-muted hover:text-foreground transition-colors"
-              >
-                {#if showPassword}
-                  <EyeOff class="w-5 h-5" />
-                {:else}
-                  <Eye class="w-5 h-5" />
-                {/if}
-              </button>
-            </div>
-          </div>
-
-          <!-- Remember Me & Forgot Password -->
-          <div class="flex items-center justify-between">
-            <label class="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                bind:checked={rememberMe}
-                class="w-4 h-4 rounded border-border text-primary focus:ring-primary/50 bg-background-secondary"
-              />
-              <span class="text-sm text-foreground-muted">{lt.rememberMe}</span>
-            </label>
+        {#if requires2FA}
+          <!-- 2FA Verification Form -->
+          <form onsubmit={handleSubmit} class="space-y-6">
+            <!-- Back button -->
             <button
               type="button"
-              onclick={() => {
-                forgotView = "request";
-              }}
-              class="text-sm text-primary hover:text-primary/80 transition-colors"
+              onclick={handleBack2FA}
+              class="flex items-center gap-2 text-foreground-muted hover:text-foreground transition-colors"
             >
-              {lt.forgotPassword}
+              <ArrowLeft class="w-4 h-4" />
+              {lt.backToLogin}
             </button>
-          </div>
 
-          <!-- Submit Button -->
-          <button
-            type="submit"
-            disabled={isLoading || !username || !password}
-            class="w-full py-3 px-4 bg-primary hover:bg-primary/90 disabled:bg-primary/50
+            <!-- Header -->
+            <div class="text-center">
+              <div
+                class="w-16 h-16 mx-auto bg-primary/10 rounded-full flex items-center justify-center mb-4"
+              >
+                <Shield class="w-8 h-8 text-primary" />
+              </div>
+              <h2 class="text-xl font-bold text-foreground">
+                {lt.twoFactorTitle}
+              </h2>
+              <p class="text-foreground-muted text-sm mt-1">
+                {lt.twoFactorSubtitle}
+              </p>
+            </div>
+
+            <!-- Error Message -->
+            {#if error}
+              <div
+                class="flex items-center gap-2 p-3 bg-stopped/10 border border-stopped/30 rounded-lg text-stopped text-sm"
+              >
+                <AlertCircle class="w-4 h-4 flex-shrink-0" />
+                <span>{error}</span>
+              </div>
+            {/if}
+
+            {#if !useRecoveryCode}
+              <!-- TOTP Code Input -->
+              <div class="space-y-2">
+                <label
+                  for="totpCode"
+                  class="block text-sm font-medium text-foreground"
+                >
+                  {lt.enterTotpCode}
+                </label>
+                <div class="relative">
+                  <Key
+                    class="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-foreground-muted"
+                  />
+                  <input
+                    id="totpCode"
+                    type="text"
+                    bind:value={totpCode}
+                    maxlength="6"
+                    inputmode="numeric"
+                    pattern="[0-9]*"
+                    class="w-full pl-10 pr-4 py-3 bg-background-secondary border border-border rounded-lg
+                           text-foreground text-center text-2xl tracking-[0.5em] font-mono
+                           placeholder:text-foreground-muted placeholder:tracking-normal placeholder:text-base
+                           focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary
+                           transition-all duration-200"
+                    placeholder="000000"
+                    required
+                  />
+                </div>
+              </div>
+
+              <!-- Use Recovery Code Link -->
+              <button
+                type="button"
+                onclick={() => {
+                  useRecoveryCode = true;
+                  error = null;
+                }}
+                class="text-sm text-primary hover:text-primary/80 transition-colors"
+              >
+                {lt.useRecoveryCode}
+              </button>
+            {:else}
+              <!-- Recovery Code Input -->
+              <div class="space-y-2">
+                <label
+                  for="recoveryCode"
+                  class="block text-sm font-medium text-foreground"
+                >
+                  {lt.recoveryCodePlaceholder}
+                </label>
+                <div class="relative">
+                  <Key
+                    class="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-foreground-muted"
+                  />
+                  <input
+                    id="recoveryCode"
+                    type="text"
+                    bind:value={recoveryCode}
+                    class="w-full pl-10 pr-4 py-3 bg-background-secondary border border-border rounded-lg
+                           text-foreground text-center font-mono tracking-wider
+                           placeholder:text-foreground-muted
+                           focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary
+                           transition-all duration-200"
+                    placeholder="xxxxxxxxxxxxxxxx"
+                    required
+                  />
+                </div>
+              </div>
+
+              <!-- Use Auth App Link -->
+              <button
+                type="button"
+                onclick={() => {
+                  useRecoveryCode = false;
+                  error = null;
+                }}
+                class="text-sm text-primary hover:text-primary/80 transition-colors"
+              >
+                {lt.useAuthApp}
+              </button>
+            {/if}
+
+            <!-- Submit Button -->
+            <button
+              type="submit"
+              disabled={isLoading ||
+                (!totpCode && !recoveryCode) ||
+                (totpCode.length !== 6 && !useRecoveryCode)}
+              class="w-full py-3 bg-primary text-white rounded-lg font-medium
+                     hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed
+                     transition-all duration-200 flex items-center justify-center gap-2"
+            >
+              {#if isLoading}
+                <Loader2 class="w-5 h-5 animate-spin" />
+              {:else}
+                <Shield class="w-5 h-5" />
+              {/if}
+              {isLoading ? lt.loggingIn : lt.verify}
+            </button>
+          </form>
+        {:else}
+          <!-- Login Form -->
+          <form onsubmit={handleSubmit} class="space-y-6">
+            <!-- Error Message -->
+            {#if error}
+              <div
+                class="flex items-center gap-2 p-3 bg-stopped/10 border border-stopped/30 rounded-lg text-stopped text-sm"
+              >
+                <AlertCircle class="w-4 h-4 flex-shrink-0" />
+                <span>{error}</span>
+              </div>
+            {/if}
+
+            <!-- Username -->
+            <div class="space-y-2">
+              <label
+                for="username"
+                class="block text-sm font-medium text-foreground"
+              >
+                {lt.username}
+              </label>
+              <div class="relative">
+                <User
+                  class="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-foreground-muted"
+                />
+                <input
+                  id="username"
+                  type="text"
+                  bind:value={username}
+                  onkeydown={handleKeydown}
+                  class="w-full pl-10 pr-4 py-3 bg-background-secondary border border-border rounded-lg
+							       text-foreground placeholder:text-foreground-muted
+							       focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary
+							       transition-all duration-200"
+                  placeholder={lt.username.toLowerCase()}
+                  required
+                  autocomplete="username"
+                />
+              </div>
+            </div>
+
+            <!-- Password -->
+            <div class="space-y-2">
+              <label
+                for="password"
+                class="block text-sm font-medium text-foreground"
+              >
+                {lt.password}
+              </label>
+              <div class="relative">
+                <Lock
+                  class="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-foreground-muted"
+                />
+                <input
+                  id="password"
+                  type={showPassword ? "text" : "password"}
+                  bind:value={password}
+                  onkeydown={handleKeydown}
+                  class="w-full pl-10 pr-12 py-3 bg-background-secondary border border-border rounded-lg
+							       text-foreground placeholder:text-foreground-muted
+							       focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary
+							       transition-all duration-200"
+                  placeholder="••••••••"
+                  required
+                  autocomplete="current-password"
+                />
+                <button
+                  type="button"
+                  onclick={() => (showPassword = !showPassword)}
+                  class="absolute right-3 top-1/2 -translate-y-1/2 text-foreground-muted hover:text-foreground transition-colors"
+                >
+                  {#if showPassword}
+                    <EyeOff class="w-5 h-5" />
+                  {:else}
+                    <Eye class="w-5 h-5" />
+                  {/if}
+                </button>
+              </div>
+            </div>
+
+            <!-- Remember Me & Forgot Password -->
+            <div class="flex items-center justify-between">
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  bind:checked={rememberMe}
+                  class="w-4 h-4 rounded border-border text-primary focus:ring-primary/50 bg-background-secondary"
+                />
+                <span class="text-sm text-foreground-muted"
+                  >{lt.rememberMe}</span
+                >
+              </label>
+              <button
+                type="button"
+                onclick={() => {
+                  forgotView = "request";
+                }}
+                class="text-sm text-primary hover:text-primary/80 transition-colors"
+              >
+                {lt.forgotPassword}
+              </button>
+            </div>
+
+            <!-- Submit Button -->
+            <button
+              type="submit"
+              disabled={isLoading || !username || !password}
+              class="w-full py-3 px-4 bg-primary hover:bg-primary/90 disabled:bg-primary/50
 						     text-white font-medium rounded-lg
 						     flex items-center justify-center gap-2
 						     transition-all duration-200 disabled:cursor-not-allowed"
-          >
-            {#if isLoading}
-              <Loader2 class="w-5 h-5 animate-spin" />
-              <span>{lt.loggingIn}</span>
-            {:else}
-              <span>{lt.login}</span>
-            {/if}
-          </button>
-        </form>
+            >
+              {#if isLoading}
+                <Loader2 class="w-5 h-5 animate-spin" />
+                <span>{lt.loggingIn}</span>
+              {:else}
+                <span>{lt.login}</span>
+              {/if}
+            </button>
+          </form>
+        {/if}
 
         <!-- Demo credentials hint -->
         <div class="mt-6 text-center">

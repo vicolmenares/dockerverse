@@ -36,7 +36,10 @@ export const translations = {
 		loading: 'Cargando...',
 		connectionError: 'Error de conexión al servidor',
 		lightMode: 'Modo claro',
-		darkMode: 'Modo oscuro'
+		darkMode: 'Modo oscuro',
+		showResources: 'Mostrar recursos',
+		hideResources: 'Ocultar recursos',
+		pendingUpdates: 'Actualizaciones pendientes'
 	},
 	en: {
 		hosts: 'Hosts',
@@ -67,7 +70,10 @@ export const translations = {
 		loading: 'Loading...',
 		connectionError: 'Connection error to server',
 		lightMode: 'Light Mode',
-		darkMode: 'Dark Mode'
+		darkMode: 'Dark Mode',
+		showResources: 'Show resources',
+		hideResources: 'Hide resources',
+		pendingUpdates: 'Pending updates'
 	}
 };
 
@@ -208,5 +214,31 @@ export function disconnectWebSocket() {
 	if (ws) {
 		ws.close();
 		ws = null;
+	}
+}
+
+// Image updates store
+import { fetchImageUpdates, type ImageUpdate } from '$lib/api/docker';
+
+export const imageUpdates = writable<ImageUpdate[]>([]);
+export const updatesLoading = writable(false);
+export const lastUpdateCheck = writable<Date | null>(null);
+
+// Derived: count of containers with updates
+export const pendingUpdatesCount = derived(imageUpdates, ($updates) => 
+	$updates.filter(u => u.hasUpdate).length
+);
+
+// Function to check for updates
+export async function checkForUpdates(): Promise<void> {
+	updatesLoading.set(true);
+	try {
+		const updates = await fetchImageUpdates();
+		imageUpdates.set(updates);
+		lastUpdateCheck.set(new Date());
+	} catch (e) {
+		console.error('Failed to check for updates:', e);
+	} finally {
+		updatesLoading.set(false);
 	}
 }
