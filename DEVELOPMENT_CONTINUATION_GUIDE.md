@@ -31,7 +31,7 @@
 
 **DockerVerse** es un dashboard de gestión multi-host de Docker, diseñado para administrar contenedores en múltiples Raspberry Pis desde una interfaz web moderna. El proyecto se desarrolló completamente desde cero usando:
 
-- **Backend**: Go 1.22 con Fiber framework
+- **Backend**: Go 1.23 con Fiber framework
 - **Frontend**: SvelteKit 2.x con Svelte 5, TailwindCSS 3.4
 - **Deployment**: Docker con arquitectura unificada (single container)
 - **Target**: Raspberry Pi 4/5 con Docker instalado
@@ -63,6 +63,8 @@
 - ✅ Background update checker every 15 minutes (v2.3.0)
 - ✅ Watchtower HTTP API integration for click-to-update (v2.3.0)
 - ✅ Update button on ContainerCard when updates available (v2.3.0)
+- ✅ Configurable Top Resources count selector (5/10/15/20/30) (v2.3.0)
+- ✅ Tabular-nums on all real-time numeric displays to prevent jitter (v2.3.0)
 
 ---
 
@@ -253,13 +255,14 @@ Se eliminó el patrón de modal flotante (`Settings.svelte` como overlay `fixed 
 
 | Componente | Versión | Propósito |
 |------------|---------|-----------|
-| Go | 1.22+ | Lenguaje principal |
+| Go | 1.23+ | Lenguaje principal |
 | Fiber | v2.52.0 | Framework web HTTP |
 | fiber/websocket | v2.2.1 | WebSocket support |
 | docker/docker | v27.0.0 | Docker API client |
 | golang-jwt/jwt | v5.2.1 | JSON Web Tokens |
 | pquerna/otp | v1.4.0 | TOTP/2FA support |
 | creack/pty | v1.1.21 | Terminal pseudo-TTY |
+| go-containerregistry | v0.20.3 | Registry digest comparison (crane) |
 | golang.org/x/crypto | v0.25.0 | bcrypt hashing |
 
 ### Frontend (SvelteKit)
@@ -295,7 +298,7 @@ Se eliminó el patrón de modal flotante (`Settings.svelte` como overlay `fixed 
 | VS Code | Latest | IDE principal |
 | Node.js | 20.x LTS | Runtime frontend dev |
 | npm | 10.x | Package manager |
-| Go | 1.22.x | Backend development |
+| Go | 1.23.x | Backend development |
 | PowerShell | 7.x | Scripting |
 | Posh-SSH | 3.2.7 | SSH/SCP desde PowerShell |
 | Git | 2.x | Version control |
@@ -444,8 +447,11 @@ dockerverse/
 # Backend
 PORT=3001
 DOCKER_HOST=unix:///var/run/docker.sock
+DOCKER_HOSTS=raspi1:Raspi Main:unix:///var/run/docker.sock:local
 JWT_SECRET=dockerverse-super-secret-key-2026
 DATA_PATH=/data
+WATCHTOWER_TOKEN=  # Watchtower HTTP API token (optional)
+WATCHTOWER_URLS=   # Watchtower URLs per host (optional, format: hostId:url|hostId:url)
 
 # Frontend
 NODE_ENV=production
@@ -500,7 +506,7 @@ chmod +x setup-mac.sh
 | Git | 2.40+ | `brew install git` | Version control |
 | Node.js | 20.x LTS | `brew install node@20` | Frontend runtime |
 | npm | 10.x | Con Node.js | Package manager |
-| Go | 1.22+ | `brew install go` | Backend |
+| Go | 1.23+ | `brew install go` | Backend |
 | Docker Desktop | 4.x | `brew install --cask docker` | Containers |
 | GitHub CLI | 2.40+ | `brew install gh` | GitHub operations |
 | VS Code | Latest | `brew install --cask visual-studio-code` | IDE |
@@ -597,9 +603,9 @@ ssh raspi-main
 
 # Build y deploy
 cd /home/pi/dockerverse
-docker-compose -f docker-compose.unified.yml down
-docker-compose -f docker-compose.unified.yml build --no-cache
-docker-compose -f docker-compose.unified.yml up -d
+docker compose -f docker-compose.unified.yml down
+docker compose -f docker-compose.unified.yml build --no-cache
+docker compose -f docker-compose.unified.yml up -d
 
 # Verificar
 docker ps | grep dockerverse
@@ -636,9 +642,9 @@ rsync -avz --exclude 'node_modules' --exclude '.git' \
 
 echo "🔨 Building on Raspberry Pi..."
 ssh $RASPI_HOST "cd $RASPI_PATH && \
-  docker-compose -f docker-compose.unified.yml down && \
-  docker-compose -f docker-compose.unified.yml build $NO_CACHE && \
-  docker-compose -f docker-compose.unified.yml up -d"
+  docker compose -f docker-compose.unified.yml down && \
+  docker compose -f docker-compose.unified.yml build $NO_CACHE && \
+  docker compose -f docker-compose.unified.yml up -d"
 
 echo "✅ Waiting for container..."
 sleep 10
@@ -787,6 +793,7 @@ cat backup/users.json | ssh raspi-main "docker exec -i dockerverse tee /data/use
 |--------|----------|-------------|
 | GET | `/api/updates` | Lista de actualizaciones |
 | POST | `/api/updates/:hostId/:containerId/check` | Verificar imagen |
+| POST | `/api/containers/:hostId/:containerId/update` | Trigger Watchtower update |
 
 ---
 
@@ -804,7 +811,7 @@ docker logs dockerverse
 netstat -tlnp | grep 3007
 
 # Reiniciar
-docker-compose -f docker-compose.unified.yml restart
+docker compose -f docker-compose.unified.yml restart
 ```
 
 #### Error de conexión Docker socket
@@ -866,6 +873,11 @@ docker exec dockerverse sh -c 'echo "[NUEVO_JSON]" > /data/users.json'
 - [x] Background update checker (every 15 min, 15 min cache per container)
 - [x] Watchtower HTTP API integration (WATCHTOWER_TOKEN, WATCHTOWER_URLS env vars)
 - [x] Click-to-update button on ContainerCard for Watchtower-managed containers
+- [x] Configurable Top Resources count selector (5/10/15/20/30 pill buttons)
+- [x] Tabular-nums CSS class on all real-time numeric displays (prevents jitter)
+- [x] Dockerfile upgraded from Go 1.22 to Go 1.23
+- [x] Deploy script updated to use `docker compose` v2 plugin syntax
+- [x] go.sum included in Dockerfile COPY for reliable builds
 
 ### v2.4.0 (Planificado)
 
@@ -1047,5 +1059,5 @@ npm run dev
 
 ---
 
-*Documento generado el 8 de febrero de 2026*
-*DockerVerse v2.1.0*
+*Documento actualizado el 8 de febrero de 2026*
+*DockerVerse v2.3.0*
