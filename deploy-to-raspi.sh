@@ -114,7 +114,7 @@ fi
 echo ""
 echo -e "${YELLOW}▶${NC} Stopping current container..."
 
-ssh "$RASPI_HOST" "cd $RASPI_PATH && docker-compose -f $COMPOSE_FILE down 2>/dev/null || true"
+ssh "$RASPI_HOST" "cd $RASPI_PATH && docker compose -f $COMPOSE_FILE down 2>/dev/null || true"
 
 echo -e "${GREEN}✓${NC} Container stopped"
 
@@ -129,7 +129,7 @@ if [ -n "$NO_CACHE" ]; then
     echo -e "${BLUE}ℹ${NC} Using --no-cache flag"
 fi
 
-ssh "$RASPI_HOST" "cd $RASPI_PATH && docker-compose -f $COMPOSE_FILE build $NO_CACHE"
+ssh "$RASPI_HOST" "cd $RASPI_PATH && docker compose -f $COMPOSE_FILE build $NO_CACHE"
 
 echo -e "${GREEN}✓${NC} Image built"
 
@@ -140,7 +140,7 @@ echo -e "${GREEN}✓${NC} Image built"
 echo ""
 echo -e "${YELLOW}▶${NC} Starting container..."
 
-ssh "$RASPI_HOST" "cd $RASPI_PATH && docker-compose -f $COMPOSE_FILE up -d"
+ssh "$RASPI_HOST" "cd $RASPI_PATH && docker compose -f $COMPOSE_FILE up -d"
 
 echo -e "${GREEN}✓${NC} Container started"
 

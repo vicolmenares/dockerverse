@@ -79,7 +79,7 @@
 
     <!-- CPU -->
     <div class="text-center">
-      <p class="metric-value {getCpuColor(host.cpuPercent)}">
+      <p class="metric-value tabular-nums {getCpuColor(host.cpuPercent)}">
         {host.cpuPercent.toFixed(1)}%
       </p>
       <p class="metric-label flex items-center justify-center gap-1">
@@ -89,7 +89,7 @@
 
     <!-- Memory -->
     <div class="text-center">
-      <p class="metric-value {getMemColor(host.memoryPercent)}">
+      <p class="metric-value tabular-nums {getMemColor(host.memoryPercent)}">
         {host.memoryPercent.toFixed(1)}%
       </p>
       <p class="metric-label flex items-center justify-center gap-1">
