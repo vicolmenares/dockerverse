@@ -9,10 +9,22 @@
     HardDrive,
     ArrowUpDown,
     ArrowUpCircle,
+    Download,
+    Loader2,
   } from "lucide-svelte";
   import type { Container, ContainerStats, ImageUpdate } from "$lib/api/docker";
-  import { containerAction, formatBytes, formatUptime } from "$lib/api/docker";
-  import { language, translations, imageUpdates } from "$lib/stores/docker";
+  import {
+    containerAction,
+    triggerContainerUpdate,
+    formatBytes,
+    formatUptime,
+  } from "$lib/api/docker";
+  import {
+    language,
+    translations,
+    imageUpdates,
+    checkForUpdates,
+  } from "$lib/stores/docker";
 
   let {
     container,
@@ -27,6 +39,7 @@
   } = $props();
 
   let loading = $state(false);
+  let updating = $state(false);
   let t = $derived(translations[$language]);
 
   // Check if container has a pending update
@@ -80,6 +93,18 @@
       console.error("Action failed:", e);
     }
     loading = false;
+  }
+
+  async function handleUpdate() {
+    updating = true;
+    try {
+      await triggerContainerUpdate(container.hostId, container.id);
+      // Re-check updates after triggering
+      setTimeout(() => checkForUpdates(), 5000);
+    } catch (e) {
+      console.error("Update failed:", e);
+    }
+    updating = false;
   }
 
   function parseImage(image: string) {
@@ -238,6 +263,23 @@
     </div>
 
     <div class="flex gap-1">
+      {#if hasUpdate}
+        <button
+          class="flex items-center gap-1.5 px-2.5 py-1.5 bg-accent-orange/20 text-accent-orange rounded-lg hover:bg-accent-orange/30 transition-colors"
+          onclick={handleUpdate}
+          disabled={updating}
+          title={$language === "es" ? "Actualizar" : "Update"}
+        >
+          {#if updating}
+            <Loader2 class="w-4 h-4 animate-spin" />
+          {:else}
+            <Download class="w-4 h-4" />
+          {/if}
+          <span class="text-xs font-medium"
+            >{$language === "es" ? "Actualizar" : "Update"}</span
+          >
+        </button>
+      {/if}
       {#if isRunning}
         <button
           class="btn-icon hover:bg-stopped/20 hover:text-stopped"

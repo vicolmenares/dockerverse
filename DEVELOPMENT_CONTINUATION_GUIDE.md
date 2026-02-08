@@ -3,7 +3,7 @@
 > **Documento de transferencia de conocimiento para continuar el desarrollo desde macOS**
 > 
 > Última actualización: 8 de febrero de 2026
-> Versión actual: v2.2.0
+> Versión actual: v2.3.0
 
 ---
 
@@ -36,7 +36,7 @@
 - **Deployment**: Docker con arquitectura unificada (single container)
 - **Target**: Raspberry Pi 4/5 con Docker instalado
 
-### Características Principales (v2.1.0)
+### Características Principales (v2.3.0)
 
 - ✅ Gestión multi-host de contenedores Docker
 - ✅ Terminal web con WebSocket (7 temas, búsqueda, reconexión, WebGL, zoom)
@@ -53,6 +53,16 @@
 - ✅ Soporte multi-idioma (ES/EN)
 - ✅ Tema oscuro nativo
 - ✅ Settings con navegación por rutas SvelteKit (v2.2.0)
+- ✅ Configurable Docker hosts via DOCKER_HOSTS env var (v2.3.0)
+- ✅ Host health backoff - skip unreachable hosts for 30s (v2.3.0)
+- ✅ Broadcaster timeouts (5s) prevent SSE hangs (v2.3.0)
+- ✅ Frontend resilient loading with Promise.allSettled (v2.3.0)
+- ✅ Fetch timeout utility (8s default) on all API calls (v2.3.0)
+- ✅ SSE data clears connection errors automatically (v2.3.0)
+- ✅ Real image update detection via registry digest comparison (v2.3.0)
+- ✅ Background update checker every 15 minutes (v2.3.0)
+- ✅ Watchtower HTTP API integration for click-to-update (v2.3.0)
+- ✅ Update button on ContainerCard when updates available (v2.3.0)
 
 ---
 
@@ -846,7 +856,18 @@ docker exec dockerverse sh -c 'echo "[NUEVO_JSON]" > /data/users.json'
 - [x] Active state del sidebar derivado de URL
 - [x] Fix import bug en ResourceChart.svelte
 
-### v2.3.0 (Planificado)
+### v2.3.0 (Completado - 8 Feb 2026)
+
+- [x] Configurable Docker hosts via DOCKER_HOSTS env var (replaces hardcoded hosts)
+- [x] Host health tracking with 30s backoff for unreachable hosts
+- [x] Broadcaster timeouts (5s context) prevent SSE hangs on offline hosts
+- [x] Frontend resilient loading (Promise.allSettled, fetch timeouts, SSE error clearing)
+- [x] Real image update detection via go-containerregistry/crane digest comparison
+- [x] Background update checker (every 15 min, 15 min cache per container)
+- [x] Watchtower HTTP API integration (WATCHTOWER_TOKEN, WATCHTOWER_URLS env vars)
+- [x] Click-to-update button on ContainerCard for Watchtower-managed containers
+
+### v2.4.0 (Planificado)
 
 - [ ] Container Activity chart (bar chart estilo Jobs Activity)
 - [ ] Docker Compose management (view/edit compose files)
@@ -855,7 +876,7 @@ docker exec dockerverse sh -c 'echo "[NUEVO_JSON]" > /data/users.json'
 - [ ] Volume management UI
 - [ ] Container templates/presets
 
-### v2.4.0 (Planificado)
+### v2.5.0 (Planificado)
 
 - [ ] Multi-user permissions (RBAC)
 - [ ] Audit log

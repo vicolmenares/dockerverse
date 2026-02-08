@@ -19,8 +19,8 @@ WORKDIR /build
 # Install build dependencies
 RUN apk add --no-cache git upx
 
-# Copy go files
-COPY backend/go.mod ./
+# Copy go dependency files first (better caching)
+COPY backend/go.mod backend/go.sum ./
 COPY backend/*.go ./
 
 # Download dependencies and build optimized binary
@@ -309,7 +309,10 @@ ENV S6_VERBOSITY=1 \
     S6_CMD_WAIT_FOR_SERVICES_MAXTIME=30000 \
     PORT=3001 \
     DOCKER_HOST=unix:///var/run/docker.sock \
+    DOCKER_HOSTS="raspi1:Raspi Main:unix:///var/run/docker.sock:local" \
     JWT_SECRET=dockerverse-super-secret-key-2026 \
+    WATCHTOWER_TOKEN="" \
+    WATCHTOWER_URLS="" \
     NODE_ENV=production \
     TZ=America/Mexico_City
 

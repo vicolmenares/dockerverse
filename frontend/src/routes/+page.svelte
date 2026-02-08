@@ -29,6 +29,7 @@
     language,
     translations,
     selectedHost,
+    checkForUpdates,
   } from "$lib/stores/docker";
   import HostCard from "$lib/components/HostCard.svelte";
   import ContainerCard from "$lib/components/ContainerCard.svelte";
@@ -46,6 +47,8 @@
   let filterState = $state<"all" | "running" | "stopped">("all");
   let resourceMetric = $state<"cpu" | "memory" | "network" | "restarts">("cpu");
   let showResourceLeaderboard = $state(true);
+  let topN = $state(10);
+  const topNOptions = [5, 10, 15, 20, 30];
 
   // Get current translations
   let t = $derived(translations[$language]);
@@ -73,7 +76,7 @@
 
   // Top 14 containers by selected resource metric
   let topContainers = $derived.by(() => {
-    const running = $containers.filter((c) => c.state === "running");
+    const running = $filteredContainers.filter((c) => c.state === "running");
     const withStats = running
       .map((c) => ({
         container: c,
@@ -101,7 +104,7 @@
       }
     });
 
-    return sorted.slice(0, 14);
+    return sorted.slice(0, topN);
   });
 
   function getMetricValue(stats: ContainerStats | undefined): string {
@@ -140,6 +143,16 @@
     return "bg-running";
   }
 
+  // Get max metric value for bar chart scaling
+  let topMaxValue = $derived.by(() => {
+    if (topContainers.length === 0) return 1;
+    const values = topContainers.map((item) => {
+      const p = getMetricPercent(item.stats);
+      return p;
+    });
+    return Math.max(...values, 1);
+  });
+
   // Preload Terminal/LogViewer on hover
   function preloadComponents() {
     if (!Terminal) {
@@ -162,13 +175,18 @@
     await loadData();
     startStatsStream();
 
+    // Check for image updates after initial load
+    checkForUpdates();
+
     // Listen for refresh events from header
     window.addEventListener("dockerverse:refresh", handleRefresh);
 
-    // Refresh every 30 seconds
-    const interval = setInterval(loadData, 30000);
+    // Refresh data every 30 seconds, check updates every 15 minutes
+    const dataInterval = setInterval(loadData, 30000);
+    const updateInterval = setInterval(checkForUpdates, 15 * 60 * 1000);
     return () => {
-      clearInterval(interval);
+      clearInterval(dataInterval);
+      clearInterval(updateInterval);
       window.removeEventListener("dockerverse:refresh", handleRefresh);
     };
   });
@@ -179,13 +197,20 @@
 
   async function loadData() {
     try {
-      const [containersData, hostsData] = await Promise.all([
+      const results = await Promise.allSettled([
         fetchContainers(),
         fetchHosts(),
       ]);
-      containers.set(containersData);
-      hosts.set(hostsData);
-      connectionError = null;
+
+      if (results[0].status === "fulfilled") {
+        containers.set(results[0].value);
+      }
+      if (results[1].status === "fulfilled") {
+        hosts.set(results[1].value);
+      }
+
+      const allFailed = results.every((r) => r.status === "rejected");
+      connectionError = allFailed ? "Error connecting to backend" : null;
     } catch (e) {
       connectionError = "Error connecting to backend";
       console.error(e);
@@ -203,12 +228,15 @@
           }
           return current;
         });
+        connectionError = null;
       },
       onContainers: (containersData: Container[]) => {
         containers.set(containersData);
+        connectionError = null;
       },
       onHosts: (hostsData: Host[]) => {
         hosts.set(hostsData);
+        connectionError = null;
       },
     });
   }
@@ -295,41 +323,7 @@
       </div>
     </div>
 
-    <!-- Hosts Section -->
-    <section class="mb-8">
-      <h2
-        class="text-lg font-semibold text-foreground mb-4 flex items-center gap-2"
-      >
-        <Server class="w-5 h-5 text-primary" />
-        {t.hosts}
-        {#if $selectedHost}
-          <span
-            class="text-xs font-normal text-primary bg-primary/10 px-2 py-0.5 rounded"
-          >
-            {t.filterByHost}: {$selectedHost}
-          </span>
-        {/if}
-      </h2>
-
-      {#if isLoading}
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {#each [1, 2] as _}
-            <div class="card p-5 animate-pulse">
-              <div class="h-4 bg-background-tertiary rounded w-1/3 mb-4"></div>
-              <div class="h-8 bg-background-tertiary rounded w-full"></div>
-            </div>
-          {/each}
-        </div>
-      {:else}
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {#each $hosts as host}
-            <HostCard {host} />
-          {/each}
-        </div>
-      {/if}
-    </section>
-
-    <!-- Resource Leaderboard Section -->
+    <!-- Top Resources Bar Chart -->
     {#if !isLoading && runningContainers > 0}
       <section class="mb-8">
         <div class="flex items-center justify-between mb-4">
@@ -338,14 +332,31 @@
           >
             <BarChart3 class="w-5 h-5 text-accent-purple" />
             {$language === "es" ? "Top Recursos" : "Top Resources"}
-            <span class="text-sm font-normal text-foreground-muted"
-              >(Top {Math.min(14, topContainers.length)})</span
-            >
+            {#if $selectedHost}
+              <span
+                class="text-xs font-normal text-primary bg-primary/10 px-2 py-0.5 rounded"
+              >
+                {$selectedHost}
+              </span>
+            {/if}
           </h2>
-          <button
-            class="text-sm text-foreground-muted hover:text-foreground transition-colors"
-            onclick={() => (showResourceLeaderboard = !showResourceLeaderboard)}
-          >
+          <div class="flex items-center gap-3">
+            <div class="flex items-center gap-1 p-0.5 bg-background-secondary rounded-lg border border-border">
+              {#each topNOptions as n}
+                <button
+                  class="px-2 py-1 rounded-md text-xs font-medium transition-all {topN === n
+                    ? 'bg-accent-purple text-white shadow-sm'
+                    : 'text-foreground-muted hover:text-foreground'}"
+                  onclick={() => (topN = n)}
+                >
+                  {n}
+                </button>
+              {/each}
+            </div>
+            <button
+              class="text-sm text-foreground-muted hover:text-foreground transition-colors"
+              onclick={() => (showResourceLeaderboard = !showResourceLeaderboard)}
+            >
             {showResourceLeaderboard
               ? $language === "es"
                 ? "Ocultar"
@@ -353,7 +364,8 @@
               : $language === "es"
                 ? "Mostrar"
                 : "Show"}
-          </button>
+            </button>
+          </div>
         </div>
 
         {#if showResourceLeaderboard}
@@ -403,68 +415,85 @@
             </button>
           </div>
 
-          <!-- Leaderboard table -->
-          <div class="card overflow-hidden">
-            <!-- Table header -->
-            <div
-              class="grid grid-cols-[auto_1fr_120px_200px] gap-4 px-4 py-2 border-b border-border text-xs font-medium text-foreground-muted uppercase tracking-wider bg-background-tertiary/30"
-            >
-              <span class="w-8 text-center">#</span>
-              <span>{$language === "es" ? "Contenedor" : "Container"}</span>
-              <span class="text-right"
-                >{$language === "es" ? "Valor" : "Value"}</span
-              >
-              <span>{$language === "es" ? "Uso" : "Usage"}</span>
-            </div>
-
+          <!-- Horizontal bar chart -->
+          <div class="card p-4">
             {#if topContainers.length === 0}
-              <div class="px-4 py-8 text-center text-foreground-muted text-sm">
+              <div class="py-8 text-center text-foreground-muted text-sm">
                 {$language === "es"
                   ? "No hay datos de recursos disponibles"
                   : "No resource data available"}
               </div>
             {:else}
-              {#each topContainers as item, i}
-                {@const percent = getMetricPercent(item.stats)}
-                <div
-                  class="grid grid-cols-[auto_1fr_120px_200px] gap-4 px-4 py-2.5 items-center border-b border-border/50 hover:bg-background-tertiary/20 transition-colors"
-                >
-                  <span
-                    class="w-8 text-center text-sm font-bold {i < 3
-                      ? 'text-primary'
-                      : 'text-foreground-muted'}">{i + 1}</span
-                  >
-                  <div class="min-w-0">
-                    <p class="text-sm font-medium text-foreground truncate">
-                      {item.container.name}
-                    </p>
-                    <p class="text-xs text-foreground-muted truncate">
-                      {item.container.hostId}
-                    </p>
-                  </div>
-                  <span
-                    class="text-sm font-mono text-foreground text-right tabular-nums"
-                    >{getMetricValue(item.stats)}</span
-                  >
-                  <div class="flex items-center gap-2">
-                    <div
-                      class="flex-1 h-2 bg-background-tertiary rounded-full overflow-hidden"
+              <div class="space-y-1.5">
+                {#each topContainers as item, i}
+                  {@const percent = getMetricPercent(item.stats)}
+                  {@const barWidth = topMaxValue > 0 ? (percent / topMaxValue) * 100 : 0}
+                  <div class="flex items-center gap-3 py-1">
+                    <span
+                      class="w-5 text-right text-xs font-bold shrink-0 {i < 3
+                        ? 'text-primary'
+                        : 'text-foreground-muted'}">{i + 1}</span
                     >
+                    <div class="w-28 shrink-0 min-w-0">
+                      <p class="text-sm font-medium text-foreground truncate leading-tight">
+                        {item.container.name}
+                      </p>
+                      <p class="text-[11px] text-foreground-muted truncate leading-tight">
+                        {item.container.hostId}
+                      </p>
+                    </div>
+                    <div class="flex-1 h-6 bg-background-tertiary/50 rounded overflow-hidden">
                       <div
-                        class="h-full rounded-full transition-all duration-500 {getMetricBarColor(
-                          percent,
-                        )}"
-                        style="width: {Math.max(2, percent)}%"
+                        class="h-full rounded transition-all duration-500 ease-out {getMetricBarColor(percent)}"
+                        style="width: {Math.max(1, barWidth)}%"
                       ></div>
                     </div>
+                    <span
+                      class="w-16 text-right text-sm font-mono tabular-nums text-foreground shrink-0"
+                      >{getMetricValue(item.stats)}</span
+                    >
                   </div>
-                </div>
-              {/each}
+                {/each}
+              </div>
             {/if}
           </div>
         {/if}
       </section>
     {/if}
+
+    <!-- Hosts Section -->
+    <section class="mb-8">
+      <h2
+        class="text-lg font-semibold text-foreground mb-4 flex items-center gap-2"
+      >
+        <Server class="w-5 h-5 text-primary" />
+        {t.hosts}
+        {#if $selectedHost}
+          <span
+            class="text-xs font-normal text-primary bg-primary/10 px-2 py-0.5 rounded"
+          >
+            {t.filterByHost}: {$selectedHost}
+          </span>
+        {/if}
+      </h2>
+
+      {#if isLoading}
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {#each [1, 2] as _}
+            <div class="card p-5 animate-pulse">
+              <div class="h-4 bg-background-tertiary rounded w-1/3 mb-4"></div>
+              <div class="h-8 bg-background-tertiary rounded w-full"></div>
+            </div>
+          {/each}
+        </div>
+      {:else}
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {#each $hosts as host}
+            <HostCard {host} />
+          {/each}
+        </div>
+      {/if}
+    </section>
 
     <!-- Containers Section -->
     <section>
