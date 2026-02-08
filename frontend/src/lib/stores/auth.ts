@@ -9,8 +9,31 @@ const AUTH_STORAGE_KEY = 'auth';
 // Activity Tracking for Auto-Logout
 // =============================================================================
 
-const INACTIVITY_TIMEOUT = 30 * 60 * 1000; // 30 minutes in milliseconds
+const DEFAULT_INACTIVITY_TIMEOUT = 30; // 30 minutes default
 const ACTIVITY_CHECK_INTERVAL = 60 * 1000; // Check every minute
+const TIMEOUT_STORAGE_KEY = 'dockerverse-auto-logout-minutes';
+
+// Available timeout options (in minutes)
+export const AUTO_LOGOUT_OPTIONS = [5, 10, 15, 30, 60, 120, 0] as const; // 0 = disabled
+
+function getInactivityTimeout(): number {
+	if (!browser) return DEFAULT_INACTIVITY_TIMEOUT * 60 * 1000;
+	const saved = localStorage.getItem(TIMEOUT_STORAGE_KEY);
+	const minutes = saved ? parseInt(saved, 10) : DEFAULT_INACTIVITY_TIMEOUT;
+	if (minutes === 0) return 0; // 0 means disabled
+	return (isNaN(minutes) ? DEFAULT_INACTIVITY_TIMEOUT : minutes) * 60 * 1000;
+}
+
+export function getAutoLogoutMinutes(): number {
+	if (!browser) return DEFAULT_INACTIVITY_TIMEOUT;
+	const saved = localStorage.getItem(TIMEOUT_STORAGE_KEY);
+	return saved ? parseInt(saved, 10) : DEFAULT_INACTIVITY_TIMEOUT;
+}
+
+export function setAutoLogoutMinutes(minutes: number): void {
+	if (!browser) return;
+	localStorage.setItem(TIMEOUT_STORAGE_KEY, String(minutes));
+}
 
 let lastActivityTime = Date.now();
 let activityCheckInterval: ReturnType<typeof setInterval> | null = null;
@@ -33,8 +56,10 @@ export function setupActivityTracking(onLogout: () => void) {
 	
 	// Check for inactivity periodically
 	activityCheckInterval = setInterval(() => {
+		const timeout = getInactivityTimeout();
+		if (timeout === 0) return; // Auto-logout disabled
 		const timeSinceActivity = Date.now() - lastActivityTime;
-		if (timeSinceActivity >= INACTIVITY_TIMEOUT) {
+		if (timeSinceActivity >= timeout) {
 			console.log('[Auth] Auto-logout due to inactivity');
 			logoutCallback?.();
 		}
@@ -56,7 +81,9 @@ export function cleanupActivityTracking() {
 }
 
 export function getTimeUntilLogout(): number {
-	const remaining = INACTIVITY_TIMEOUT - (Date.now() - lastActivityTime);
+	const timeout = getInactivityTimeout();
+	if (timeout === 0) return Infinity; // Auto-logout disabled
+	const remaining = timeout - (Date.now() - lastActivityTime);
 	return Math.max(0, remaining);
 }
 
@@ -322,7 +349,7 @@ function createAuthStore() {
 			if (!state.tokens) return false;
 
 			try {
-				const response = await fetch('/api/auth/profile', {
+				const response = await fetch(`${API_BASE}/api/auth/profile`, {
 					method: 'PATCH',
 					headers: {
 						'Content-Type': 'application/json',

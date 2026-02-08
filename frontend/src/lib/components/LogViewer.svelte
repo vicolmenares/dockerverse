@@ -372,6 +372,48 @@
         return "text-foreground";
     }
   }
+
+  function getLevelBorderColor(level: string | undefined) {
+    switch (level) {
+      case "error":
+        return "border-l-stopped";
+      case "warning":
+        return "border-l-paused";
+      case "info":
+        return "border-l-primary";
+      case "debug":
+        return "border-l-foreground-muted";
+      default:
+        return "border-l-background-tertiary";
+    }
+  }
+
+  function getLevelBadgeClass(level: string | undefined) {
+    switch (level) {
+      case "error":
+        return "bg-stopped/15 text-stopped border border-stopped/30";
+      case "warning":
+        return "bg-paused/15 text-paused border border-paused/30";
+      case "info":
+        return "bg-primary/15 text-primary border border-primary/30";
+      case "debug":
+        return "bg-foreground-muted/15 text-foreground-muted border border-foreground-muted/30";
+      default:
+        return "bg-background-tertiary text-foreground-muted border border-border";
+    }
+  }
+
+  function formatLogTimestamp(ts: Date | undefined): string {
+    if (!ts) return "";
+    return ts.toLocaleString(undefined, {
+      month: "short",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    });
+  }
 </script>
 
 <div
@@ -389,6 +431,7 @@
   <!-- Header (Draggable) -->
   <div
     role="toolbar"
+    tabindex="0"
     class="flex items-center justify-between px-4 py-2 bg-background-tertiary border-b border-border select-none"
     class:cursor-grab={!isFullscreen && !isDragging}
     class:cursor-grabbing={isDragging}
@@ -594,41 +637,67 @@
     {/if}
   </div>
 
-  <!-- Logs -->
+  <!-- Logs (Databasement-style table layout) -->
   <div
     bind:this={logsContainer}
-    class="flex-1 overflow-auto p-4 bg-[#1a1b26] font-mono text-sm"
+    class="flex-1 overflow-auto bg-[#1a1b26]"
     onscroll={() => {
-      // Disable auto-scroll if user scrolls up
       const { scrollTop, scrollHeight, clientHeight } = logsContainer;
       autoScroll = scrollHeight - scrollTop - clientHeight < 50;
     }}
   >
     {#if filteredLogs().length === 0}
-      <div class="text-foreground-muted text-center py-8">
+      <div class="text-foreground-muted text-center py-8 font-mono text-sm">
         {logs.length === 0
           ? t.waitingLogs
           : `${t.showing} 0 ${t.of} ${logs.length} ${t.lines}`}
       </div>
     {:else}
+      <!-- Table Header -->
+      <div class="sticky top-0 z-10 grid grid-cols-[140px_80px_1fr] gap-0 bg-background-tertiary/90 backdrop-blur-sm border-b border-border text-xs font-medium text-foreground-muted uppercase tracking-wider">
+        <div class="px-3 py-2 flex items-center gap-1">
+          <Calendar class="w-3 h-3" />
+          {$language === 'es' ? 'Fecha' : 'Date'}
+        </div>
+        <div class="px-3 py-2 flex items-center gap-1">
+          <Filter class="w-3 h-3" />
+          {$language === 'es' ? 'Tipo' : 'Type'}
+        </div>
+        <div class="px-3 py-2">
+          {$language === 'es' ? 'Mensaje' : 'Message'}
+        </div>
+      </div>
+
+      <!-- Log rows -->
       {#each filteredLogs() as log, i}
         {@const LevelIcon = getLevelIcon(log.level)}
         <div
-          class="log-line hover:bg-white/5 -mx-4 px-4 py-0.5 flex items-start gap-2 group"
+          class="log-row grid grid-cols-[140px_80px_1fr] gap-0 border-l-4 {getLevelBorderColor(log.level)} hover:bg-white/[0.03] transition-colors group border-b border-white/[0.04]"
         >
-          <span
-            class="text-foreground-muted select-none w-8 text-right shrink-0"
-            >{i + 1}</span
-          >
-          {#if LevelIcon}
-            <span class="shrink-0 mt-0.5 {getLevelColor(log.level)}">
-              <LevelIcon class="w-3.5 h-3.5" />
-            </span>
-          {:else}
-            <span class="w-3.5 shrink-0"></span>
-          {/if}
-          <span class="flex-1 {getLevelColor(log.level)}">
-            <!-- Highlight search matches -->
+          <!-- Date column -->
+          <div class="px-3 py-1.5 text-xs font-mono text-foreground-muted/70 flex items-start gap-1.5 shrink-0">
+            <span class="select-none text-foreground-muted/40 w-6 text-right">{i + 1}</span>
+            <span>{formatLogTimestamp(log.timestamp)}</span>
+          </div>
+
+          <!-- Type badge column -->
+          <div class="px-2 py-1.5 flex items-start">
+            {#if log.level}
+              <span class="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-semibold uppercase rounded {getLevelBadgeClass(log.level)}">
+                {#if LevelIcon}
+                  <LevelIcon class="w-2.5 h-2.5" />
+                {/if}
+                {log.level}
+              </span>
+            {:else}
+              <span class="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium uppercase rounded bg-background-tertiary/50 text-foreground-muted/50 border border-white/5">
+                log
+              </span>
+            {/if}
+          </div>
+
+          <!-- Message column -->
+          <div class="px-3 py-1.5 font-mono text-sm {getLevelColor(log.level)} min-w-0">
             {#if searchQuery}
               {@html parseAnsi(log.line).replace(
                 new RegExp(
@@ -640,14 +709,7 @@
             {:else}
               {@html parseAnsi(log.line)}
             {/if}
-          </span>
-          {#if log.timestamp}
-            <span
-              class="text-foreground-muted text-xs opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
-            >
-              {log.timestamp.toLocaleTimeString()}
-            </span>
-          {/if}
+          </div>
         </div>
       {/each}
     {/if}
@@ -680,10 +742,11 @@
 </div>
 
 <style>
-  .log-line {
+  .log-row {
     white-space: pre-wrap;
     word-break: break-all;
-    line-height: 1.5;
+    line-height: 1.6;
+    min-height: 32px;
   }
 
   /* Style for date/time inputs */
