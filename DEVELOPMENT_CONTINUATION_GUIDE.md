@@ -163,6 +163,12 @@ Se eliminó el patrón de modal flotante (`Settings.svelte` como overlay `fixed 
 
 **Nota:** `Settings.svelte` ya no se importa pero se mantiene como referencia histórica.
 
+**Hotfix v2.2.0 - Nginx Cache & app.css (8 Feb 2026):**
+- **Bug**: Nginx proxy cache permissions (`/var/cache/nginx/`) causaban `Permission denied` al cachear assets estáticos (CSS/JS), resultando en respuestas vacías (200 con 0 bytes). La app cargaba sin estilos ni JS.
+- **Fix `Dockerfile.unified`**: Agregado `chown -R nginx:nginx /var/cache/nginx /run/nginx` en el script de arranque de nginx s6. También se incluye `package-lock.json` en el COPY para installs consistentes.
+- **Bug**: `app.html` tenía `<link rel="preload" href="app.css">` pero ese archivo no existe en el build de SvelteKit (CSS se bundlea en hashes inmutables). Generaba error 404 en consola.
+- **Fix `app.html`**: Removido el preload link a `app.css`.
+
 ---
 
 ## 🏗️ Arquitectura del Sistema
