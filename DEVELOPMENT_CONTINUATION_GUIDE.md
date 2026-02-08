@@ -3,7 +3,7 @@
 > **Documento de transferencia de conocimiento para continuar el desarrollo desde macOS**
 > 
 > Última actualización: 8 de febrero de 2026
-> Versión actual: v2.1.0
+> Versión actual: v2.2.0
 
 ---
 
@@ -52,6 +52,7 @@
 - ✅ Sidebar con estado activo resaltado
 - ✅ Soporte multi-idioma (ES/EN)
 - ✅ Tema oscuro nativo
+- ✅ Settings con navegación por rutas SvelteKit (v2.2.0)
 
 ---
 
@@ -116,6 +117,51 @@
 6. **Pending Updates Panel**: Dropdown en header con contador y lista
 7. **Sidebar Active State**: Resaltado visual del item activo
 8. **Avatar Upload Fix**: Corregido endpoint API
+
+#### Fase 5: v2.2.0 (8 Febrero 2026)
+**Migración a navegación basada en rutas (Page-Based Navigation):**
+
+Se eliminó el patrón de modal flotante (`Settings.svelte` como overlay `fixed inset-0 z-50`) y se migró a rutas SvelteKit dedicadas. Cada sección de configuración ahora es una página independiente con URL propia.
+
+**Cambios principales:**
+1. **Shared Settings Module** (`$lib/settings/index.ts`): Traducciones y tipos extraídos de Settings.svelte
+2. **Settings Layout** (`routes/settings/+layout.svelte`): Layout con breadcrumb y auth guard
+3. **9 rutas de settings creadas**:
+   - `/settings` - Menú principal de configuración
+   - `/settings/profile` - Perfil de usuario y avatar
+   - `/settings/security` - Auto-logout, contraseña, 2FA/TOTP
+   - `/settings/users` - Gestión de usuarios (admin)
+   - `/settings/notifications` - Umbrales, canales, Apprise
+   - `/settings/appearance` - Tema y idioma
+   - `/settings/data` - Caché y almacenamiento
+   - `/settings/about` - Información de la app
+4. **Sidebar actualizado**: Todos los items usan `href` links en vez de callbacks `action()`
+5. **Active state por URL**: `activeSidebarItem` se deriva de `$page.url.pathname`
+6. **User menu**: Botón "Settings" navega a `/settings` en vez de abrir modal
+7. **Updates dropdown**: Link "Ver todo" navega a `/settings/data`
+8. **Bug fix**: `ResourceChart.svelte` importaba `language` desde `$lib/stores/auth` (incorrecto) → corregido a `$lib/stores/docker`
+
+**Archivos creados (10):**
+| Archivo | Descripción |
+|---------|-------------|
+| `src/lib/settings/index.ts` | Traducciones compartidas, tipos |
+| `src/routes/settings/+layout.svelte` | Layout settings con breadcrumb |
+| `src/routes/settings/+page.svelte` | Menú principal settings |
+| `src/routes/settings/profile/+page.svelte` | Perfil y avatar |
+| `src/routes/settings/security/+page.svelte` | Seguridad, password, 2FA |
+| `src/routes/settings/users/+page.svelte` | Gestión usuarios |
+| `src/routes/settings/notifications/+page.svelte` | Notificaciones |
+| `src/routes/settings/appearance/+page.svelte` | Tema e idioma |
+| `src/routes/settings/data/+page.svelte` | Datos y caché |
+| `src/routes/settings/about/+page.svelte` | Acerca de |
+
+**Archivos modificados (2):**
+| Archivo | Cambios |
+|---------|---------|
+| `src/routes/+layout.svelte` | Removido Settings modal, sidebar usa hrefs, active state por URL |
+| `src/lib/components/ResourceChart.svelte` | Fix import `language` store |
+
+**Nota:** `Settings.svelte` ya no se importa pero se mantiene como referencia histórica.
 
 ---
 
@@ -282,14 +328,26 @@ dockerverse/
 │   │   │   │   ├── Login.svelte
 │   │   │   │   ├── LogViewer.svelte
 │   │   │   │   ├── ResourceChart.svelte
-│   │   │   │   ├── Settings.svelte (~2000 líneas)
+│   │   │   │   ├── Settings.svelte (legacy, no longer imported)
 │   │   │   │   └── Terminal.svelte
+│   │   │   ├── settings/
+│   │   │   │   └── index.ts   # Shared translations & types
 │   │   │   └── stores/
 │   │   │       ├── auth.ts    # Auth store (~550 líneas)
 │   │   │       └── docker.ts  # Docker store (~500 líneas)
 │   │   └── routes/
-│   │       ├── +layout.svelte # Main layout (~600 líneas)
-│   │       └── +page.svelte   # Dashboard page
+│   │       ├── +layout.svelte # Main layout (~640 líneas)
+│   │       ├── +page.svelte   # Dashboard page
+│   │       └── settings/      # Settings pages (v2.2.0)
+│   │           ├── +layout.svelte     # Settings layout + auth guard
+│   │           ├── +page.svelte       # Settings menu
+│   │           ├── profile/+page.svelte
+│   │           ├── security/+page.svelte
+│   │           ├── users/+page.svelte
+│   │           ├── notifications/+page.svelte
+│   │           ├── appearance/+page.svelte
+│   │           ├── data/+page.svelte
+│   │           └── about/+page.svelte
 │   └── static/
 │       ├── robots.txt
 │       └── sw.js              # Service worker stub
@@ -774,16 +832,24 @@ docker exec dockerverse sh -c 'echo "[NUEVO_JSON]" > /data/users.json'
 
 ## 🗺️ Roadmap y Próximos Pasos
 
-### v2.1.0 (Planificado)
+### v2.2.0 (Completado - 8 Feb 2026)
 
+- [x] Settings migrado de modal a rutas SvelteKit
+- [x] Navegación por URL para todas las secciones de configuración
+- [x] Auth guard en settings layout
+- [x] Active state del sidebar derivado de URL
+- [x] Fix import bug en ResourceChart.svelte
+
+### v2.3.0 (Planificado)
+
+- [ ] Container Activity chart (bar chart estilo Jobs Activity)
 - [ ] Docker Compose management (view/edit compose files)
 - [ ] Container creation wizard
 - [ ] Network visualization
 - [ ] Volume management UI
-- [ ] Notifications via Telegram/Email
 - [ ] Container templates/presets
 
-### v2.2.0 (Planificado)
+### v2.4.0 (Planificado)
 
 - [ ] Multi-user permissions (RBAC)
 - [ ] Audit log
