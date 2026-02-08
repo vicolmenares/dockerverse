@@ -11,11 +11,14 @@
     ArrowUpCircle,
     Download,
     Loader2,
+    CheckCircle2,
+    RefreshCw,
   } from "lucide-svelte";
   import type { Container, ContainerStats, ImageUpdate } from "$lib/api/docker";
   import {
     containerAction,
     triggerContainerUpdate,
+    checkImageUpdate,
     formatBytes,
     formatUptime,
   } from "$lib/api/docker";
@@ -24,6 +27,7 @@
     translations,
     imageUpdates,
     checkForUpdates,
+    lastUpdateCheck,
   } from "$lib/stores/docker";
 
   let {
@@ -40,24 +44,50 @@
 
   let loading = $state(false);
   let updating = $state(false);
+  let checking = $state(false);
   let t = $derived(translations[$language]);
 
-  // Check if container has a pending update
-  let hasUpdate = $derived.by(() => {
+  // Get the update info for this container
+  let updateInfo = $derived.by(() => {
     const updates = $imageUpdates;
-    return updates.some(
+    return updates.find(
       (u) =>
         u.containerId === container.id &&
-        u.hostId === container.hostId &&
-        u.hasUpdate,
-    );
+        u.hostId === container.hostId,
+    ) ?? null;
   });
+
+  // Check if container has a pending update
+  let hasUpdate = $derived(updateInfo?.hasUpdate ?? false);
+
+  // Check if update check has been performed for this container
+  let hasBeenChecked = $derived(updateInfo !== null);
 
   // Check if container has Watchtower enabled
   let hasWatchtower = $derived(
     container.labels?.["com.centurylinklabs.watchtower.enable"] === "true" ||
       container.labels?.["com.centurylinklabs.watchtower"] === "true",
   );
+
+  // Build tooltip text with version info
+  let updateTooltip = $derived.by(() => {
+    if (!updateInfo) return $language === "es" ? "No verificado" : "Not checked";
+    const img = updateInfo.image || container.image;
+    const currentShort = updateInfo.currentDigest
+      ? updateInfo.currentDigest.split("@").pop()?.substring(0, 19) + "..."
+      : "unknown";
+    if (updateInfo.hasUpdate) {
+      const latestShort = updateInfo.latestDigest
+        ? updateInfo.latestDigest.substring(0, 19) + "..."
+        : "unknown";
+      return $language === "es"
+        ? `Actual: ${img} (${currentShort})\nNuevo: ${latestShort}\nClick para actualizar con Watchtower`
+        : `Current: ${img} (${currentShort})\nLatest: ${latestShort}\nClick to update via Watchtower`;
+    }
+    return $language === "es"
+      ? `${img} (${currentShort})\nImagen actualizada`
+      : `${img} (${currentShort})\nUp to date`;
+  });
 
   function getStateColor(state: string) {
     switch (state) {
@@ -107,6 +137,28 @@
     updating = false;
   }
 
+  async function handleCheckUpdate() {
+    checking = true;
+    try {
+      const result = await checkImageUpdate(container.hostId, container.id);
+      // Update the store with this single result
+      imageUpdates.update((current) => {
+        const idx = current.findIndex(
+          (u) => u.containerId === container.id && u.hostId === container.hostId,
+        );
+        if (idx >= 0) {
+          current[idx] = result;
+        } else {
+          current = [...current, result];
+        }
+        return current;
+      });
+    } catch (e) {
+      console.error("Check update failed:", e);
+    }
+    checking = false;
+  }
+
   function parseImage(image: string) {
     const parts = image.split(":");
     return {
@@ -146,16 +198,23 @@
           </h4>
           {#if hasUpdate}
             <span
-              class="flex items-center gap-1 text-[10px] font-semibold text-accent-orange bg-accent-orange/15 border border-accent-orange/30 px-1.5 py-0.5 rounded-full flex-shrink-0 update-badge"
-              title="Update available"
+              class="flex items-center gap-1 text-[10px] font-semibold text-accent-orange bg-accent-orange/15 border border-accent-orange/30 px-1.5 py-0.5 rounded-full flex-shrink-0 update-badge cursor-help"
+              title={updateTooltip}
             >
               <ArrowUpCircle class="w-3 h-3" />
               UPDATE
             </span>
+          {:else if hasBeenChecked}
+            <span
+              class="flex items-center gap-1 text-[10px] font-medium text-running bg-running/15 border border-running/30 px-1.5 py-0.5 rounded-full flex-shrink-0 cursor-help"
+              title={updateTooltip}
+            >
+              <CheckCircle2 class="w-2.5 h-2.5" />
+            </span>
           {:else if hasWatchtower}
             <span
-              class="flex items-center gap-1 text-[10px] font-medium text-running/70 bg-running/10 px-1.5 py-0.5 rounded-full flex-shrink-0"
-              title="Watchtower monitoring"
+              class="flex items-center gap-1 text-[10px] font-medium text-running/70 bg-running/10 px-1.5 py-0.5 rounded-full flex-shrink-0 cursor-help"
+              title={$language === "es" ? "Watchtower monitoreando" : "Watchtower monitoring"}
             >
               <RotateCcw class="w-2.5 h-2.5 watchtower-spin" />
             </span>
@@ -268,7 +327,7 @@
           class="flex items-center gap-1.5 px-2.5 py-1.5 bg-accent-orange/20 text-accent-orange rounded-lg hover:bg-accent-orange/30 transition-colors"
           onclick={handleUpdate}
           disabled={updating}
-          title={$language === "es" ? "Actualizar" : "Update"}
+          title={updateTooltip}
         >
           {#if updating}
             <Loader2 class="w-4 h-4 animate-spin" />
@@ -278,6 +337,19 @@
           <span class="text-xs font-medium"
             >{$language === "es" ? "Actualizar" : "Update"}</span
           >
+        </button>
+      {:else if isRunning}
+        <button
+          class="btn-icon hover:bg-primary/20 hover:text-primary"
+          onclick={handleCheckUpdate}
+          disabled={checking}
+          title={$language === "es" ? "Verificar actualización" : "Check for update"}
+        >
+          {#if checking}
+            <Loader2 class="w-4 h-4 animate-spin" />
+          {:else}
+            <RefreshCw class="w-4 h-4" />
+          {/if}
         </button>
       {/if}
       {#if isRunning}

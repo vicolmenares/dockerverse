@@ -41,6 +41,9 @@ services:
     environment:
       - PORT=3001
       - DOCKER_HOST=unix:///var/run/docker.sock
+      - DOCKER_HOSTS=${DOCKER_HOSTS:-raspi1:Raspi Main:unix:///var/run/docker.sock:local|raspi2:Raspi 2:http://192.168.1.146:2375:remote}
+      - WATCHTOWER_TOKEN=${WATCHTOWER_TOKEN:-}
+      - WATCHTOWER_URLS=${WATCHTOWER_URLS:-}
       - APPRISE_URL=http://apprise:8000
       - JWT_SECRET=dockerverse-super-secret-key-2026
     networks:
