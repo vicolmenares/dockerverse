@@ -71,6 +71,8 @@ export interface ImageUpdate {
 	hostId: string;
 	currentDigest: string;
 	latestDigest?: string;
+	currentTag: string;
+	latestTag?: string;
 	hasUpdate: boolean;
 	checkedAt: number;
 }
@@ -94,7 +96,7 @@ export async function fetchContainers(): Promise<Container[]> {
 }
 
 export async function fetchHosts(): Promise<Host[]> {
-	const res = await fetchWithTimeout(`${API_BASE}/api/hosts`, { headers: getAuthHeaders() });
+	const res = await fetchWithTimeout(`${API_BASE}/api/hosts`, { headers: getAuthHeaders() }, 15000);
 	if (!res.ok) throw new Error('Failed to fetch hosts');
 	return res.json();
 }

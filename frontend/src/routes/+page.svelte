@@ -131,13 +131,14 @@
       case "memory":
         return Math.min(100, stats.memoryPercent);
       case "network":
-        return Math.min(100, (stats.networkRx + stats.networkTx) / 1048576); // rough scale
+        return (stats.networkRx + stats.networkTx) / 1048576; // MB, no cap - relative scaling handles proportions
       default:
         return 0;
     }
   }
 
   function getMetricBarColor(percent: number): string {
+    if (resourceMetric === "network") return "bg-accent-purple";
     if (percent >= 80) return "bg-stopped";
     if (percent >= 50) return "bg-paused";
     return "bg-running";
@@ -226,7 +227,7 @@
           for (const stat of statsArray) {
             current.set(`${stat.id}@${stat.hostId}`, stat);
           }
-          return current;
+          return new Map(current);
         });
         connectionError = null;
       },

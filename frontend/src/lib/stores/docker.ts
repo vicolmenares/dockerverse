@@ -148,7 +148,7 @@ export function getContainerStats(containerId: string): ContainerStats | undefin
 export function updateStats(newStats: ContainerStats[]) {
 	containerStats.update(map => {
 		for (const stat of newStats) {
-			map.set(stat.id, stat);
+			map.set(`${stat.id}@${stat.hostId}`, stat);
 		}
 		return new Map(map);
 	});
@@ -229,7 +229,7 @@ export const pendingUpdatesCount = derived(imageUpdates, ($updates) =>
 	$updates.filter(u => u.hasUpdate).length
 );
 
-// Function to check for updates
+// Function to check for updates (with retry on failure)
 export async function checkForUpdates(): Promise<void> {
 	updatesLoading.set(true);
 	try {
@@ -237,7 +237,17 @@ export async function checkForUpdates(): Promise<void> {
 		imageUpdates.set(updates);
 		lastUpdateCheck.set(new Date());
 	} catch (e) {
-		console.error('Failed to check for updates:', e);
+		console.error('Failed to check for updates, retrying in 5s:', e);
+		// Retry once after 5s (handles 401 race condition on login)
+		setTimeout(async () => {
+			try {
+				const updates = await fetchImageUpdates();
+				imageUpdates.set(updates);
+				lastUpdateCheck.set(new Date());
+			} catch (e2) {
+				console.error('Retry also failed:', e2);
+			}
+		}, 5000);
 	} finally {
 		updatesLoading.set(false);
 	}

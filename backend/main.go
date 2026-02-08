@@ -365,6 +365,8 @@ type ImageUpdate struct {
 	HostID        string `json:"hostId"`
 	CurrentDigest string `json:"currentDigest"`
 	LatestDigest  string `json:"latestDigest,omitempty"`
+	CurrentTag    string `json:"currentTag"`
+	LatestTag     string `json:"latestTag,omitempty"`
 	HasUpdate     bool   `json:"hasUpdate"`
 	CheckedAt     int64  `json:"checkedAt"`
 }
@@ -1738,12 +1740,7 @@ func (dm *DockerManager) GetContainerStats(ctx context.Context, hostID, containe
 	}, nil
 }
 
-func (dm *DockerManager) GetAllStats(ctx context.Context) ([]ContainerStats, error) {
-	containers, err := dm.GetAllContainers(ctx)
-	if err != nil {
-		return nil, err
-	}
-
+func (dm *DockerManager) GetStatsForContainers(ctx context.Context, containers []ContainerInfo) []ContainerStats {
 	var allStats []ContainerStats
 	var wg sync.WaitGroup
 	var mu sync.Mutex
@@ -1757,17 +1754,16 @@ func (dm *DockerManager) GetAllStats(ctx context.Context) ([]ContainerStats, err
 		go func(cont ContainerInfo) {
 			defer wg.Done()
 
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			sCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
-			stats, err := dm.GetContainerStats(ctx, cont.HostID, cont.ID)
+			stats, err := dm.GetContainerStats(sCtx, cont.HostID, cont.ID)
 			if err != nil {
 				return
 			}
 
 			stats.Name = cont.Name
 
-			// Check for high resource usage notifications
 			go dm.notifySvc.NotifyHighResource(cont.Name, stats.CPUPercent, stats.MemoryPct)
 
 			mu.Lock()
@@ -1777,7 +1773,15 @@ func (dm *DockerManager) GetAllStats(ctx context.Context) ([]ContainerStats, err
 	}
 
 	wg.Wait()
-	return allStats, nil
+	return allStats
+}
+
+func (dm *DockerManager) GetAllStats(ctx context.Context) ([]ContainerStats, error) {
+	containers, err := dm.GetAllContainers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return dm.GetStatsForContainers(ctx, containers), nil
 }
 
 func (dm *DockerManager) GetHostStats(ctx context.Context) []HostStats {
@@ -1827,36 +1831,46 @@ func (dm *DockerManager) GetHostStats(ctx context.Context) []HostStats {
 				hs.ContainerCount = len(containers)
 				var totalCPU, totalMem float64
 				var runningCount int
+				var statsWg sync.WaitGroup
+				var statsMu sync.Mutex
 
 				for _, c := range containers {
 					if c.State == "running" {
 						runningCount++
-						// Get stats for running container with timeout
-						statsCtx, statsCancel := context.WithTimeout(ctx, 2*time.Second)
-						statsResp, err := cli.ContainerStats(statsCtx, c.ID, false)
-						if err == nil {
+						statsWg.Add(1)
+						go func(containerID string) {
+							defer statsWg.Done()
+							statsCtx, statsCancel := context.WithTimeout(ctx, 2*time.Second)
+							defer statsCancel()
+							statsResp, err := cli.ContainerStats(statsCtx, containerID, false)
+							if err != nil {
+								return
+							}
 							var stats types.StatsJSON
 							if json.NewDecoder(statsResp.Body).Decode(&stats) == nil {
-								// Calculate CPU percentage
 								cpuDelta := float64(stats.CPUStats.CPUUsage.TotalUsage - stats.PreCPUStats.CPUUsage.TotalUsage)
 								systemDelta := float64(stats.CPUStats.SystemUsage - stats.PreCPUStats.SystemUsage)
+								var cpu, mem float64
 								if systemDelta > 0 && cpuDelta > 0 {
 									numCPUs := float64(len(stats.CPUStats.CPUUsage.PercpuUsage))
 									if numCPUs == 0 {
 										numCPUs = 1
 									}
-									totalCPU += (cpuDelta / systemDelta) * numCPUs * 100.0
+									cpu = (cpuDelta / systemDelta) * numCPUs * 100.0
 								}
-								// Calculate memory percentage
 								if stats.MemoryStats.Limit > 0 {
-									totalMem += float64(stats.MemoryStats.Usage) / float64(stats.MemoryStats.Limit) * 100.0
+									mem = float64(stats.MemoryStats.Usage) / float64(stats.MemoryStats.Limit) * 100.0
 								}
+								statsMu.Lock()
+								totalCPU += cpu
+								totalMem += mem
+								statsMu.Unlock()
 							}
 							statsResp.Body.Close()
-						}
-						statsCancel()
+						}(c.ID)
 					}
 				}
+				statsWg.Wait()
 				hs.RunningCount = runningCount
 				hs.CPUPercent = totalCPU
 				hs.MemoryPercent = totalMem
@@ -1918,19 +1932,34 @@ func (dm *DockerManager) GetContainerLogs(ctx context.Context, hostID, container
 
 type WSHub struct {
 	clients    map[*websocket.Conn]bool
+	sseClients map[chan []byte]bool
 	broadcast  chan []byte
 	register   chan *websocket.Conn
 	unregister chan *websocket.Conn
 	mu         sync.Mutex
+	sseMu      sync.Mutex
 }
 
 func NewWSHub() *WSHub {
 	return &WSHub{
 		clients:    make(map[*websocket.Conn]bool),
+		sseClients: make(map[chan []byte]bool),
 		broadcast:  make(chan []byte, 256),
 		register:   make(chan *websocket.Conn),
 		unregister: make(chan *websocket.Conn),
 	}
+}
+
+func (h *WSHub) RegisterSSE(ch chan []byte) {
+	h.sseMu.Lock()
+	h.sseClients[ch] = true
+	h.sseMu.Unlock()
+}
+
+func (h *WSHub) UnregisterSSE(ch chan []byte) {
+	h.sseMu.Lock()
+	delete(h.sseClients, ch)
+	h.sseMu.Unlock()
 }
 
 func (h *WSHub) Run() {
@@ -1955,6 +1984,16 @@ func (h *WSHub) Run() {
 				}
 			}
 			h.mu.Unlock()
+			// Fan out to SSE clients
+			h.sseMu.Lock()
+			for ch := range h.sseClients {
+				select {
+				case ch <- message:
+				default:
+					// Drop message if SSE client is slow
+				}
+			}
+			h.sseMu.Unlock()
 		}
 	}
 }
@@ -2812,7 +2851,7 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 		return c.JSON(results)
 	})
 
-	// SSE endpoint for real-time stats (legacy, kept for compatibility)
+	// SSE endpoint - subscribes to hub broadcasts instead of polling Docker API
 	protected.Get("/events", func(c *fiber.Ctx) error {
 		c.Set("Content-Type", "text/event-stream")
 		c.Set("Cache-Control", "no-cache")
@@ -2820,38 +2859,18 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 		c.Set("Transfer-Encoding", "chunked")
 
 		ctx := c.Context()
+		msgCh := make(chan []byte, 64)
+		hub.RegisterSSE(msgCh)
 
 		c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
-			ticker := time.NewTicker(2 * time.Second)
-			defer ticker.Stop()
+			defer hub.UnregisterSSE(msgCh)
 
 			for {
 				select {
 				case <-ctx.Done():
 					return
-				case <-ticker.C:
-					// Get containers
-					containers, err := dm.GetAllContainers(context.Background())
-					if err == nil {
-						msg := SSEMessage{Type: "containers", Data: containers}
-						data, _ := json.Marshal(msg)
-						fmt.Fprintf(w, "data: %s\n\n", data)
-					}
-
-					// Get stats
-					stats, err := dm.GetAllStats(context.Background())
-					if err == nil {
-						msg := SSEMessage{Type: "stats", Data: stats}
-						data, _ := json.Marshal(msg)
-						fmt.Fprintf(w, "data: %s\n\n", data)
-					}
-
-					// Get host stats
-					hostStats := dm.GetHostStats(context.Background())
-					msg := SSEMessage{Type: "hosts", Data: hostStats}
-					data, _ := json.Marshal(msg)
-					fmt.Fprintf(w, "data: %s\n\n", data)
-
+				case msg := <-msgCh:
+					fmt.Fprintf(w, "data: %s\n\n", msg)
 					w.Flush()
 				}
 			}
@@ -3061,12 +3080,19 @@ func checkContainerUpdate(ctx context.Context, container ContainerInfo, dm *Dock
 		currentDigest = imageInspect.RepoDigests[0]
 	}
 
+	// Extract current tag from image name (e.g., "nginx:1.25" -> "1.25")
+	currentTag := "latest"
+	if parts := strings.SplitN(container.Image, ":", 2); len(parts) == 2 {
+		currentTag = parts[1]
+	}
+
 	update := &ImageUpdate{
 		ContainerID:   container.ID,
 		ContainerName: container.Name,
 		Image:         container.Image,
 		HostID:        container.HostID,
 		CurrentDigest: currentDigest,
+		CurrentTag:    currentTag,
 		HasUpdate:     false,
 		CheckedAt:     time.Now().Unix(),
 	}
@@ -3096,6 +3122,14 @@ func checkContainerUpdate(ctx context.Context, container ContainerInfo, dm *Dock
 		hasUpdate := currentDigest != "" && !strings.Contains(currentDigest, remoteDigest)
 		update.HasUpdate = hasUpdate
 		update.LatestDigest = remoteDigest
+		if hasUpdate {
+			// Show short digest as "latest tag" since we can't resolve the actual tag
+			if len(remoteDigest) > 15 {
+				update.LatestTag = remoteDigest[:15] + "..."
+			} else {
+				update.LatestTag = remoteDigest
+			}
+		}
 	}
 
 	// Cache the result
@@ -3162,24 +3196,34 @@ func startBroadcaster(dm *DockerManager, hub *WSHub) {
 	ticker := time.NewTicker(2 * time.Second)
 	go func() {
 		for range ticker.C {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 
-			// Broadcast containers
+			// Get containers ONCE (shared by stats and hosts)
 			containers, err := dm.GetAllContainers(ctx)
-			if err == nil {
-				hub.Broadcast("containers", containers)
+			if err != nil {
+				cancel()
+				continue
 			}
+			hub.Broadcast("containers", containers)
 
-			// Broadcast stats
-			stats, err := dm.GetAllStats(ctx)
-			if err == nil {
+			// Run stats and hosts in parallel
+			var bcastWg sync.WaitGroup
+
+			bcastWg.Add(1)
+			go func() {
+				defer bcastWg.Done()
+				stats := dm.GetStatsForContainers(ctx, containers)
 				hub.Broadcast("stats", stats)
-			}
+			}()
 
-			// Broadcast hosts
-			hosts := dm.GetHostStats(ctx)
-			hub.Broadcast("hosts", hosts)
+			bcastWg.Add(1)
+			go func() {
+				defer bcastWg.Done()
+				hosts := dm.GetHostStats(ctx)
+				hub.Broadcast("hosts", hosts)
+			}()
 
+			bcastWg.Wait()
 			cancel()
 		}
 	}()
