@@ -227,7 +227,7 @@
           {:else}
             <Minus class="w-3 h-3 text-foreground-muted" />
           {/if}
-          <span class="text-lg font-bold {getValueColor(cpuStats.current)}"
+          <span class="text-lg font-bold tabular-nums {getValueColor(cpuStats.current)}"
             >{cpuStats.current.toFixed(1)}%</span
           >
         </div>
@@ -304,12 +304,12 @@
       <div class="flex justify-between mt-2 text-xs text-foreground-muted">
         <span
           >{t.average}:
-          <strong class="text-foreground">{cpuStats.avg.toFixed(1)}%</strong
+          <strong class="text-foreground tabular-nums">{cpuStats.avg.toFixed(1)}%</strong
           ></span
         >
         <span
           >{t.peak}:
-          <strong class="text-foreground">{cpuStats.peak.toFixed(1)}%</strong
+          <strong class="text-foreground tabular-nums">{cpuStats.peak.toFixed(1)}%</strong
           ></span
         >
       </div>
@@ -330,7 +330,7 @@
           {:else}
             <Minus class="w-3 h-3 text-foreground-muted" />
           {/if}
-          <span class="text-lg font-bold {getValueColor(memStats.current)}"
+          <span class="text-lg font-bold tabular-nums {getValueColor(memStats.current)}"
             >{memStats.current.toFixed(1)}%</span
           >
         </div>
@@ -407,12 +407,12 @@
       <div class="flex justify-between mt-2 text-xs text-foreground-muted">
         <span
           >{t.average}:
-          <strong class="text-foreground">{memStats.avg.toFixed(1)}%</strong
+          <strong class="text-foreground tabular-nums">{memStats.avg.toFixed(1)}%</strong
           ></span
         >
         <span
           >{t.peak}:
-          <strong class="text-foreground">{memStats.peak.toFixed(1)}%</strong
+          <strong class="text-foreground tabular-nums">{memStats.peak.toFixed(1)}%</strong
           ></span
         >
       </div>
@@ -425,7 +425,7 @@
           <Wifi class="w-4 h-4 text-accent-purple" />
           <span class="text-sm font-medium text-foreground">{t.network}</span>
         </div>
-        <div class="flex items-center gap-2 text-xs">
+        <div class="flex items-center gap-2 text-xs tabular-nums">
           <span class="text-running">↓ {netIn.toFixed(2)} MB/s</span>
           <span class="text-primary">↑ {netOut.toFixed(2)} MB/s</span>
         </div>
@@ -498,7 +498,7 @@
           <HardDrive class="w-4 h-4 text-paused" />
           <span class="text-sm font-medium text-foreground">{t.disk}</span>
         </div>
-        <div class="flex items-center gap-2 text-xs">
+        <div class="flex items-center gap-2 text-xs tabular-nums">
           <span class="text-accent-cyan">R: {diskRead.toFixed(2)} MB/s</span>
           <span class="text-paused">W: {diskWrite.toFixed(2)} MB/s</span>
         </div>
