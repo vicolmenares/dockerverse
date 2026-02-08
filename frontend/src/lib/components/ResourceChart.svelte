@@ -12,7 +12,7 @@
     Clock,
   } from "lucide-svelte";
   import type { Host } from "$lib/api/docker";
-  import { language } from "$lib/stores/auth";
+  import { language } from "$lib/stores/docker";
 
   let { host }: { host: Host } = $props();
 

@@ -2,6 +2,7 @@
   import "../app.css";
   import { onMount, onDestroy } from "svelte";
   import { browser } from "$app/environment";
+  import { page } from "$app/stores";
   import {
     Search,
     Settings as SettingsIcon,
@@ -25,7 +26,6 @@
   } from "lucide-svelte";
   import CommandPalette from "$lib/components/CommandPalette.svelte";
   import Login from "$lib/components/Login.svelte";
-  import Settings from "$lib/components/Settings.svelte";
   import {
     language,
     translations,
@@ -45,13 +45,23 @@
 
   let { children } = $props();
   let showCommandPalette = $state(false);
-  let showSettings = $state(false);
   let showUserMenu = $state(false);
   let showSidebar = $state(false);
   let isRefreshing = $state(false);
   let showUpdatesDropdown = $state(false);
-  let activeSidebarItem = $state("dashboard");
-  let settingsInitialView = $state<string | undefined>(undefined);
+
+  // Derive active sidebar item from current URL path
+  let activeSidebarItem = $derived(() => {
+    const pathname = $page.url.pathname;
+    if (pathname.startsWith('/settings/users')) return 'users';
+    if (pathname.startsWith('/settings/notifications')) return 'notifications';
+    if (pathname.startsWith('/settings/appearance')) return 'appearance';
+    if (pathname.startsWith('/settings/security')) return 'security';
+    if (pathname.startsWith('/settings/data')) return 'data';
+    if (pathname.startsWith('/settings/about')) return 'about';
+    if (pathname.startsWith('/settings')) return 'settings';
+    return 'dashboard';
+  });
 
   // Theme state - initialize from localStorage if available
   type Theme = "dark" | "light";
@@ -68,7 +78,7 @@
     logout: $language === "es" ? "Cerrar Sesión" : "Sign Out",
   });
 
-  // Sidebar menu items
+  // Sidebar menu items - all use href for page-based navigation
   const sidebarItems = $derived([
     {
       id: "dashboard",
@@ -82,7 +92,7 @@
             id: "users",
             icon: Users,
             label: $language === "es" ? "Usuarios" : "Users",
-            action: () => openSettingsView("users"),
+            href: "/settings/users",
           },
         ]
       : []),
@@ -90,31 +100,31 @@
       id: "notifications",
       icon: Bell,
       label: $language === "es" ? "Notificaciones" : "Notifications",
-      action: () => openSettingsView("notifications"),
+      href: "/settings/notifications",
     },
     {
       id: "appearance",
       icon: Palette,
       label: $language === "es" ? "Apariencia" : "Appearance",
-      action: () => openSettingsView("appearance"),
+      href: "/settings/appearance",
     },
     {
       id: "security",
       icon: Shield,
       label: $language === "es" ? "Seguridad" : "Security",
-      action: () => openSettingsView("security"),
+      href: "/settings/security",
     },
     {
       id: "data",
       icon: Database,
       label: $language === "es" ? "Datos" : "Data",
-      action: () => openSettingsView("data"),
+      href: "/settings/data",
     },
     {
       id: "about",
       icon: Info,
       label: $language === "es" ? "Acerca de" : "About",
-      action: () => openSettingsView("about"),
+      href: "/settings/about",
     },
   ]);
 
@@ -125,16 +135,9 @@
     }
     if (e.key === "Escape") {
       showCommandPalette = false;
-      showSettings = false;
       showUserMenu = false;
       showSidebar = false;
     }
-  }
-
-  function openSettingsView(view: string) {
-    settingsInitialView = view;
-    showSettings = true;
-    showSidebar = false;
   }
 
   function toggleLanguage() {
@@ -177,12 +180,6 @@
     auth.logout();
     showUserMenu = false;
     showSidebar = false;
-  }
-
-  function openSettings() {
-    settingsInitialView = undefined;
-    showSettings = true;
-    showUserMenu = false;
   }
 
   // Close user menu and updates dropdown when clicking outside
@@ -303,35 +300,19 @@
         <nav class="flex-1 p-4 space-y-1 overflow-y-auto">
           {#each sidebarItems as item}
             {@const Icon = item.icon}
-            {@const isActive = activeSidebarItem === item.id}
-            {#if item.href}
-              <a
-                href={item.href}
-                class="flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors {isActive
-                  ? 'bg-primary/15 text-primary border-l-2 border-primary'
-                  : 'text-foreground-muted hover:text-foreground hover:bg-background-tertiary'}"
-                onclick={() => {
-                  activeSidebarItem = item.id;
-                  showSidebar = false;
-                }}
-              >
-                <Icon class="w-5 h-5" />
-                <span class="text-sm font-medium">{item.label}</span>
-              </a>
-            {:else}
-              <button
-                class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors {isActive
-                  ? 'bg-primary/15 text-primary border-l-2 border-primary'
-                  : 'text-foreground-muted hover:text-foreground hover:bg-background-tertiary'}"
-                onclick={() => {
-                  activeSidebarItem = item.id;
-                  item.action?.();
-                }}
-              >
-                <Icon class="w-5 h-5" />
-                <span class="text-sm font-medium">{item.label}</span>
-              </button>
-            {/if}
+            {@const isActive = activeSidebarItem() === item.id}
+            <a
+              href={item.href}
+              class="flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors {isActive
+                ? 'bg-primary/15 text-primary border-l-2 border-primary'
+                : 'text-foreground-muted hover:text-foreground hover:bg-background-tertiary'}"
+              onclick={() => {
+                showSidebar = false;
+              }}
+            >
+              <Icon class="w-5 h-5" />
+              <span class="text-sm font-medium">{item.label}</span>
+            </a>
           {/each}
         </nav>
 
@@ -547,17 +528,15 @@
                         {/each}
                       </div>
                       <div class="px-4 py-2 border-t border-border">
-                        <button
-                          class="w-full text-xs text-primary hover:text-primary/80 py-1 transition-colors"
-                          onclick={() => {
-                            showUpdatesDropdown = false;
-                            openSettingsView("data");
-                          }}
+                        <a
+                          href="/settings/data"
+                          class="block w-full text-xs text-primary hover:text-primary/80 py-1 transition-colors text-center"
+                          onclick={() => (showUpdatesDropdown = false)}
                         >
                           {$language === "es"
                             ? "Ver todo en Configuración →"
                             : "View all in Settings →"}
-                        </button>
+                        </a>
                       </div>
                     </div>
                   {/if}
@@ -611,13 +590,14 @@
                         {$currentUser?.email}
                       </p>
                     </div>
-                    <button
+                    <a
+                      href="/settings"
                       class="w-full flex items-center gap-2 px-4 py-2 text-sm text-foreground hover:bg-background-tertiary transition-colors"
-                      onclick={openSettings}
+                      onclick={() => (showUserMenu = false)}
                     >
                       <SettingsIcon class="w-4 h-4" />
                       {userMenuText.settings}
-                    </button>
+                    </a>
                     <button
                       class="w-full flex items-center gap-2 px-4 py-2 text-sm text-red-400 hover:bg-background-tertiary transition-colors"
                       onclick={handleLogout}
@@ -662,12 +642,3 @@
   <CommandPalette onclose={() => (showCommandPalette = false)} />
 {/if}
 
-<!-- Settings Modal -->
-{#if showSettings && $isAuthenticated}
-  <Settings
-    onclose={() => {
-      showSettings = false;
-      activeSidebarItem = "dashboard";
-    }}
-  />
-{/if}
