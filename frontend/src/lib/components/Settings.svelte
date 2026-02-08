@@ -1249,7 +1249,9 @@
         <div class="p-4 space-y-6">
           <!-- Auto-Logout Section -->
           <div class="space-y-4">
-            <h3 class="text-lg font-semibold text-foreground flex items-center gap-2">
+            <h3
+              class="text-lg font-semibold text-foreground flex items-center gap-2"
+            >
               <LogOut class="w-5 h-5 text-primary" />
               {st.autoLogout}
             </h3>
@@ -1257,7 +1259,10 @@
             <div class="grid grid-cols-4 gap-2">
               {#each [5, 10, 15, 30, 60, 120, 0] as minutes}
                 <button
-                  onclick={() => { autoLogoutMinutes = minutes; setAutoLogoutMinutes(minutes); }}
+                  onclick={() => {
+                    autoLogoutMinutes = minutes;
+                    setAutoLogoutMinutes(minutes);
+                  }}
                   class="py-2 px-3 rounded-lg border text-sm font-medium transition-all
                     {autoLogoutMinutes === minutes
                     ? 'border-primary bg-primary/10 text-primary'
@@ -2139,11 +2144,11 @@
           <div class="space-y-3">
             <div class="flex justify-between p-3 bg-background rounded-lg">
               <span class="text-foreground-muted">{st.version}</span>
-              <span class="text-foreground font-medium">2.0.0</span>
+              <span class="text-foreground font-medium">2.1.0</span>
             </div>
             <div class="flex justify-between p-3 bg-background rounded-lg">
               <span class="text-foreground-muted">{st.buildDate}</span>
-              <span class="text-foreground font-medium">2026-02-07</span>
+              <span class="text-foreground font-medium">2026-02-08</span>
             </div>
             <div class="flex justify-between p-3 bg-background rounded-lg">
               <span class="text-foreground-muted">{st.license}</span>
