@@ -2,8 +2,8 @@
 
 > **Documento de transferencia de conocimiento para continuar el desarrollo desde macOS**
 > 
-> Última actualización: 7 de febrero de 2026
-> Versión actual: v2.0.0
+> Última actualización: 8 de febrero de 2026
+> Versión actual: v2.1.0
 
 ---
 
@@ -36,17 +36,20 @@
 - **Deployment**: Docker con arquitectura unificada (single container)
 - **Target**: Raspberry Pi 4/5 con Docker instalado
 
-### Características Principales (v2.0.0)
+### Características Principales (v2.1.0)
 
 - ✅ Gestión multi-host de contenedores Docker
-- ✅ Terminal web con WebSocket (temas, búsqueda, reconexión)
-- ✅ Visor de logs con filtros avanzados (fecha, nivel, búsqueda)
+- ✅ Terminal web con WebSocket (7 temas, búsqueda, reconexión, WebGL, zoom)
+- ✅ Visor de logs estilo Databasement con filtros avanzados
 - ✅ Gráficos de recursos en tiempo real (CPU, RAM, Red, Disco)
+- ✅ Resource Leaderboard con tabs (CPU/Memory/Network/Restarts)
 - ✅ Sistema de autenticación con JWT + TOTP/MFA
-- ✅ Detección de actualizaciones de imágenes (estilo Watchtower)
+- ✅ Detección de actualizaciones con indicadores animados
+- ✅ Panel de actualizaciones pendientes con dropdown
 - ✅ Subida de avatar de usuario
-- ✅ Auto-logout por inactividad (30 minutos)
+- ✅ Auto-logout configurable (5, 10, 15, 30, 60, 120 min)
 - ✅ Command Palette (Ctrl+K)
+- ✅ Sidebar con estado activo resaltado
 - ✅ Soporte multi-idioma (ES/EN)
 - ✅ Tema oscuro nativo
 
@@ -92,6 +95,27 @@
 9. Settings movido a sidebar
 10. Sección de seguridad unificada (Password + 2FA)
 11. Subida y eliminación de avatar de usuario
+
+#### Fase 4: v2.1.0 (Febrero 2026)
+**Mejoras de UX/UI inspiradas en Databasement:**
+1. **Auto-logout Configurable**: Selección de tiempo (5, 10, 15, 30, 60, 120 min)
+2. **Log Viewer Restyled**: Layout estilo Databasement con:
+   - Tabla con bordes coloreados por nivel (verde=info, amarillo=warn, rojo=error)
+   - Columnas Date/Type/Message
+   - Filtros de rango de fecha mejorados
+3. **Terminal Premium**:
+   - 2 nuevos temas: Catppuccin Mocha, One Dark Pro (7 temas totales)
+   - WebGL renderer para mejor performance
+   - Web-links addon para URLs clickeables
+   - Ctrl+Scroll para zoom de fuente
+   - Scrollback aumentado a 10,000 líneas
+4. **Resource Leaderboard**: Gráfico con tabs para:
+   - Top 14 contenedores por CPU/Memory/Network/Restarts
+   - Filtrado por host
+5. **Update Indicators**: Badge animado en cada contenedor
+6. **Pending Updates Panel**: Dropdown en header con contador y lista
+7. **Sidebar Active State**: Resaltado visual del item activo
+8. **Avatar Upload Fix**: Corregido endpoint API
 
 ---
 
@@ -187,6 +211,7 @@
 | @xterm/addon-fit | ^0.10.0 | Auto-resize terminal |
 | @xterm/addon-search | ^0.15.0 | Terminal search |
 | @xterm/addon-web-links | ^0.11.0 | Clickable links |
+| @xterm/addon-webgl | ^0.18.0 | WebGL renderer (performance) |
 | lucide-svelte | ^0.408.0 | Iconos |
 | echarts | ^5.5.0 | Gráficos (opcional) |
 | clsx | ^2.1.1 | Utility classes |
@@ -317,6 +342,23 @@ dockerverse/
 | Updates Counter | Badge en header | +layout.svelte |
 | Unified Security | Password + 2FA juntos | Settings.svelte |
 | Avatar Upload | Foto de perfil | Settings.svelte, auth.ts, main.go |
+
+### v2.1.0 - UX/UI Enhancement Release
+
+| Feature | Descripción | Archivo(s) Principal(es) |
+|---------|-------------|-------------------------|
+| Configurable Auto-logout | 5, 10, 15, 30, 60, 120 min | auth.ts, Settings.svelte |
+| Databasement-style Logs | Tabla con bordes coloreados | LogViewer.svelte |
+| Terminal WebGL | Renderer WebGL para performance | Terminal.svelte |
+| Terminal Themes++ | +2 temas (Catppuccin, One Dark Pro) | Terminal.svelte |
+| Terminal Web-links | URLs clickeables | Terminal.svelte |
+| Terminal Zoom | Ctrl+Scroll para font size | Terminal.svelte |
+| Terminal Scrollback | 10,000 líneas | Terminal.svelte |
+| Resource Leaderboard | Top-14 CPU/Memory/Network/Restarts | +page.svelte |
+| Update Badge | Indicador animado por contenedor | ContainerCard.svelte |
+| Pending Updates Panel | Dropdown con lista de updates | +layout.svelte |
+| Sidebar Active State | Highlight del item actual | +layout.svelte |
+| Avatar Upload Fix | Corrección de API endpoint | auth.ts |
 
 ---
 
@@ -833,5 +875,84 @@ npm run dev
 
 ---
 
-*Documento generado el 7 de febrero de 2026*
-*DockerVerse v2.0.0*
+## 📝 Changelog v2.1.0 (8 de febrero de 2026)
+
+### ✨ Nuevas Características
+
+1. **Auto-logout Configurable**
+   - Archivo: `frontend/src/lib/stores/auth.ts`
+   - Funciones: `getAutoLogoutMinutes()`, `setAutoLogoutMinutes()`
+   - Opciones: 5, 10, 15, 30, 60, 120 minutos
+   - LocalStorage key: `dockerverse_auto_logout_minutes`
+
+2. **Log Viewer Restyled (Databasement-style)**
+   - Archivo: `frontend/src/lib/components/LogViewer.svelte`
+   - Layout de tabla con columnas Date/Type/Message
+   - Bordes coloreados por nivel: `border-l-4` (verde/amarillo/rojo)
+   - Mejores filtros de rango de fecha
+
+3. **Terminal Premium**
+   - Archivo: `frontend/src/lib/components/Terminal.svelte`
+   - Nuevos temas: Catppuccin Mocha, One Dark Pro
+   - WebGL addon: `@xterm/addon-webgl` para rendering acelerado
+   - Web-links addon: URLs clickeables en terminal
+   - Ctrl+Scroll: Zoom de fuente dinámica
+   - Scrollback: 10,000 líneas (antes 1,000)
+
+4. **Resource Leaderboard**
+   - Archivo: `frontend/src/routes/+page.svelte`
+   - Componente nuevo con 4 tabs: CPU/Memory/Network/Restarts
+   - Top-14 contenedores por cada métrica
+   - Integración con filtro de hosts
+
+5. **Update Indicators**
+   - Archivo: `frontend/src/lib/components/ContainerCard.svelte`
+   - Badge animado con pulse cuando `hasUpdate` es true
+   - Usa store `imageUpdates` de `docker.ts`
+
+6. **Pending Updates Panel**
+   - Archivo: `frontend/src/routes/+layout.svelte`
+   - Dropdown en header con lista de contenedores con updates
+   - Contador animado con efecto glow
+   - CSS animations: `pulse-update`, `glow-green`
+
+7. **Sidebar Active State**
+   - Archivo: `frontend/src/routes/+layout.svelte`
+   - Variable reactiva: `activeSidebarItem`
+   - Highlight visual del item actual
+
+### 🐛 Fixes
+
+- **Avatar Upload**: Fixed missing `${API_BASE}` prefix in `updateProfile` endpoint
+  - Archivo: `frontend/src/lib/stores/auth.ts`
+  - Antes: `PATCH /api/auth/profile`
+  - Ahora: `PATCH ${API_BASE}/api/auth/profile`
+
+### 🎨 Styles
+
+- Archivo: `frontend/src/app.css`
+- Añadidas animaciones:
+  ```css
+  @keyframes pulse-update { ... }
+  .glow-green { box-shadow: 0 0 20px rgba(34, 197, 94, 0.5); }
+  ```
+
+### 📦 Deployment
+
+- Desplegado en: Raspberry Pi @ 192.168.1.145:3007
+- 3 contenedores: nginx, frontend, backend (todos healthy)
+- Git tag: `v2.1.0`
+- GitHub: https://github.com/vicolmenares/dockerverse
+
+### 🧪 Testing Completo
+
+- ✅ P1: API `/api/settings` retorna configuración correctamente
+- ✅ P3: TOTP `/api/auth/totp/status` funcional
+- ✅ P7: Updates `/api/updates` verifica 83 imágenes
+- ✅ P11: Profile `PATCH /api/auth/profile` funciona
+- ✅ P12: 3 containers corriendo (nginx, frontend, backend)
+
+---
+
+*Documento generado el 8 de febrero de 2026*
+*DockerVerse v2.1.0*
