@@ -38,6 +38,9 @@
     currentUser,
     uploadAvatar,
     deleteAvatar,
+    getAutoLogoutMinutes,
+    setAutoLogoutMinutes,
+    AUTO_LOGOUT_OPTIONS,
   } from "$lib/stores/auth";
   import { API_BASE } from "$lib/api/docker";
 
@@ -110,6 +113,9 @@
   });
   let testingNotification = $state(false);
   let testChannel = $state<"telegram" | "email" | "both">("both");
+
+  // Auto-logout setting
+  let autoLogoutMinutes = $state(getAutoLogoutMinutes());
 
   // Theme
   type Theme = "dark" | "light" | "system";
@@ -276,6 +282,13 @@
       confirmDisableDesc:
         "¿Estás seguro de que deseas desactivar la autenticación de dos factores?",
       enterPassword: "Ingresa tu contraseña para confirmar",
+      // Auto-logout
+      autoLogout: "Cierre de sesión automático",
+      autoLogoutDesc: "Cerrar sesión después de un período de inactividad",
+      autoLogoutDisabled: "Desactivado",
+      autoLogoutMinutes: "minutos",
+      autoLogoutHour: "hora",
+      autoLogoutHours: "horas",
     },
     en: {
       settings: "Settings",
@@ -395,6 +408,13 @@
       confirmDisableDesc:
         "Are you sure you want to disable two-factor authentication?",
       enterPassword: "Enter your password to confirm",
+      // Auto-logout
+      autoLogout: "Auto Logout",
+      autoLogoutDesc: "Sign out after a period of inactivity",
+      autoLogoutDisabled: "Disabled",
+      autoLogoutMinutes: "minutes",
+      autoLogoutHour: "hour",
+      autoLogoutHours: "hours",
     },
   };
 
@@ -1225,8 +1245,41 @@
           </button>
         </div>
       {:else if currentView === "security"}
-        <!-- Security: Password + 2FA -->
+        <!-- Security: Auto-Logout + Password + 2FA -->
         <div class="p-4 space-y-6">
+          <!-- Auto-Logout Section -->
+          <div class="space-y-4">
+            <h3 class="text-lg font-semibold text-foreground flex items-center gap-2">
+              <LogOut class="w-5 h-5 text-primary" />
+              {st.autoLogout}
+            </h3>
+            <p class="text-sm text-foreground-muted">{st.autoLogoutDesc}</p>
+            <div class="grid grid-cols-4 gap-2">
+              {#each [5, 10, 15, 30, 60, 120, 0] as minutes}
+                <button
+                  onclick={() => { autoLogoutMinutes = minutes; setAutoLogoutMinutes(minutes); }}
+                  class="py-2 px-3 rounded-lg border text-sm font-medium transition-all
+                    {autoLogoutMinutes === minutes
+                    ? 'border-primary bg-primary/10 text-primary'
+                    : 'border-border text-foreground-muted hover:border-foreground-muted hover:text-foreground'}"
+                >
+                  {#if minutes === 0}
+                    {st.autoLogoutDisabled}
+                  {:else if minutes === 60}
+                    1 {st.autoLogoutHour}
+                  {:else if minutes === 120}
+                    2 {st.autoLogoutHours}
+                  {:else}
+                    {minutes} {st.autoLogoutMinutes}
+                  {/if}
+                </button>
+              {/each}
+            </div>
+          </div>
+
+          <!-- Divider -->
+          <hr class="border-border" />
+
           <!-- Password Section -->
           <div class="space-y-4">
             <h3

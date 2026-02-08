@@ -17,7 +17,7 @@
   } from "lucide-svelte";
   import type { Container } from "$lib/api/docker";
   import { createTerminalWebSocket } from "$lib/api/docker";
-  import { language } from "$lib/stores/auth";
+  import { language } from "$lib/stores/docker";
 
   let { container, onClose }: { container: Container; onClose: () => void } =
     $props();
@@ -26,6 +26,8 @@
   let terminal: any;
   let fitAddon: any;
   let searchAddon: any;
+  let webglAddon: any;
+  let webLinksAddon: any;
   let ws: WebSocket | null = null;
   let isFullscreen = $state(false);
   let isConnecting = $state(true);
@@ -243,6 +245,60 @@
         brightWhite: "#f0f6fc",
       },
     },
+    "catppuccin-mocha": {
+      name: "Catppuccin Mocha",
+      background: "#1e1e2e",
+      theme: {
+        background: "#1e1e2e",
+        foreground: "#cdd6f4",
+        cursor: "#f5e0dc",
+        cursorAccent: "#1e1e2e",
+        selectionBackground: "#585b70",
+        black: "#45475a",
+        red: "#f38ba8",
+        green: "#a6e3a1",
+        yellow: "#f9e2af",
+        blue: "#89b4fa",
+        magenta: "#f5c2e7",
+        cyan: "#94e2d5",
+        white: "#bac2de",
+        brightBlack: "#585b70",
+        brightRed: "#f38ba8",
+        brightGreen: "#a6e3a1",
+        brightYellow: "#f9e2af",
+        brightBlue: "#89b4fa",
+        brightMagenta: "#f5c2e7",
+        brightCyan: "#94e2d5",
+        brightWhite: "#a6adc8",
+      },
+    },
+    "one-dark-pro": {
+      name: "One Dark Pro",
+      background: "#282c34",
+      theme: {
+        background: "#282c34",
+        foreground: "#abb2bf",
+        cursor: "#528bff",
+        cursorAccent: "#282c34",
+        selectionBackground: "#3e4451",
+        black: "#282c34",
+        red: "#e06c75",
+        green: "#98c379",
+        yellow: "#e5c07b",
+        blue: "#61afef",
+        magenta: "#c678dd",
+        cyan: "#56b6c2",
+        white: "#abb2bf",
+        brightBlack: "#5c6370",
+        brightRed: "#e06c75",
+        brightGreen: "#98c379",
+        brightYellow: "#e5c07b",
+        brightBlue: "#61afef",
+        brightMagenta: "#c678dd",
+        brightCyan: "#56b6c2",
+        brightWhite: "#ffffff",
+      },
+    },
   };
 
   // Font size state
@@ -263,7 +319,9 @@
       fontSize: fontSize,
       fontFamily: "JetBrains Mono, Menlo, Monaco, Consolas, monospace",
       theme: themes[currentTheme].theme,
-      scrollback: 5000,
+      scrollback: 10000,
+      minimumContrastRatio: 4.5,
+      lineHeight: 1.2,
       allowProposedApi: true,
     });
 
@@ -272,7 +330,36 @@
     terminal.loadAddon(fitAddon);
     terminal.loadAddon(searchAddon);
 
-    terminal.open(terminalElement);
+    // Try to load WebGL renderer for 10-50x performance boost
+    try {
+      const { WebglAddon } = await import("@xterm/addon-webgl");
+      webglAddon = new WebglAddon();
+      webglAddon.onContextLoss(() => {
+        webglAddon?.dispose();
+      });
+      terminal.open(terminalElement);
+      terminal.loadAddon(webglAddon);
+    } catch (e) {
+      // WebGL not available, fallback to canvas renderer
+      console.warn("WebGL addon not available, using canvas renderer");
+      if (!terminal.element) {
+        terminal.open(terminalElement);
+      }
+    }
+
+    if (!terminal.element) {
+      terminal.open(terminalElement);
+    }
+
+    // Try to load web-links addon for clickable URLs
+    try {
+      const { WebLinksAddon } = await import("@xterm/addon-web-links");
+      webLinksAddon = new WebLinksAddon();
+      terminal.loadAddon(webLinksAddon);
+    } catch (e) {
+      console.warn("Web links addon not available");
+    }
+
     fitAddon.fit();
 
     // Keyboard shortcuts
@@ -289,8 +376,32 @@
         clearTerminal();
         return false;
       }
+      // Ctrl+Shift+C for copy
+      if (e.ctrlKey && e.shiftKey && e.key === "C") {
+        e.preventDefault();
+        copyOutput();
+        return false;
+      }
+      // Ctrl+Shift+V for paste
+      if (e.ctrlKey && e.shiftKey && e.key === "V") {
+        e.preventDefault();
+        navigator.clipboard.readText().then((text) => {
+          if (ws?.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: "input", data: text }));
+          }
+        });
+        return false;
+      }
       return true;
     });
+
+    // Ctrl+Scroll to zoom font size
+    terminalElement.addEventListener("wheel", (e: WheelEvent) => {
+      if (e.ctrlKey) {
+        e.preventDefault();
+        changeFontSize(e.deltaY < 0 ? 1 : -1);
+      }
+    }, { passive: false });
   }
 
   function connectWebSocket() {
@@ -392,6 +503,8 @@
       clearTimeout(reconnectTimeout);
     }
     ws?.close();
+    webglAddon?.dispose();
+    webLinksAddon?.dispose();
     terminal?.dispose();
   });
 

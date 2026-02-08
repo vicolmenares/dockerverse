@@ -31,6 +31,7 @@
     translations,
     selectedHost,
     pendingUpdatesCount,
+    imageUpdates,
     checkForUpdates,
   } from "$lib/stores/docker";
   import {
@@ -48,6 +49,8 @@
   let showUserMenu = $state(false);
   let showSidebar = $state(false);
   let isRefreshing = $state(false);
+  let showUpdatesDropdown = $state(false);
+  let activeSidebarItem = $state("dashboard");
   let settingsInitialView = $state<string | undefined>(undefined);
 
   // Theme state - initialize from localStorage if available
@@ -182,11 +185,14 @@
     showUserMenu = false;
   }
 
-  // Close user menu when clicking outside
+  // Close user menu and updates dropdown when clicking outside
   function handleClickOutside(e: MouseEvent) {
     const target = e.target as HTMLElement;
     if (!target.closest(".user-menu-container")) {
       showUserMenu = false;
+    }
+    if (!target.closest(".updates-dropdown-container")) {
+      showUpdatesDropdown = false;
     }
   }
 
@@ -297,19 +303,24 @@
         <nav class="flex-1 p-4 space-y-1 overflow-y-auto">
           {#each sidebarItems as item}
             {@const Icon = item.icon}
+            {@const isActive = activeSidebarItem === item.id}
             {#if item.href}
               <a
                 href={item.href}
-                class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-foreground-muted hover:text-foreground hover:bg-background-tertiary transition-colors"
-                onclick={() => (showSidebar = false)}
+                class="flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors {isActive
+                  ? 'bg-primary/15 text-primary border-l-2 border-primary'
+                  : 'text-foreground-muted hover:text-foreground hover:bg-background-tertiary'}"
+                onclick={() => { activeSidebarItem = item.id; showSidebar = false; }}
               >
                 <Icon class="w-5 h-5" />
                 <span class="text-sm font-medium">{item.label}</span>
               </a>
             {:else}
               <button
-                class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-foreground-muted hover:text-foreground hover:bg-background-tertiary transition-colors"
-                onclick={item.action}
+                class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors {isActive
+                  ? 'bg-primary/15 text-primary border-l-2 border-primary'
+                  : 'text-foreground-muted hover:text-foreground hover:bg-background-tertiary'}"
+                onclick={() => { activeSidebarItem = item.id; item.action?.(); }}
               >
                 <Icon class="w-5 h-5" />
                 <span class="text-sm font-medium">{item.label}</span>
@@ -471,18 +482,55 @@
 
               <!-- Pending Updates Counter -->
               {#if $pendingUpdatesCount > 0}
-                <button
-                  class="relative btn btn-ghost btn-icon text-paused hover:text-primary"
-                  title="{$pendingUpdatesCount} {t.pendingUpdates}"
-                  onclick={() => openSettingsView("data")}
-                >
-                  <ArrowUpCircle class="w-5 h-5" />
-                  <span
-                    class="absolute -top-1 -right-1 w-5 h-5 bg-paused text-background text-xs font-bold rounded-full flex items-center justify-center"
+                <div class="relative updates-dropdown-container">
+                  <button
+                    class="relative btn btn-ghost btn-icon text-accent-orange hover:text-primary updates-icon-pulse"
+                    title="{$pendingUpdatesCount} {$language === 'es' ? 'actualizaciones pendientes' : 'pending updates'}"
+                    onclick={() => (showUpdatesDropdown = !showUpdatesDropdown)}
                   >
-                    {$pendingUpdatesCount}
-                  </span>
-                </button>
+                    <ArrowUpCircle class="w-5 h-5" />
+                    <span
+                      class="absolute -top-1 -right-1 w-5 h-5 bg-accent-orange text-background text-xs font-bold rounded-full flex items-center justify-center updates-badge-bounce"
+                    >
+                      {$pendingUpdatesCount}
+                    </span>
+                  </button>
+
+                  <!-- Updates Dropdown Panel -->
+                  {#if showUpdatesDropdown}
+                    <div class="absolute right-0 top-full mt-2 w-80 bg-background-secondary border border-border rounded-xl shadow-xl z-50 overflow-hidden">
+                      <div class="px-4 py-3 border-b border-border flex items-center justify-between">
+                        <h4 class="text-sm font-semibold text-foreground">
+                          {$language === 'es' ? 'Actualizaciones Disponibles' : 'Available Updates'}
+                        </h4>
+                        <span class="text-xs bg-accent-orange/15 text-accent-orange px-2 py-0.5 rounded-full font-semibold">
+                          {$pendingUpdatesCount}
+                        </span>
+                      </div>
+                      <div class="max-h-64 overflow-y-auto">
+                        {#each $imageUpdates.filter(u => u.hasUpdate) as update}
+                          <div class="px-4 py-3 border-b border-border/50 hover:bg-background-tertiary transition-colors">
+                            <div class="flex items-center gap-2">
+                              <span class="w-2 h-2 rounded-full bg-accent-orange flex-shrink-0 updates-dot-pulse"></span>
+                              <span class="text-sm font-medium text-foreground truncate">{update.containerName || update.containerId.slice(0, 12)}</span>
+                            </div>
+                            <p class="text-xs text-foreground-muted mt-1 ml-4 truncate">
+                              {update.image || 'unknown'}
+                            </p>
+                          </div>
+                        {/each}
+                      </div>
+                      <div class="px-4 py-2 border-t border-border">
+                        <button
+                          class="w-full text-xs text-primary hover:text-primary/80 py-1 transition-colors"
+                          onclick={() => { showUpdatesDropdown = false; openSettingsView('data'); }}
+                        >
+                          {$language === 'es' ? 'Ver todo en Configuración →' : 'View all in Settings →'}
+                        </button>
+                      </div>
+                    </div>
+                  {/if}
+                </div>
               {/if}
             {/if}
 
@@ -585,5 +633,5 @@
 
 <!-- Settings Modal -->
 {#if showSettings && $isAuthenticated}
-  <Settings onclose={() => (showSettings = false)} />
+  <Settings onclose={() => { showSettings = false; activeSidebarItem = 'dashboard'; }} />
 {/if}
