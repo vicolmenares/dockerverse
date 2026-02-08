@@ -396,12 +396,16 @@
     });
 
     // Ctrl+Scroll to zoom font size
-    terminalElement.addEventListener("wheel", (e: WheelEvent) => {
-      if (e.ctrlKey) {
-        e.preventDefault();
-        changeFontSize(e.deltaY < 0 ? 1 : -1);
-      }
-    }, { passive: false });
+    terminalElement.addEventListener(
+      "wheel",
+      (e: WheelEvent) => {
+        if (e.ctrlKey) {
+          e.preventDefault();
+          changeFontSize(e.deltaY < 0 ? 1 : -1);
+        }
+      },
+      { passive: false },
+    );
   }
 
   function connectWebSocket() {

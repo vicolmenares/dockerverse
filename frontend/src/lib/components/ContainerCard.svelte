@@ -32,13 +32,18 @@
   // Check if container has a pending update
   let hasUpdate = $derived.by(() => {
     const updates = $imageUpdates;
-    return updates.some(u => u.containerId === container.id && u.hostId === container.hostId && u.hasUpdate);
+    return updates.some(
+      (u) =>
+        u.containerId === container.id &&
+        u.hostId === container.hostId &&
+        u.hasUpdate,
+    );
   });
 
   // Check if container has Watchtower enabled
   let hasWatchtower = $derived(
-    container.labels?.['com.centurylinklabs.watchtower.enable'] === 'true' ||
-    container.labels?.['com.centurylinklabs.watchtower'] === 'true'
+    container.labels?.["com.centurylinklabs.watchtower.enable"] === "true" ||
+      container.labels?.["com.centurylinklabs.watchtower"] === "true",
   );
 
   function getStateColor(state: string) {
@@ -96,24 +101,37 @@
     <div class="flex items-center gap-3 min-w-0">
       <div class="relative flex-shrink-0">
         <span
-          class="w-2.5 h-2.5 rounded-full block {getStateColor(container.state)}"
+          class="w-2.5 h-2.5 rounded-full block {getStateColor(
+            container.state,
+          )}"
         ></span>
         {#if hasUpdate}
-          <span class="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-accent-orange update-ping"></span>
+          <span
+            class="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-accent-orange update-ping"
+          ></span>
         {/if}
       </div>
       <div class="min-w-0 flex-1">
         <div class="flex items-center gap-1.5">
-          <h4 class="font-medium text-foreground truncate" title={container.name}>
+          <h4
+            class="font-medium text-foreground truncate"
+            title={container.name}
+          >
             {container.name}
           </h4>
           {#if hasUpdate}
-            <span class="flex items-center gap-1 text-[10px] font-semibold text-accent-orange bg-accent-orange/15 border border-accent-orange/30 px-1.5 py-0.5 rounded-full flex-shrink-0 update-badge" title="Update available">
+            <span
+              class="flex items-center gap-1 text-[10px] font-semibold text-accent-orange bg-accent-orange/15 border border-accent-orange/30 px-1.5 py-0.5 rounded-full flex-shrink-0 update-badge"
+              title="Update available"
+            >
               <ArrowUpCircle class="w-3 h-3" />
               UPDATE
             </span>
           {:else if hasWatchtower}
-            <span class="flex items-center gap-1 text-[10px] font-medium text-running/70 bg-running/10 px-1.5 py-0.5 rounded-full flex-shrink-0" title="Watchtower monitoring">
+            <span
+              class="flex items-center gap-1 text-[10px] font-medium text-running/70 bg-running/10 px-1.5 py-0.5 rounded-full flex-shrink-0"
+              title="Watchtower monitoring"
+            >
               <RotateCcw class="w-2.5 h-2.5 watchtower-spin" />
             </span>
           {/if}
@@ -278,14 +296,16 @@
       transform: scale(1);
       opacity: 1;
     }
-    75%, 100% {
+    75%,
+    100% {
       transform: scale(2.5);
       opacity: 0;
     }
   }
 
   @keyframes badge-pulse {
-    0%, 100% {
+    0%,
+    100% {
       opacity: 1;
     }
     50% {

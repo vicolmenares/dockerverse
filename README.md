@@ -4,7 +4,7 @@
 > 
 > A modern, real-time Docker monitoring and management portal built with **Svelte 5 + SvelteKit** frontend and **Go + Fiber** backend.
 
-![DockerVerse](https://img.shields.io/badge/DockerVerse-v2.0.1-blue)
+![DockerVerse](https://img.shields.io/badge/DockerVerse-v2.1.0-blue)
 ![Svelte](https://img.shields.io/badge/Svelte-5.0-orange)
 ![Go](https://img.shields.io/badge/Go-1.22+-cyan)
 ![License](https://img.shields.io/badge/License-MIT-green)
@@ -111,6 +111,16 @@ See [DEVELOPMENT_CONTINUATION_GUIDE.md](./DEVELOPMENT_CONTINUATION_GUIDE.md) for
 | Container | Alpine Linux, s6-overlay, Nginx |
 
 ## 📋 Version History
+
+### v2.1.0 (February 2026)
+- ⏰ Configurable auto-logout timer (5, 10, 15, 30, 60, 120 min)
+- 🎨 Log viewer restyled with Databasement-style table layout
+- 🖥️ Terminal improvements: Catppuccin Mocha & One Dark Pro themes, WebGL renderer, web-links addon, Ctrl+Scroll zoom
+- 📊 Resource leaderboard chart with CPU/Memory/Network/Restarts tabs (top-14 display)
+- 🔄 Update indicator badge per container with pulse animation
+- 🔔 Pending updates dropdown panel with animated counter
+- ✨ Settings sidebar active-state highlighting
+- 🔧 Fixed avatar upload API endpoint prefix
 
 ### v2.0.1 (February 2026)
 - 🐛 Fix TOTP endpoint panics (missing import + wrong Locals key)

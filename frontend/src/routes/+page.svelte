@@ -1,6 +1,17 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
-  import { Box, Server, AlertTriangle, Wifi, WifiOff, Cpu, MemoryStick, ArrowUpDown, RotateCcw, BarChart3 } from "lucide-svelte";
+  import {
+    Box,
+    Server,
+    AlertTriangle,
+    Wifi,
+    WifiOff,
+    Cpu,
+    MemoryStick,
+    ArrowUpDown,
+    RotateCcw,
+    BarChart3,
+  } from "lucide-svelte";
   import {
     fetchContainers,
     fetchHosts,
@@ -63,10 +74,12 @@
   // Top 14 containers by selected resource metric
   let topContainers = $derived.by(() => {
     const running = $containers.filter((c) => c.state === "running");
-    const withStats = running.map((c) => ({
-      container: c,
-      stats: $containerStats.get(`${c.id}@${c.hostId}`),
-    })).filter((item) => item.stats);
+    const withStats = running
+      .map((c) => ({
+        container: c,
+        stats: $containerStats.get(`${c.id}@${c.hostId}`),
+      }))
+      .filter((item) => item.stats);
 
     const sorted = [...withStats].sort((a, b) => {
       if (!a.stats || !b.stats) return 0;
@@ -76,7 +89,11 @@
         case "memory":
           return b.stats.memoryPercent - a.stats.memoryPercent;
         case "network":
-          return (b.stats.networkRx + b.stats.networkTx) - (a.stats.networkRx + a.stats.networkTx);
+          return (
+            b.stats.networkRx +
+            b.stats.networkTx -
+            (a.stats.networkRx + a.stats.networkTx)
+          );
         case "restarts":
           return 0; // We don't track restarts yet
         default:
@@ -316,80 +333,127 @@
     {#if !isLoading && runningContainers > 0}
       <section class="mb-8">
         <div class="flex items-center justify-between mb-4">
-          <h2 class="text-lg font-semibold text-foreground flex items-center gap-2">
+          <h2
+            class="text-lg font-semibold text-foreground flex items-center gap-2"
+          >
             <BarChart3 class="w-5 h-5 text-accent-purple" />
-            {$language === 'es' ? 'Top Recursos' : 'Top Resources'}
-            <span class="text-sm font-normal text-foreground-muted">(Top {Math.min(14, topContainers.length)})</span>
+            {$language === "es" ? "Top Recursos" : "Top Resources"}
+            <span class="text-sm font-normal text-foreground-muted"
+              >(Top {Math.min(14, topContainers.length)})</span
+            >
           </h2>
           <button
             class="text-sm text-foreground-muted hover:text-foreground transition-colors"
             onclick={() => (showResourceLeaderboard = !showResourceLeaderboard)}
           >
-            {showResourceLeaderboard ? ($language === 'es' ? 'Ocultar' : 'Hide') : ($language === 'es' ? 'Mostrar' : 'Show')}
+            {showResourceLeaderboard
+              ? $language === "es"
+                ? "Ocultar"
+                : "Hide"
+              : $language === "es"
+                ? "Mostrar"
+                : "Show"}
           </button>
         </div>
 
         {#if showResourceLeaderboard}
           <!-- Metric tabs -->
-          <div class="flex gap-1 mb-4 p-1 bg-background-secondary rounded-lg border border-border w-fit">
+          <div
+            class="flex gap-1 mb-4 p-1 bg-background-secondary rounded-lg border border-border w-fit"
+          >
             <button
-              class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all {resourceMetric === 'cpu' ? 'bg-primary text-white shadow-sm' : 'text-foreground-muted hover:text-foreground'}"
+              class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all {resourceMetric ===
+              'cpu'
+                ? 'bg-primary text-white shadow-sm'
+                : 'text-foreground-muted hover:text-foreground'}"
               onclick={() => (resourceMetric = "cpu")}
             >
               <Cpu class="w-3.5 h-3.5" />
               CPU
             </button>
             <button
-              class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all {resourceMetric === 'memory' ? 'bg-accent-cyan text-white shadow-sm' : 'text-foreground-muted hover:text-foreground'}"
+              class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all {resourceMetric ===
+              'memory'
+                ? 'bg-accent-cyan text-white shadow-sm'
+                : 'text-foreground-muted hover:text-foreground'}"
               onclick={() => (resourceMetric = "memory")}
             >
               <MemoryStick class="w-3.5 h-3.5" />
-              {$language === 'es' ? 'Memoria' : 'Memory'}
+              {$language === "es" ? "Memoria" : "Memory"}
             </button>
             <button
-              class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all {resourceMetric === 'network' ? 'bg-accent-purple text-white shadow-sm' : 'text-foreground-muted hover:text-foreground'}"
+              class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all {resourceMetric ===
+              'network'
+                ? 'bg-accent-purple text-white shadow-sm'
+                : 'text-foreground-muted hover:text-foreground'}"
               onclick={() => (resourceMetric = "network")}
             >
               <ArrowUpDown class="w-3.5 h-3.5" />
-              {$language === 'es' ? 'Red' : 'Network'}
+              {$language === "es" ? "Red" : "Network"}
             </button>
             <button
-              class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all {resourceMetric === 'restarts' ? 'bg-paused text-white shadow-sm' : 'text-foreground-muted hover:text-foreground'}"
+              class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all {resourceMetric ===
+              'restarts'
+                ? 'bg-paused text-white shadow-sm'
+                : 'text-foreground-muted hover:text-foreground'}"
               onclick={() => (resourceMetric = "restarts")}
             >
               <RotateCcw class="w-3.5 h-3.5" />
-              {$language === 'es' ? 'Reinicios' : 'Restarts'}
+              {$language === "es" ? "Reinicios" : "Restarts"}
             </button>
           </div>
 
           <!-- Leaderboard table -->
           <div class="card overflow-hidden">
             <!-- Table header -->
-            <div class="grid grid-cols-[auto_1fr_120px_200px] gap-4 px-4 py-2 border-b border-border text-xs font-medium text-foreground-muted uppercase tracking-wider bg-background-tertiary/30">
+            <div
+              class="grid grid-cols-[auto_1fr_120px_200px] gap-4 px-4 py-2 border-b border-border text-xs font-medium text-foreground-muted uppercase tracking-wider bg-background-tertiary/30"
+            >
               <span class="w-8 text-center">#</span>
-              <span>{$language === 'es' ? 'Contenedor' : 'Container'}</span>
-              <span class="text-right">{$language === 'es' ? 'Valor' : 'Value'}</span>
-              <span>{$language === 'es' ? 'Uso' : 'Usage'}</span>
+              <span>{$language === "es" ? "Contenedor" : "Container"}</span>
+              <span class="text-right"
+                >{$language === "es" ? "Valor" : "Value"}</span
+              >
+              <span>{$language === "es" ? "Uso" : "Usage"}</span>
             </div>
 
             {#if topContainers.length === 0}
               <div class="px-4 py-8 text-center text-foreground-muted text-sm">
-                {$language === 'es' ? 'No hay datos de recursos disponibles' : 'No resource data available'}
+                {$language === "es"
+                  ? "No hay datos de recursos disponibles"
+                  : "No resource data available"}
               </div>
             {:else}
               {#each topContainers as item, i}
                 {@const percent = getMetricPercent(item.stats)}
-                <div class="grid grid-cols-[auto_1fr_120px_200px] gap-4 px-4 py-2.5 items-center border-b border-border/50 hover:bg-background-tertiary/20 transition-colors">
-                  <span class="w-8 text-center text-sm font-bold {i < 3 ? 'text-primary' : 'text-foreground-muted'}">{i + 1}</span>
+                <div
+                  class="grid grid-cols-[auto_1fr_120px_200px] gap-4 px-4 py-2.5 items-center border-b border-border/50 hover:bg-background-tertiary/20 transition-colors"
+                >
+                  <span
+                    class="w-8 text-center text-sm font-bold {i < 3
+                      ? 'text-primary'
+                      : 'text-foreground-muted'}">{i + 1}</span
+                  >
                   <div class="min-w-0">
-                    <p class="text-sm font-medium text-foreground truncate">{item.container.name}</p>
-                    <p class="text-xs text-foreground-muted truncate">{item.container.hostId}</p>
+                    <p class="text-sm font-medium text-foreground truncate">
+                      {item.container.name}
+                    </p>
+                    <p class="text-xs text-foreground-muted truncate">
+                      {item.container.hostId}
+                    </p>
                   </div>
-                  <span class="text-sm font-mono text-foreground text-right tabular-nums">{getMetricValue(item.stats)}</span>
+                  <span
+                    class="text-sm font-mono text-foreground text-right tabular-nums"
+                    >{getMetricValue(item.stats)}</span
+                  >
                   <div class="flex items-center gap-2">
-                    <div class="flex-1 h-2 bg-background-tertiary rounded-full overflow-hidden">
+                    <div
+                      class="flex-1 h-2 bg-background-tertiary rounded-full overflow-hidden"
+                    >
                       <div
-                        class="h-full rounded-full transition-all duration-500 {getMetricBarColor(percent)}"
+                        class="h-full rounded-full transition-all duration-500 {getMetricBarColor(
+                          percent,
+                        )}"
                         style="width: {Math.max(2, percent)}%"
                       ></div>
                     </div>
