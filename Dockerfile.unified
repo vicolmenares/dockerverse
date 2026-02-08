@@ -43,7 +43,7 @@ ARG PUBLIC_API_URL=
 ENV PUBLIC_API_URL=$PUBLIC_API_URL
 
 # Copy package files
-COPY frontend/package.json ./
+COPY frontend/package.json frontend/package-lock.json ./
 
 # Install dependencies
 RUN npm install --legacy-peer-deps
@@ -298,7 +298,7 @@ RUN mkdir -p /etc/s6-overlay/s6-rc.d/nginx/dependencies.d && \
     touch /etc/s6-overlay/s6-rc.d/nginx/dependencies.d/backend && \
     touch /etc/s6-overlay/s6-rc.d/nginx/dependencies.d/frontend && \
     touch /etc/s6-overlay/s6-rc.d/user/contents.d/nginx && \
-    printf '#!/bin/sh\nexec 2>&1\nsleep 3\nexec nginx -g "daemon off;"\n' > /etc/s6-overlay/s6-rc.d/nginx/run && \
+    printf '#!/bin/sh\nexec 2>&1\nchown -R nginx:nginx /var/cache/nginx /run/nginx\nsleep 3\nexec nginx -g "daemon off;"\n' > /etc/s6-overlay/s6-rc.d/nginx/run && \
     chmod +x /etc/s6-overlay/s6-rc.d/nginx/run
 
 # ----------------------------------------------------------------------------
