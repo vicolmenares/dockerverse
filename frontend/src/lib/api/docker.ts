@@ -75,46 +75,70 @@ export interface ImageUpdate {
 	checkedAt: number;
 }
 
+// Fetch with timeout utility
+async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs = 8000): Promise<Response> {
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(), timeoutMs);
+	try {
+		return await fetch(url, { ...options, signal: controller.signal });
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
 // API Functions
 export async function fetchContainers(): Promise<Container[]> {
-	const res = await fetch(`${API_BASE}/api/containers`, { headers: getAuthHeaders() });
+	const res = await fetchWithTimeout(`${API_BASE}/api/containers`, { headers: getAuthHeaders() });
 	if (!res.ok) throw new Error('Failed to fetch containers');
 	return res.json();
 }
 
 export async function fetchHosts(): Promise<Host[]> {
-	const res = await fetch(`${API_BASE}/api/hosts`, { headers: getAuthHeaders() });
+	const res = await fetchWithTimeout(`${API_BASE}/api/hosts`, { headers: getAuthHeaders() });
 	if (!res.ok) throw new Error('Failed to fetch hosts');
 	return res.json();
 }
 
 export async function searchContainers(query: string): Promise<Container[]> {
-	const res = await fetch(`${API_BASE}/api/search?q=${encodeURIComponent(query)}`, { headers: getAuthHeaders() });
+	const res = await fetchWithTimeout(`${API_BASE}/api/search?q=${encodeURIComponent(query)}`, { headers: getAuthHeaders() });
 	if (!res.ok) throw new Error('Failed to search');
 	return res.json();
 }
 
 export async function containerAction(hostId: string, containerId: string, action: 'start' | 'stop' | 'restart'): Promise<void> {
-	const res = await fetch(`${API_BASE}/api/containers/${hostId}/${containerId}/${action}`, {
+	const res = await fetchWithTimeout(`${API_BASE}/api/containers/${hostId}/${containerId}/${action}`, {
 		method: 'POST',
 		headers: getAuthHeaders()
-	});
+	}, 15000);
 	if (!res.ok) throw new Error(`Failed to ${action} container`);
 }
 
 // Image updates API
 export async function fetchImageUpdates(): Promise<ImageUpdate[]> {
-	const res = await fetch(`${API_BASE}/api/updates`, { headers: getAuthHeaders() });
+	const res = await fetchWithTimeout(`${API_BASE}/api/updates`, { headers: getAuthHeaders() }, 30000);
 	if (!res.ok) throw new Error('Failed to fetch image updates');
 	return res.json();
 }
 
 export async function checkImageUpdate(hostId: string, containerId: string): Promise<ImageUpdate> {
-	const res = await fetch(`${API_BASE}/api/updates/${hostId}/${containerId}/check`, {
+	const res = await fetchWithTimeout(`${API_BASE}/api/updates/${hostId}/${containerId}/check`, {
 		method: 'POST',
 		headers: getAuthHeaders()
-	});
+	}, 15000);
 	if (!res.ok) throw new Error('Failed to check for image update');
+	return res.json();
+}
+
+// Trigger Watchtower update for a specific container
+export async function triggerContainerUpdate(hostId: string, containerId: string): Promise<{ success: boolean; message: string }> {
+	const res = await fetchWithTimeout(`${API_BASE}/api/containers/${hostId}/${containerId}/update`, {
+		method: 'POST',
+		headers: getAuthHeaders()
+	}, 30000);
+	if (!res.ok) {
+		const data = await res.json().catch(() => ({ error: 'Update failed' }));
+		throw new Error(data.error || 'Failed to trigger update');
+	}
 	return res.json();
 }
 

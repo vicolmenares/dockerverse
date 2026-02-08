@@ -26,6 +26,7 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/websocket/v2"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/go-containerregistry/pkg/crane"
 	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
 	"golang.org/x/crypto/bcrypt"
@@ -60,9 +61,116 @@ type AppSettings struct {
 	NotifyTags      []string `json:"notifyTags"`
 }
 
-var hosts = []HostConfig{
-	{ID: "raspi1", Name: "Raspi Main", Address: "unix:///var/run/docker.sock", IsLocal: true},
-	{ID: "raspi2", Name: "Raspi Secondary", Address: "http://192.168.1.146:2375", IsLocal: false},
+var hosts = parseHostsConfig(getEnvOrDefault("DOCKER_HOSTS",
+	"raspi1:Raspi Main:unix:///var/run/docker.sock:local"))
+
+// Host health tracking for backoff on unreachable hosts
+var (
+	hostHealth   = make(map[string]time.Time) // hostID -> last failure time
+	hostHealthMu sync.RWMutex
+	hostBackoff  = 30 * time.Second // Skip hosts that failed within this window
+)
+
+// parseHostsConfig parses DOCKER_HOSTS env var.
+// Format: "id:name:address:local/remote" separated by "|"
+// Address may contain colons (e.g., unix:///var/run/docker.sock, http://host:port)
+// so we split from the end to extract the local/remote flag.
+func parseHostsConfig(config string) []HostConfig {
+	var result []HostConfig
+	entries := strings.Split(config, "|")
+	for _, entry := range entries {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		// Find last colon to extract the local/remote flag
+		lastColon := strings.LastIndex(entry, ":")
+		if lastColon < 0 {
+			log.Printf("Warning: invalid host config entry: %s", entry)
+			continue
+		}
+		isLocalStr := entry[lastColon+1:]
+		rest := entry[:lastColon]
+
+		// Now split the rest into id:name:address
+		// Find first two colons for id and name, rest is address
+		firstColon := strings.Index(rest, ":")
+		if firstColon < 0 {
+			log.Printf("Warning: invalid host config entry: %s", entry)
+			continue
+		}
+		id := rest[:firstColon]
+		afterID := rest[firstColon+1:]
+
+		secondColon := strings.Index(afterID, ":")
+		if secondColon < 0 {
+			log.Printf("Warning: invalid host config entry: %s", entry)
+			continue
+		}
+		name := afterID[:secondColon]
+		address := afterID[secondColon+1:]
+
+		isLocal := strings.EqualFold(isLocalStr, "local") || strings.EqualFold(isLocalStr, "true")
+		result = append(result, HostConfig{
+			ID:      id,
+			Name:    name,
+			Address: address,
+			IsLocal: isLocal,
+		})
+	}
+	if len(result) == 0 {
+		log.Println("Warning: no valid hosts configured, defaulting to local socket")
+		result = append(result, HostConfig{
+			ID:      "local",
+			Name:    "Local",
+			Address: "unix:///var/run/docker.sock",
+			IsLocal: true,
+		})
+	}
+	return result
+}
+
+func isHostHealthy(hostID string) bool {
+	hostHealthMu.RLock()
+	defer hostHealthMu.RUnlock()
+	lastFail, exists := hostHealth[hostID]
+	if !exists {
+		return true
+	}
+	return time.Since(lastFail) > hostBackoff
+}
+
+func markHostFailed(hostID string) {
+	hostHealthMu.Lock()
+	hostHealth[hostID] = time.Now()
+	hostHealthMu.Unlock()
+}
+
+func markHostHealthy(hostID string) {
+	hostHealthMu.Lock()
+	delete(hostHealth, hostID)
+	hostHealthMu.Unlock()
+}
+
+// Watchtower configuration
+var (
+	watchtowerToken = getEnvOrDefault("WATCHTOWER_TOKEN", "")
+	watchtowerURLs  = parseWatchtowerURLs(getEnvOrDefault("WATCHTOWER_URLS", ""))
+)
+
+func parseWatchtowerURLs(config string) map[string]string {
+	result := make(map[string]string)
+	if config == "" {
+		return result
+	}
+	entries := strings.Split(config, "|")
+	for _, entry := range entries {
+		parts := strings.SplitN(entry, ":", 2)
+		if len(parts) == 2 {
+			result[parts[0]] = parts[1]
+		}
+	}
+	return result
 }
 
 var (
@@ -1483,6 +1591,11 @@ func (dm *DockerManager) GetAllContainers(ctx context.Context) ([]ContainerInfo,
 		go func(h HostConfig) {
 			defer wg.Done()
 
+			// Skip hosts that recently failed (backoff)
+			if !isHostHealthy(h.ID) {
+				return
+			}
+
 			cli, err := dm.GetClient(h.ID)
 			if err != nil {
 				return
@@ -1491,8 +1604,10 @@ func (dm *DockerManager) GetAllContainers(ctx context.Context) ([]ContainerInfo,
 			containers, err := cli.ContainerList(ctx, container.ListOptions{All: true})
 			if err != nil {
 				log.Printf("Error listing containers for %s: %v", h.Name, err)
+				markHostFailed(h.ID)
 				return
 			}
+			markHostHealthy(h.ID)
 
 			for _, c := range containers {
 				name := strings.TrimPrefix(c.Names[0], "/")
@@ -1680,6 +1795,12 @@ func (dm *DockerManager) GetHostStats(ctx context.Context) []HostStats {
 				Online: false,
 			}
 
+			// Skip hosts in backoff period
+			if !isHostHealthy(h.ID) {
+				hostStats[idx] = hs
+				return
+			}
+
 			cli, err := dm.GetClient(h.ID)
 			if err != nil {
 				hostStats[idx] = hs
@@ -1692,9 +1813,11 @@ func (dm *DockerManager) GetHostStats(ctx context.Context) []HostStats {
 			pingCancel()
 			if err != nil {
 				log.Printf("Host %s offline: %v", h.Name, err)
+				markHostFailed(h.ID)
 				hostStats[idx] = hs
 				return
 			}
+			markHostHealthy(h.ID)
 
 			hs.Online = true
 
@@ -2525,6 +2648,71 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 		return c.JSON(fiber.Map{"success": true})
 	})
 
+	// Trigger Watchtower update for a specific container
+	protected.Post("/containers/:hostId/:containerId/update", func(c *fiber.Ctx) error {
+		hostID := c.Params("hostId")
+		containerID := c.Params("containerId")
+
+		if watchtowerToken == "" {
+			return c.Status(400).JSON(fiber.Map{"error": "Watchtower not configured (WATCHTOWER_TOKEN not set)"})
+		}
+
+		wtURL, ok := watchtowerURLs[hostID]
+		if !ok {
+			return c.Status(400).JSON(fiber.Map{"error": "No Watchtower URL configured for host: " + hostID})
+		}
+
+		// Get the container's image name
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		cli, err := dm.GetClient(hostID)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+
+		inspect, err := cli.ContainerInspect(ctx, containerID)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "Failed to inspect container: " + err.Error()})
+		}
+
+		imageName := inspect.Config.Image
+
+		// Call Watchtower HTTP API
+		wtReq, err := http.NewRequestWithContext(ctx, "POST", wtURL+"/v1/update", nil)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "Failed to create request: " + err.Error()})
+		}
+		wtReq.Header.Set("Authorization", "Bearer "+watchtowerToken)
+
+		httpClient := &http.Client{Timeout: 30 * time.Second}
+		resp, err := httpClient.Do(wtReq)
+		if err != nil {
+			return c.Status(502).JSON(fiber.Map{"error": "Watchtower API unreachable: " + err.Error()})
+		}
+		defer resp.Body.Close()
+
+		body, _ := io.ReadAll(resp.Body)
+
+		if resp.StatusCode != http.StatusOK {
+			return c.Status(502).JSON(fiber.Map{
+				"error":   "Watchtower returned error",
+				"status":  resp.StatusCode,
+				"details": string(body),
+			})
+		}
+
+		// Clear update cache for this container
+		updateCacheMu.Lock()
+		delete(updateCache, containerID)
+		updateCacheMu.Unlock()
+
+		return c.JSON(fiber.Map{
+			"success": true,
+			"message": "Update triggered for " + imageName,
+		})
+	})
+
 	// Logs endpoint
 	protected.Get("/logs/:hostId/:containerId", func(c *fiber.Ctx) error {
 		hostID := c.Params("hostId")
@@ -2843,11 +3031,12 @@ func checkSingleImageUpdate(ctx context.Context, hostID, containerID string, dm 
 }
 
 // checkContainerUpdate checks if a container's image has an update available
+// by comparing the local image digest with the remote registry digest.
 func checkContainerUpdate(ctx context.Context, container ContainerInfo, dm *DockerManager) *ImageUpdate {
-	// Check cache first (valid for 5 minutes)
+	// Check cache first (valid for 15 minutes)
 	updateCacheMu.RLock()
 	if cached, ok := updateCache[container.ID]; ok {
-		if time.Now().Unix()-cached.CheckedAt < 300 {
+		if time.Now().Unix()-cached.CheckedAt < 900 {
 			updateCacheMu.RUnlock()
 			return cached
 		}
@@ -2872,42 +3061,41 @@ func checkContainerUpdate(ctx context.Context, container ContainerInfo, dm *Dock
 		currentDigest = imageInspect.RepoDigests[0]
 	}
 
-	// For now, we'll compare image creation time
-	// In a full implementation, you'd pull the manifest from the registry
-	// without downloading the image to check for updates
-
 	update := &ImageUpdate{
 		ContainerID:   container.ID,
 		ContainerName: container.Name,
 		Image:         container.Image,
 		HostID:        container.HostID,
 		CurrentDigest: currentDigest,
-		HasUpdate:     false, // We'll mark this true based on labels or registry check
+		HasUpdate:     false,
 		CheckedAt:     time.Now().Unix(),
 	}
 
-	// Check for watchtower labels
-	// com.centurylinklabs.watchtower.enable=true means managed by watchtower
-	// We can also look for com.centurylinklabs.watchtower.latest-update
-	if dm.clients[container.HostID] != nil {
-		inspect, err := cli.ContainerInspect(ctx, container.ID)
-		if err == nil {
-			labels := inspect.Config.Labels
-			if val, ok := labels["com.centurylinklabs.watchtower.enable"]; ok && val == "false" {
-				// Container is explicitly excluded from updates
-				update.HasUpdate = false
-			}
-			// Check if image was recently checked for updates
-			// This is a placeholder - in production you'd query the registry
+	// Check for watchtower exclusion label
+	inspect, err := cli.ContainerInspect(ctx, container.ID)
+	if err == nil {
+		labels := inspect.Config.Labels
+		if val, ok := labels["com.centurylinklabs.watchtower.enable"]; ok && val == "false" {
+			// Container is explicitly excluded from updates
+			updateCacheMu.Lock()
+			updateCache[container.ID] = update
+			updateCacheMu.Unlock()
+			return update
 		}
 	}
 
-	// Simple heuristic: if the image uses :latest tag, it might have updates
-	if strings.Contains(container.Image, ":latest") || !strings.Contains(container.Image, ":") {
-		// Images with :latest tag or no tag (defaults to latest) might have updates
-		// We'd need to check the registry to be sure
-		// For now, we mark these as "potentially updateable"
-		update.HasUpdate = false // Set to false until we implement registry check
+	// Compare local digest with remote registry digest using crane
+	remoteDigest, err := crane.Digest(container.Image)
+	if err != nil {
+		// Registry unreachable, auth failed, or image not found - not an error
+		log.Printf("Could not check registry for %s: %v", container.Image, err)
+		update.HasUpdate = false
+		update.LatestDigest = ""
+	} else {
+		// Compare: currentDigest is "image@sha256:xxx", remoteDigest is "sha256:yyy"
+		hasUpdate := currentDigest != "" && !strings.Contains(currentDigest, remoteDigest)
+		update.HasUpdate = hasUpdate
+		update.LatestDigest = remoteDigest
 	}
 
 	// Cache the result
@@ -2916,6 +3104,42 @@ func checkContainerUpdate(ctx context.Context, container ContainerInfo, dm *Dock
 	updateCacheMu.Unlock()
 
 	return update
+}
+
+// startUpdateChecker runs periodic update checks every 15 minutes
+func startUpdateChecker(dm *DockerManager) {
+	go func() {
+		// Initial check after 30 seconds (let system stabilize)
+		time.Sleep(30 * time.Second)
+		runUpdateCheck(dm)
+
+		ticker := time.NewTicker(15 * time.Minute)
+		for range ticker.C {
+			runUpdateCheck(dm)
+		}
+	}()
+}
+
+func runUpdateCheck(dm *DockerManager) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	containers, err := dm.GetAllContainers(ctx)
+	if err != nil {
+		log.Printf("Update checker: failed to get containers: %v", err)
+		return
+	}
+
+	updates := checkImageUpdates(ctx, containers, dm)
+	updateCount := 0
+	for _, u := range updates {
+		if u.HasUpdate {
+			updateCount++
+		}
+	}
+	if updateCount > 0 {
+		log.Printf("Update checker: %d containers have updates available", updateCount)
+	}
 }
 
 func parseDockerLogs(data []byte) []string {
@@ -2938,7 +3162,7 @@ func startBroadcaster(dm *DockerManager, hub *WSHub) {
 	ticker := time.NewTicker(2 * time.Second)
 	go func() {
 		for range ticker.C {
-			ctx := context.Background()
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 
 			// Broadcast containers
 			containers, err := dm.GetAllContainers(ctx)
@@ -2955,6 +3179,8 @@ func startBroadcaster(dm *DockerManager, hub *WSHub) {
 			// Broadcast hosts
 			hosts := dm.GetHostStats(ctx)
 			hub.Broadcast("hosts", hosts)
+
+			cancel()
 		}
 	}()
 }
@@ -2973,6 +3199,7 @@ func main() {
 
 	go hub.Run()
 	startBroadcaster(dm, hub)
+	startUpdateChecker(dm)
 
 	app := fiber.New(fiber.Config{
 		AppName:      "DockerVerse API",
@@ -3007,6 +3234,13 @@ func main() {
 
 	log.Printf("🐳 DockerVerse starting on port %s", port)
 	log.Printf("📊 Admin user: %s (change via env ADMIN_USER/ADMIN_PASS)", defaultAdmin)
+	log.Printf("🔌 Docker hosts configured: %d", len(hosts))
+	for _, h := range hosts {
+		log.Printf("   - %s (%s) [%s] local=%v", h.ID, h.Name, h.Address, h.IsLocal)
+	}
+	if watchtowerToken != "" {
+		log.Printf("🔄 Watchtower integration enabled (%d hosts)", len(watchtowerURLs))
+	}
 	log.Printf("🔔 Apprise URL: %s", appriseURL)
 	log.Printf("📧 SMTP2Go API configured (from: %s)", smtpFrom)
 	log.Fatal(app.Listen(":" + port))
