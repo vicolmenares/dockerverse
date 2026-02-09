@@ -293,7 +293,9 @@
         </div>
       </div>
 
-      <div class="card p-4 flex items-center gap-4">
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div class="card card-hover p-4 flex items-center gap-4 cursor-pointer {filterState === 'all' ? 'ring-2 ring-accent-cyan' : ''}" onclick={() => filterState = 'all'}>
         <div class="p-3 bg-accent-cyan/10 rounded-xl">
           <Box class="w-6 h-6 text-accent-cyan" />
         </div>
@@ -303,7 +305,9 @@
         </div>
       </div>
 
-      <div class="card p-4 flex items-center gap-4">
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div class="card card-hover p-4 flex items-center gap-4 cursor-pointer {filterState === 'running' ? 'ring-2 ring-running' : ''}" onclick={() => filterState = 'running'}>
         <div class="p-3 bg-running/10 rounded-xl">
           <Wifi class="w-6 h-6 text-running" />
         </div>
@@ -313,7 +317,9 @@
         </div>
       </div>
 
-      <div class="card p-4 flex items-center gap-4">
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div class="card card-hover p-4 flex items-center gap-4 cursor-pointer {filterState === 'stopped' ? 'ring-2 ring-stopped' : ''}" onclick={() => filterState = 'stopped'}>
         <div class="p-3 bg-stopped/10 rounded-xl">
           <WifiOff class="w-6 h-6 text-stopped" />
         </div>
