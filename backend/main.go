@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -266,6 +267,8 @@ type ContainerInfo struct {
 	Ports    []PortMapping     `json:"ports"`
 	Labels   map[string]string `json:"labels"`
 	Health   string            `json:"health"`
+	Networks map[string]string `json:"networks"`
+	Volumes  int               `json:"volumes"`
 }
 
 type ContainerStats struct {
@@ -288,19 +291,150 @@ type PortMapping struct {
 	Type    string `json:"type"`
 }
 
+type DiskInfo struct {
+	MountPoint string `json:"mountPoint"`
+	Device     string `json:"device"`
+	TotalBytes uint64 `json:"totalBytes"`
+	UsedBytes  uint64 `json:"usedBytes"`
+	FreeBytes  uint64 `json:"freeBytes"`
+}
+
 type HostStats struct {
-	ID             string  `json:"id"`
-	Name           string  `json:"name"`
-	ContainerCount int     `json:"containerCount"`
-	RunningCount   int     `json:"runningCount"`
-	CPUPercent     float64 `json:"cpuPercent"`
-	MemoryPercent  float64 `json:"memoryPercent"`
-	Online         bool    `json:"online"`
+	ID             string     `json:"id"`
+	Name           string     `json:"name"`
+	ContainerCount int        `json:"containerCount"`
+	RunningCount   int        `json:"runningCount"`
+	CPUPercent     float64    `json:"cpuPercent"`
+	MemoryPercent  float64    `json:"memoryPercent"`
+	MemoryUsed     uint64     `json:"memoryUsed"`
+	MemoryTotal    uint64     `json:"memoryTotal"`
+	Online         bool       `json:"online"`
+	Disks          []DiskInfo `json:"disks"`
 }
 
 type SSEMessage struct {
 	Type string      `json:"type"`
 	Data interface{} `json:"data"`
+}
+
+// Environment configuration for managed Docker hosts
+type Environment struct {
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	ConnectionType string `json:"connectionType"` // "socket" or "tcp"
+	Address        string `json:"address"`         // socket path or host:port
+	Protocol       string `json:"protocol"`        // "http" or "https"
+	IsLocal        bool   `json:"isLocal"`
+	Labels         string `json:"labels"`
+	Status         string `json:"status"` // "online", "offline", "unknown"
+	DockerVersion  string `json:"dockerVersion"`
+	// Update settings
+	AutoUpdate     bool   `json:"autoUpdate"`
+	UpdateSchedule string `json:"updateSchedule"` // cron expression
+	ImagePrune     bool   `json:"imagePrune"`
+	// Feature flags
+	EventTracking  bool `json:"eventTracking"`
+	VulnScanning   bool `json:"vulnScanning"`
+}
+
+// EnvironmentStore manages environment persistence
+type EnvironmentStore struct {
+	mu           sync.RWMutex
+	Environments map[string]*Environment `json:"environments"`
+	filePath     string
+}
+
+func NewEnvironmentStore(filePath string) *EnvironmentStore {
+	store := &EnvironmentStore{
+		Environments: make(map[string]*Environment),
+		filePath:     filePath,
+	}
+	store.load()
+	return store
+}
+
+func (es *EnvironmentStore) load() {
+	data, err := os.ReadFile(es.filePath)
+	if err != nil {
+		// If file doesn't exist, initialize from DOCKER_HOSTS
+		es.migrateFromHosts()
+		return
+	}
+	if err := json.Unmarshal(data, &es.Environments); err != nil {
+		log.Printf("Warning: failed to parse environments file: %v", err)
+		es.migrateFromHosts()
+	}
+}
+
+func (es *EnvironmentStore) migrateFromHosts() {
+	for _, h := range hosts {
+		connType := "tcp"
+		addr := h.Address
+		protocol := "http"
+		if h.IsLocal {
+			connType = "socket"
+			addr = h.Address
+		}
+		es.Environments[h.ID] = &Environment{
+			ID:             h.ID,
+			Name:           h.Name,
+			ConnectionType: connType,
+			Address:        addr,
+			Protocol:       protocol,
+			IsLocal:        h.IsLocal,
+			Status:         "unknown",
+			EventTracking:  true,
+		}
+	}
+	es.save()
+}
+
+func (es *EnvironmentStore) save() {
+	data, err := json.MarshalIndent(es.Environments, "", "  ")
+	if err != nil {
+		log.Printf("Error marshaling environments: %v", err)
+		return
+	}
+	if err := os.WriteFile(es.filePath, data, 0644); err != nil {
+		log.Printf("Error saving environments: %v", err)
+	}
+}
+
+func (es *EnvironmentStore) GetAll() []*Environment {
+	es.mu.RLock()
+	defer es.mu.RUnlock()
+	result := make([]*Environment, 0, len(es.Environments))
+	for _, env := range es.Environments {
+		result = append(result, env)
+	}
+	return result
+}
+
+func (es *EnvironmentStore) Get(id string) *Environment {
+	es.mu.RLock()
+	defer es.mu.RUnlock()
+	return es.Environments[id]
+}
+
+func (es *EnvironmentStore) Create(env *Environment) {
+	es.mu.Lock()
+	defer es.mu.Unlock()
+	es.Environments[env.ID] = env
+	es.save()
+}
+
+func (es *EnvironmentStore) Update(env *Environment) {
+	es.mu.Lock()
+	defer es.mu.Unlock()
+	es.Environments[env.ID] = env
+	es.save()
+}
+
+func (es *EnvironmentStore) Delete(id string) {
+	es.mu.Lock()
+	defer es.mu.Unlock()
+	delete(es.Environments, id)
+	es.save()
 }
 
 type JWTClaims struct {
@@ -1632,6 +1766,14 @@ func (dm *DockerManager) GetAllContainers(ctx context.Context) ([]ContainerInfo,
 					})
 				}
 
+				// Extract network IPs
+				networks := make(map[string]string)
+				if c.NetworkSettings != nil {
+					for netName, net := range c.NetworkSettings.Networks {
+						networks[netName] = net.IPAddress
+					}
+				}
+
 				info := ContainerInfo{
 					ID:       c.ID[:12],
 					Name:     name,
@@ -1644,6 +1786,8 @@ func (dm *DockerManager) GetAllContainers(ctx context.Context) ([]ContainerInfo,
 					Ports:    ports,
 					Labels:   c.Labels,
 					Health:   health,
+					Networks: networks,
+					Volumes:  len(c.Mounts),
 				}
 
 				// Check state changes for notifications
@@ -1698,9 +1842,9 @@ func (dm *DockerManager) GetContainerStats(ctx context.Context, hostID, containe
 	// Note: PercpuUsage may be empty on ARM/aarch64 with cgroups v2
 	cpuDelta := float64(stats.CPUStats.CPUUsage.TotalUsage - stats.PreCPUStats.CPUUsage.TotalUsage)
 	systemDelta := float64(stats.CPUStats.SystemUsage - stats.PreCPUStats.SystemUsage)
-	numCPUs := float64(len(stats.CPUStats.CPUUsage.PercpuUsage))
+	numCPUs := float64(stats.CPUStats.OnlineCPUs)
 	if numCPUs == 0 {
-		numCPUs = float64(stats.CPUStats.OnlineCPUs)
+		numCPUs = float64(len(stats.CPUStats.CPUUsage.PercpuUsage))
 	}
 	if numCPUs == 0 {
 		numCPUs = 1.0
@@ -1784,6 +1928,126 @@ func (dm *DockerManager) GetStatsForContainers(ctx context.Context, containers [
 	return allStats
 }
 
+// Disk info cache per host (30s TTL)
+var (
+	diskCache   = make(map[string][]DiskInfo)
+	diskCacheMu sync.RWMutex
+	diskCacheAt = make(map[string]time.Time)
+)
+
+func getDiskInfo(ctx context.Context, cli *client.Client, hostID string) []DiskInfo {
+	// Check cache
+	diskCacheMu.RLock()
+	if cached, ok := diskCache[hostID]; ok {
+		if time.Since(diskCacheAt[hostID]) < 30*time.Second {
+			diskCacheMu.RUnlock()
+			return cached
+		}
+	}
+	diskCacheMu.RUnlock()
+
+	// Run df inside a busybox container with host root mounted read-only
+	dfCtx, dfCancel := context.WithTimeout(ctx, 15*time.Second)
+	defer dfCancel()
+
+	resp, err := cli.ContainerCreate(dfCtx, &container.Config{
+		Image: "busybox",
+		Cmd:   []string{"df", "-B1", "/hostfs"},
+	}, &container.HostConfig{
+		Binds:      []string{"/:/hostfs:ro"},
+		AutoRemove: true,
+	}, nil, nil, "")
+	if err != nil {
+		log.Printf("getDiskInfo(%s): create failed: %v", hostID, err)
+		return nil
+	}
+
+	if err := cli.ContainerStart(dfCtx, resp.ID, container.StartOptions{}); err != nil {
+		log.Printf("getDiskInfo(%s): start failed: %v", hostID, err)
+		return nil
+	}
+
+	// Wait for container to finish
+	statusCh, errCh := cli.ContainerWait(dfCtx, resp.ID, container.WaitConditionNotRunning)
+	select {
+	case <-statusCh:
+	case err := <-errCh:
+		if err != nil {
+			log.Printf("getDiskInfo(%s): wait failed: %v", hostID, err)
+			return nil
+		}
+	case <-dfCtx.Done():
+		log.Printf("getDiskInfo(%s): timed out", hostID)
+		return nil
+	}
+
+	// Read logs
+	logReader, err := cli.ContainerLogs(dfCtx, resp.ID, container.LogsOptions{ShowStdout: true})
+	if err != nil {
+		log.Printf("getDiskInfo(%s): logs failed: %v", hostID, err)
+		return nil
+	}
+	defer logReader.Close()
+
+	var logBuf bytes.Buffer
+	io.Copy(&logBuf, logReader)
+
+	// Parse df output
+	var disks []DiskInfo
+	scanner := bufio.NewScanner(&logBuf)
+	first := true
+	for scanner.Scan() {
+		line := scanner.Text()
+		// Strip docker log header bytes (8-byte prefix)
+		if len(line) > 8 {
+			line = line[8:]
+		}
+		if first {
+			first = false
+			continue // skip header
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 6 {
+			continue
+		}
+		device := fields[0]
+		// Filter to real filesystems only
+		if strings.HasPrefix(device, "tmpfs") || strings.HasPrefix(device, "devtmpfs") ||
+			strings.HasPrefix(device, "overlay") || strings.HasPrefix(device, "shm") ||
+			strings.HasPrefix(device, "proc") || strings.HasPrefix(device, "sysfs") ||
+			strings.HasPrefix(device, "none") || strings.HasPrefix(device, "cgroup") {
+			continue
+		}
+		total, _ := strconv.ParseUint(fields[1], 10, 64)
+		used, _ := strconv.ParseUint(fields[2], 10, 64)
+		free, _ := strconv.ParseUint(fields[3], 10, 64)
+		mountPoint := fields[5]
+		// Map /hostfs -> /
+		if mountPoint == "/hostfs" {
+			mountPoint = "/"
+		} else if strings.HasPrefix(mountPoint, "/hostfs/") {
+			mountPoint = mountPoint[7:] // "/hostfs/mnt/nvme" -> "/mnt/nvme"
+		}
+		if total > 0 {
+			disks = append(disks, DiskInfo{
+				MountPoint: mountPoint,
+				Device:     device,
+				TotalBytes: total,
+				UsedBytes:  used,
+				FreeBytes:  free,
+			})
+		}
+	}
+
+	// Cache result
+	diskCacheMu.Lock()
+	diskCache[hostID] = disks
+	diskCacheAt[hostID] = time.Now()
+	diskCacheMu.Unlock()
+
+	return disks
+}
+
 func (dm *DockerManager) GetAllStats(ctx context.Context) ([]ContainerStats, error) {
 	containers, err := dm.GetAllContainers(ctx)
 	if err != nil {
@@ -1833,11 +2097,24 @@ func (dm *DockerManager) GetHostStats(ctx context.Context) []HostStats {
 
 			hs.Online = true
 
+			// Get host info for real memory total and CPU count
+			info, infoErr := cli.Info(ctx)
+			var memTotal uint64
+			var hostNCPU float64
+			if infoErr == nil {
+				memTotal = uint64(info.MemTotal)
+				hostNCPU = float64(info.NCPU)
+			}
+
+			// Get disk info (cached, 30s TTL)
+			hs.Disks = getDiskInfo(ctx, cli, h.ID)
+
 			// Get containers
 			containers, err := cli.ContainerList(ctx, container.ListOptions{All: true})
 			if err == nil {
 				hs.ContainerCount = len(containers)
-				var totalCPU, totalMem float64
+				var totalCPU float64
+				var totalMemUsage uint64
 				var runningCount int
 				var statsWg sync.WaitGroup
 				var statsMu sync.Mutex
@@ -1858,20 +2135,23 @@ func (dm *DockerManager) GetHostStats(ctx context.Context) []HostStats {
 							if json.NewDecoder(statsResp.Body).Decode(&stats) == nil {
 								cpuDelta := float64(stats.CPUStats.CPUUsage.TotalUsage - stats.PreCPUStats.CPUUsage.TotalUsage)
 								systemDelta := float64(stats.CPUStats.SystemUsage - stats.PreCPUStats.SystemUsage)
-								var cpu, mem float64
+								var cpu float64
 								if systemDelta > 0 && cpuDelta > 0 {
-									numCPUs := float64(len(stats.CPUStats.CPUUsage.PercpuUsage))
+									numCPUs := float64(stats.CPUStats.OnlineCPUs)
+									if numCPUs == 0 {
+										numCPUs = float64(len(stats.CPUStats.CPUUsage.PercpuUsage))
+									}
+									if numCPUs == 0 {
+										numCPUs = hostNCPU
+									}
 									if numCPUs == 0 {
 										numCPUs = 1
 									}
 									cpu = (cpuDelta / systemDelta) * numCPUs * 100.0
 								}
-								if stats.MemoryStats.Limit > 0 {
-									mem = float64(stats.MemoryStats.Usage) / float64(stats.MemoryStats.Limit) * 100.0
-								}
 								statsMu.Lock()
 								totalCPU += cpu
-								totalMem += mem
+								totalMemUsage += stats.MemoryStats.Usage
 								statsMu.Unlock()
 							}
 							statsResp.Body.Close()
@@ -1880,8 +2160,16 @@ func (dm *DockerManager) GetHostStats(ctx context.Context) []HostStats {
 				}
 				statsWg.Wait()
 				hs.RunningCount = runningCount
+				// Divide total CPU by host core count to get 0-100% range
+				if hostNCPU > 0 {
+					totalCPU = totalCPU / hostNCPU
+				}
 				hs.CPUPercent = totalCPU
-				hs.MemoryPercent = totalMem
+				hs.MemoryUsed = totalMemUsage
+				hs.MemoryTotal = memTotal
+				if memTotal > 0 {
+					hs.MemoryPercent = float64(totalMemUsage) / float64(memTotal) * 100.0
+				}
 			}
 
 			hostStats[idx] = hs
@@ -2016,7 +2304,7 @@ func (h *WSHub) Broadcast(msgType string, data interface{}) {
 // HTTP Handlers
 // =============================================================================
 
-func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc *NotificationService, hub *WSHub, emailSvc *EmailService) {
+func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc *NotificationService, hub *WSHub, emailSvc *EmailService, envStore *EnvironmentStore) {
 	api := app.Group("/api")
 
 	// =========================
@@ -2051,8 +2339,15 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 
 			// Verify TOTP code or recovery code
 			if req.TOTPCode != "" {
-				valid := totp.Validate(req.TOTPCode, user.TOTPSecret)
-				if !valid {
+				// Use wider time window (±2 periods = ±60s) for RPi clock drift
+				valid, validErr := totp.ValidateCustom(req.TOTPCode, user.TOTPSecret, time.Now(), totp.ValidateOpts{
+					Period:    30,
+					Skew:     2,
+					Digits:   otp.DigitsSix,
+					Algorithm: otp.AlgorithmSHA1,
+				})
+				log.Printf("2FA attempt for %s: valid=%v err=%v", user.Username, valid, validErr)
+				if !valid || validErr != nil {
 					return c.Status(401).JSON(fiber.Map{"error": "invalid 2FA code"})
 				}
 			} else if req.RecoveryCode != "" {
@@ -2073,6 +2368,40 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 			User:   user.SafeUser(),
 			Tokens: *tokens,
 		})
+	})
+
+	// 2FA Recovery - disable 2FA using username+password (localhost only)
+	api.Post("/auth/disable-2fa", func(c *fiber.Ctx) error {
+		// Only allow from localhost for security
+		ip := c.IP()
+		if ip != "127.0.0.1" && ip != "::1" && ip != "localhost" {
+			return c.Status(403).JSON(fiber.Map{"error": "only accessible from localhost"})
+		}
+
+		var req struct {
+			Username string `json:"username"`
+			Password string `json:"password"`
+		}
+		if err := c.BodyParser(&req); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid request"})
+		}
+
+		user, err := store.ValidateLogin(req.Username, req.Password)
+		if err != nil {
+			return c.Status(401).JSON(fiber.Map{"error": "invalid credentials"})
+		}
+
+		store.mu.Lock()
+		if u, ok := store.Users[user.Username]; ok {
+			u.TOTPEnabled = false
+			u.TOTPSecret = ""
+			u.RecoveryCodes = nil
+		}
+		store.mu.Unlock()
+		store.save()
+
+		log.Printf("2FA disabled for user %s via recovery endpoint", user.Username)
+		return c.JSON(fiber.Map{"success": true, "message": "2FA disabled for " + user.Username})
 	})
 
 	api.Post("/auth/refresh", func(c *fiber.Ctx) error {
@@ -2377,11 +2706,13 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 	// Avatar upload endpoint
 	protected.Post("/auth/avatar", func(c *fiber.Ctx) error {
 		user := c.Locals("user").(*User)
+		log.Printf("Avatar upload request from %s, body size: %d bytes", user.Username, len(c.Body()))
 
 		var req struct {
 			Avatar string `json:"avatar"` // Base64 encoded image data URI
 		}
 		if err := c.BodyParser(&req); err != nil {
+			log.Printf("Avatar upload parse error for %s: %v", user.Username, err)
 			return c.Status(400).JSON(fiber.Map{"error": "invalid request"})
 		}
 
@@ -2983,6 +3314,171 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 		}
 	}))
 
+	// =========================
+	// Environment CRUD (admin-only)
+	// =========================
+
+	protected.Get("/environments", func(c *fiber.Ctx) error {
+		envs := envStore.GetAll()
+		// Test connection status for each
+		for _, env := range envs {
+			cli, err := dm.GetClient(env.ID)
+			if err != nil {
+				env.Status = "offline"
+				continue
+			}
+			pingCtx, pingCancel := context.WithTimeout(context.Background(), 3*time.Second)
+			_, err = cli.Ping(pingCtx)
+			pingCancel()
+			if err != nil {
+				env.Status = "offline"
+			} else {
+				env.Status = "online"
+				info, infoErr := cli.Info(context.Background())
+				if infoErr == nil {
+					env.DockerVersion = info.ServerVersion
+				}
+			}
+		}
+		return c.JSON(envs)
+	})
+
+	protected.Post("/environments", func(c *fiber.Ctx) error {
+		user := c.Locals("user").(*User)
+		if user.Role != "admin" {
+			return c.Status(403).JSON(fiber.Map{"error": "admin required"})
+		}
+
+		var env Environment
+		if err := c.BodyParser(&env); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid request"})
+		}
+		if env.ID == "" || env.Name == "" {
+			return c.Status(400).JSON(fiber.Map{"error": "id and name are required"})
+		}
+
+		envStore.Create(&env)
+
+		// Hot-reload: add to hosts and create Docker client
+		isLocal := env.ConnectionType == "socket"
+		newHost := HostConfig{
+			ID:      env.ID,
+			Name:    env.Name,
+			Address: env.Address,
+			IsLocal: isLocal,
+		}
+		// Check if host already exists
+		found := false
+		for i, h := range hosts {
+			if h.ID == env.ID {
+				hosts[i] = newHost
+				found = true
+				break
+			}
+		}
+		if !found {
+			hosts = append(hosts, newHost)
+		}
+		// Force client recreation
+		dm.mu.Lock()
+		delete(dm.clients, env.ID)
+		dm.mu.Unlock()
+
+		return c.Status(201).JSON(env)
+	})
+
+	protected.Put("/environments/:id", func(c *fiber.Ctx) error {
+		user := c.Locals("user").(*User)
+		if user.Role != "admin" {
+			return c.Status(403).JSON(fiber.Map{"error": "admin required"})
+		}
+
+		id := c.Params("id")
+		existing := envStore.Get(id)
+		if existing == nil {
+			return c.Status(404).JSON(fiber.Map{"error": "environment not found"})
+		}
+
+		var env Environment
+		if err := c.BodyParser(&env); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid request"})
+		}
+		env.ID = id
+		envStore.Update(&env)
+
+		// Hot-reload host config
+		isLocal := env.ConnectionType == "socket"
+		for i, h := range hosts {
+			if h.ID == id {
+				hosts[i] = HostConfig{
+					ID:      id,
+					Name:    env.Name,
+					Address: env.Address,
+					IsLocal: isLocal,
+				}
+				break
+			}
+		}
+		dm.mu.Lock()
+		delete(dm.clients, id)
+		dm.mu.Unlock()
+
+		return c.JSON(env)
+	})
+
+	protected.Delete("/environments/:id", func(c *fiber.Ctx) error {
+		user := c.Locals("user").(*User)
+		if user.Role != "admin" {
+			return c.Status(403).JSON(fiber.Map{"error": "admin required"})
+		}
+
+		id := c.Params("id")
+		if envStore.Get(id) == nil {
+			return c.Status(404).JSON(fiber.Map{"error": "environment not found"})
+		}
+
+		envStore.Delete(id)
+
+		// Remove from hosts
+		for i, h := range hosts {
+			if h.ID == id {
+				hosts = append(hosts[:i], hosts[i+1:]...)
+				break
+			}
+		}
+		dm.mu.Lock()
+		delete(dm.clients, id)
+		dm.mu.Unlock()
+
+		return c.JSON(fiber.Map{"success": true})
+	})
+
+	protected.Post("/environments/:id/test", func(c *fiber.Ctx) error {
+		id := c.Params("id")
+		env := envStore.Get(id)
+		if env == nil {
+			return c.Status(404).JSON(fiber.Map{"error": "environment not found"})
+		}
+
+		cli, err := dm.GetClient(id)
+		if err != nil {
+			return c.JSON(fiber.Map{"success": false, "error": err.Error()})
+		}
+		pingCtx, pingCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_, err = cli.Ping(pingCtx)
+		pingCancel()
+		if err != nil {
+			return c.JSON(fiber.Map{"success": false, "error": err.Error()})
+		}
+		info, _ := cli.Info(context.Background())
+		return c.JSON(fiber.Map{
+			"success":       true,
+			"dockerVersion": info.ServerVersion,
+			"os":            info.OperatingSystem,
+			"containers":    info.Containers,
+		})
+	})
+
 	// Health check (no auth)
 	api.Get("/health", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"status": "ok", "timestamp": time.Now().Unix()})
@@ -3246,6 +3742,7 @@ func main() {
 	userStore := NewUserStore()
 	notifySvc := NewNotificationService(userStore)
 	emailSvc := NewEmailService()
+	envStore := NewEnvironmentStore("data/environments.json")
 	dm := NewDockerManager(notifySvc)
 	hub := NewWSHub()
 
@@ -3276,7 +3773,7 @@ func main() {
 	app.Static("/", "./public")
 
 	// Setup API routes
-	setupRoutes(app, dm, userStore, notifySvc, hub, emailSvc)
+	setupRoutes(app, dm, userStore, notifySvc, hub, emailSvc, envStore)
 
 	// Get port from env or default
 	port := os.Getenv("PORT")

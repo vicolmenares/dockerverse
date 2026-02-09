@@ -207,30 +207,3 @@
   @apply bg-background-tertiary rounded;
 }
 
-/* Updates indicator animations */
-.updates-icon-pulse {
-  animation: icon-pulse 2s ease-in-out infinite;
-}
-
-.updates-badge-bounce {
-  animation: badge-bounce 2s ease-in-out infinite;
-}
-
-.updates-dot-pulse {
-  animation: dot-pulse 1.5s ease-in-out infinite;
-}
-
-@keyframes icon-pulse {
-  0%, 100% { transform: scale(1); }
-  50% { transform: scale(1.15); }
-}
-
-@keyframes badge-bounce {
-  0%, 100% { transform: scale(1); }
-  50% { transform: scale(1.1); }
-}
-
-@keyframes dot-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
-}

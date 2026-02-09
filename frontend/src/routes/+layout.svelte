@@ -23,6 +23,8 @@
     Database,
     Users,
     ArrowUpCircle,
+    ScrollText,
+    Server,
   } from "lucide-svelte";
   import CommandPalette from "$lib/components/CommandPalette.svelte";
   import Login from "$lib/components/Login.svelte";
@@ -53,10 +55,12 @@
   // Derive active sidebar item from current URL path
   let activeSidebarItem = $derived(() => {
     const pathname = $page.url.pathname;
+    if (pathname.startsWith('/logs')) return 'logs';
     if (pathname.startsWith('/settings/users')) return 'users';
     if (pathname.startsWith('/settings/notifications')) return 'notifications';
     if (pathname.startsWith('/settings/appearance')) return 'appearance';
     if (pathname.startsWith('/settings/security')) return 'security';
+    if (pathname.startsWith('/settings/environments')) return 'environments';
     if (pathname.startsWith('/settings/data')) return 'data';
     if (pathname.startsWith('/settings/about')) return 'about';
     if (pathname.startsWith('/settings')) return 'settings';
@@ -85,6 +89,18 @@
       icon: Home,
       label: $language === "es" ? "Dashboard" : "Dashboard",
       href: "/",
+    },
+    {
+      id: "logs",
+      icon: ScrollText,
+      label: "Logs",
+      href: "/logs",
+    },
+    {
+      id: "environments",
+      icon: Server,
+      label: $language === "es" ? "Entornos" : "Environments",
+      href: "/settings/environments",
     },
     ...($currentUser?.role === "admin"
       ? [
@@ -471,7 +487,7 @@
               {#if $pendingUpdatesCount > 0}
                 <div class="relative updates-dropdown-container">
                   <button
-                    class="relative btn btn-ghost btn-icon text-accent-orange hover:text-primary updates-icon-pulse"
+                    class="relative btn btn-ghost btn-icon text-accent-orange hover:text-primary"
                     title="{$pendingUpdatesCount} {$language === 'es'
                       ? 'actualizaciones pendientes'
                       : 'pending updates'}"
@@ -479,7 +495,7 @@
                   >
                     <ArrowUpCircle class="w-5 h-5" />
                     <span
-                      class="absolute -top-1 -right-1 w-5 h-5 bg-accent-orange text-background text-xs font-bold rounded-full flex items-center justify-center updates-badge-bounce"
+                      class="absolute -top-1 -right-1 w-5 h-5 bg-accent-orange text-background text-xs font-bold rounded-full flex items-center justify-center"
                     >
                       {$pendingUpdatesCount}
                     </span>
@@ -511,7 +527,7 @@
                           >
                             <div class="flex items-center gap-2">
                               <span
-                                class="w-2 h-2 rounded-full bg-accent-orange flex-shrink-0 updates-dot-pulse"
+                                class="w-2 h-2 rounded-full bg-accent-orange flex-shrink-0"
                               ></span>
                               <span
                                 class="text-sm font-medium text-foreground truncate"

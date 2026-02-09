@@ -11,6 +11,7 @@
     ArrowUpDown,
     RotateCcw,
     BarChart3,
+    ArrowUpCircle,
   } from "lucide-svelte";
   import {
     fetchContainers,
@@ -30,6 +31,8 @@
     translations,
     selectedHost,
     checkForUpdates,
+    pendingUpdatesCount,
+    imageUpdates,
   } from "$lib/stores/docker";
   import HostCard from "$lib/components/HostCard.svelte";
   import ContainerCard from "$lib/components/ContainerCard.svelte";
@@ -44,10 +47,17 @@
   let isLoading = $state(true);
   let connectionError = $state<string | null>(null);
   let viewMode = $state<"grid" | "table">("grid");
-  let filterState = $state<"all" | "running" | "stopped">("all");
+  let filterState = $state<"all" | "running" | "stopped" | "updates">("all");
   let resourceMetric = $state<"cpu" | "memory" | "network" | "restarts">("cpu");
   let showResourceLeaderboard = $state(true);
-  let topN = $state(10);
+  let topN = $state(
+    typeof localStorage !== "undefined"
+      ? parseInt(localStorage.getItem("dockerverse_topN") || "10", 10)
+      : 10,
+  );
+  $effect(() => {
+    localStorage.setItem("dockerverse_topN", String(topN));
+  });
   const topNOptions = [5, 10, 15, 20, 30];
 
   // Get current translations
@@ -70,6 +80,11 @@
       result = result.filter((c) => c.state === "running");
     } else if (filterState === "stopped") {
       result = result.filter((c) => c.state !== "running");
+    } else if (filterState === "updates") {
+      const updateIds = new Set(
+        $imageUpdates.filter((u) => u.hasUpdate).map((u) => u.containerId),
+      );
+      result = result.filter((c) => updateIds.has(c.id));
     }
     return result;
   });
@@ -278,7 +293,7 @@
 
   <main class="container mx-auto px-4 py-6 max-w-7xl">
     <!-- Stats Overview -->
-    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+    <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
       <div class="card p-4 flex items-center gap-4">
         <div class="p-3 bg-primary/10 rounded-xl">
           <Server class="w-6 h-6 text-primary" />
@@ -326,6 +341,18 @@
         <div>
           <p class="metric-label">{t.stopped}</p>
           <p class="metric-value text-stopped">{stoppedContainers}</p>
+        </div>
+      </div>
+
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div class="card card-hover p-4 flex items-center gap-4 cursor-pointer {filterState === 'updates' ? 'ring-2 ring-accent-orange' : ''}" onclick={() => filterState = 'updates'}>
+        <div class="p-3 bg-accent-orange/10 rounded-xl">
+          <ArrowUpCircle class="w-6 h-6 text-accent-orange" />
+        </div>
+        <div>
+          <p class="metric-label">{t.pendingUpdates}</p>
+          <p class="metric-value text-accent-orange">{$pendingUpdatesCount}</p>
         </div>
       </div>
     </div>
