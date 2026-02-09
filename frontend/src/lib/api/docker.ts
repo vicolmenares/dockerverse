@@ -32,6 +32,8 @@ export interface Container {
 	ports: PortMapping[];
 	labels: Record<string, string>;
 	health: string;
+	networks: Record<string, string>;
+	volumes: number;
 }
 
 export interface PortMapping {
@@ -54,6 +56,14 @@ export interface ContainerStats {
 	blockWrite: number;
 }
 
+export interface DiskInfo {
+	mountPoint: string;
+	device: string;
+	totalBytes: number;
+	usedBytes: number;
+	freeBytes: number;
+}
+
 export interface Host {
 	id: string;
 	name: string;
@@ -61,7 +71,10 @@ export interface Host {
 	runningCount: number;
 	cpuPercent: number;
 	memoryPercent: number;
+	memoryUsed: number;
+	memoryTotal: number;
 	online: boolean;
+	disks: DiskInfo[];
 }
 
 export interface ImageUpdate {

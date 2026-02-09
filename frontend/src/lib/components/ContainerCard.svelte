@@ -13,8 +13,12 @@
     Loader2,
     CheckCircle2,
     RefreshCw,
+    Network,
+    Box,
+    ExternalLink,
   } from "lucide-svelte";
-  import type { Container, ContainerStats, ImageUpdate } from "$lib/api/docker";
+  import type { Container, ContainerStats } from "$lib/api/docker";
+  import UpdateModal from "./UpdateModal.svelte";
   import {
     containerAction,
     triggerContainerUpdate,
@@ -45,6 +49,7 @@
   let loading = $state(false);
   let updating = $state(false);
   let checking = $state(false);
+  let showUpdateModal = $state(false);
   let t = $derived(translations[$language]);
 
   // Get the update info for this container
@@ -125,16 +130,8 @@
     loading = false;
   }
 
-  async function handleUpdate() {
-    updating = true;
-    try {
-      await triggerContainerUpdate(container.hostId, container.id);
-      // Re-check updates after triggering
-      setTimeout(() => checkForUpdates(), 5000);
-    } catch (e) {
-      console.error("Update failed:", e);
-    }
-    updating = false;
+  function handleUpdate() {
+    showUpdateModal = true;
   }
 
   async function handleCheckUpdate() {
@@ -184,7 +181,7 @@
         ></span>
         {#if hasUpdate}
           <span
-            class="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-accent-orange update-ping"
+            class="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-accent-orange"
           ></span>
         {/if}
       </div>
@@ -291,6 +288,32 @@
     </div>
   {/if}
 
+  <!-- Container Details: Ports, IP, Volumes -->
+  {#if container.ports?.length > 0 || Object.keys(container.networks || {}).length > 0 || container.volumes > 0}
+    <div class="flex flex-wrap gap-1.5">
+      {#each (container.ports || []).filter(p => p.public > 0) as port}
+        <span class="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 bg-primary/10 text-primary rounded-full border border-primary/20">
+          <ExternalLink class="w-2.5 h-2.5" />
+          :{port.public}
+        </span>
+      {/each}
+      {#each Object.entries(container.networks || {}) as [netName, ip]}
+        {#if ip}
+          <span class="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 bg-accent-cyan/10 text-accent-cyan rounded-full border border-accent-cyan/20" title="{netName}: {ip}">
+            <Network class="w-2.5 h-2.5" />
+            {ip}
+          </span>
+        {/if}
+      {/each}
+      {#if container.volumes > 0}
+        <span class="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 bg-accent-purple/10 text-accent-purple rounded-full border border-accent-purple/20">
+          <Box class="w-2.5 h-2.5" />
+          {container.volumes} vol{container.volumes > 1 ? 's' : ''}
+        </span>
+      {/if}
+    </div>
+  {/if}
+
   <!-- Actions -->
   <div class="flex items-center justify-between gap-2">
     <div class="flex gap-1">
@@ -392,39 +415,13 @@
   </div>
 </div>
 
+{#if showUpdateModal}
+  <UpdateModal {container} onclose={() => (showUpdateModal = false)} />
+{/if}
+
 <style>
-  .update-ping {
-    animation: ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite;
-  }
-
-  .update-badge {
-    animation: badge-pulse 2s ease-in-out infinite;
-  }
-
   .watchtower-spin {
     animation: watchtower-rotate 8s linear infinite;
-  }
-
-  @keyframes ping {
-    0% {
-      transform: scale(1);
-      opacity: 1;
-    }
-    75%,
-    100% {
-      transform: scale(2.5);
-      opacity: 0;
-    }
-  }
-
-  @keyframes badge-pulse {
-    0%,
-    100% {
-      opacity: 1;
-    }
-    50% {
-      opacity: 0.7;
-    }
   }
 
   @keyframes watchtower-rotate {

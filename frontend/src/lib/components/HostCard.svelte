@@ -3,6 +3,7 @@
     Cpu,
     HardDrive,
     Server,
+    Database,
     ChevronDown,
     ChevronUp,
   } from "lucide-svelte";
@@ -18,9 +19,9 @@
 
   function handleClick() {
     if ($selectedHost === host.id) {
-      selectedHost.set(null); // Deselect
+      selectedHost.set(null);
     } else {
-      selectedHost.set(host.id); // Select
+      selectedHost.set(host.id);
     }
     onclick?.();
   }
@@ -40,6 +41,27 @@
     if (percent >= 50) return "text-accent-orange";
     return "text-accent-cyan";
   }
+
+  function getDiskColor(percent: number) {
+    if (percent >= 90) return "text-accent-red";
+    if (percent >= 70) return "text-accent-orange";
+    return "text-accent-purple";
+  }
+
+  function formatSize(bytes: number): string {
+    if (bytes < 1073741824) return (bytes / 1048576).toFixed(0) + " MB";
+    return (bytes / 1073741824).toFixed(1) + " GB";
+  }
+
+  let diskTotalUsed = $derived(
+    (host.disks || []).reduce((sum, d) => sum + d.usedBytes, 0),
+  );
+  let diskTotalSize = $derived(
+    (host.disks || []).reduce((sum, d) => sum + d.totalBytes, 0),
+  );
+  let diskPercent = $derived(
+    diskTotalSize > 0 ? (diskTotalUsed / diskTotalSize) * 100 : 0,
+  );
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -66,7 +88,7 @@
     </span>
   </div>
 
-  <div class="grid grid-cols-3 gap-4">
+  <div class="grid grid-cols-4 gap-3">
     <!-- Containers -->
     <div class="text-center">
       <p class="metric-value text-foreground">
@@ -95,6 +117,26 @@
       <p class="metric-label flex items-center justify-center gap-1">
         <HardDrive class="w-3 h-3" /> RAM
       </p>
+      {#if host.memoryTotal > 0}
+        <p class="text-[10px] text-foreground-muted">
+          {formatSize(host.memoryUsed)} / {formatSize(host.memoryTotal)}
+        </p>
+      {/if}
+    </div>
+
+    <!-- Disk -->
+    <div class="text-center">
+      <p class="metric-value tabular-nums {getDiskColor(diskPercent)}">
+        {diskPercent.toFixed(1)}%
+      </p>
+      <p class="metric-label flex items-center justify-center gap-1">
+        <Database class="w-3 h-3" /> Disk
+      </p>
+      {#if diskTotalSize > 0}
+        <p class="text-[10px] text-foreground-muted">
+          {formatSize(diskTotalUsed)} / {formatSize(diskTotalSize)}
+        </p>
+      {/if}
     </div>
   </div>
 
@@ -120,6 +162,37 @@
         style="width: {Math.min(host.memoryPercent, 100)}%"
       ></div>
     </div>
+    <div class="h-1.5 bg-background-tertiary rounded-full overflow-hidden">
+      <div
+        class="h-full transition-all duration-500 {diskPercent >= 90
+          ? 'bg-accent-red'
+          : diskPercent >= 70
+            ? 'bg-accent-orange'
+            : 'bg-accent-purple'}"
+        style="width: {Math.min(diskPercent, 100)}%"
+      ></div>
+    </div>
+    {#if host.disks && host.disks.length > 1}
+      <div class="mt-1 space-y-1">
+        {#each host.disks as disk}
+          {@const pct = disk.totalBytes > 0 ? (disk.usedBytes / disk.totalBytes) * 100 : 0}
+          <div class="flex items-center gap-2 text-[10px] text-foreground-muted">
+            <span class="w-16 truncate" title={disk.mountPoint}>{disk.mountPoint}</span>
+            <div class="flex-1 h-1 bg-background-tertiary rounded-full overflow-hidden">
+              <div
+                class="h-full transition-all duration-500 {pct >= 90
+                  ? 'bg-accent-red'
+                  : pct >= 70
+                    ? 'bg-accent-orange'
+                    : 'bg-accent-purple'}"
+                style="width: {Math.min(pct, 100)}%"
+              ></div>
+            </div>
+            <span class="tabular-nums">{formatSize(disk.usedBytes)}/{formatSize(disk.totalBytes)}</span>
+          </div>
+        {/each}
+      </div>
+    {/if}
   </div>
 
   <!-- Expand/Collapse Resource Charts -->
