@@ -86,7 +86,7 @@
       label: $language === "es" ? "Dashboard" : "Dashboard",
       href: "/",
     },
-    ...($currentUser?.roles?.includes("admin")
+    ...($currentUser?.role === "admin"
       ? [
           {
             id: "users",

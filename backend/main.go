@@ -1695,11 +1695,19 @@ func (dm *DockerManager) GetContainerStats(ctx context.Context, hostID, containe
 	}
 
 	// Calculate CPU percentage
+	// Note: PercpuUsage may be empty on ARM/aarch64 with cgroups v2
 	cpuDelta := float64(stats.CPUStats.CPUUsage.TotalUsage - stats.PreCPUStats.CPUUsage.TotalUsage)
 	systemDelta := float64(stats.CPUStats.SystemUsage - stats.PreCPUStats.SystemUsage)
+	numCPUs := float64(len(stats.CPUStats.CPUUsage.PercpuUsage))
+	if numCPUs == 0 {
+		numCPUs = float64(stats.CPUStats.OnlineCPUs)
+	}
+	if numCPUs == 0 {
+		numCPUs = 1.0
+	}
 	cpuPercent := 0.0
 	if systemDelta > 0 && cpuDelta > 0 {
-		cpuPercent = (cpuDelta / systemDelta) * float64(len(stats.CPUStats.CPUUsage.PercpuUsage)) * 100.0
+		cpuPercent = (cpuDelta / systemDelta) * numCPUs * 100.0
 	}
 
 	// Calculate memory percentage

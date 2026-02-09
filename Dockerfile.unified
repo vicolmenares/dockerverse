@@ -279,7 +279,7 @@ RUN mkdir -p /etc/s6-overlay/s6-rc.d/backend/dependencies.d && \
     echo "longrun" > /etc/s6-overlay/s6-rc.d/backend/type && \
     touch /etc/s6-overlay/s6-rc.d/backend/dependencies.d/base && \
     touch /etc/s6-overlay/s6-rc.d/user/contents.d/backend && \
-    printf '#!/bin/sh\nexec 2>&1\ncd /app/backend\nexec ./dockerverse\n' > /etc/s6-overlay/s6-rc.d/backend/run && \
+    printf '#!/command/with-contenv sh\nexec 2>&1\ncd /app/backend\nexec ./dockerverse\n' > /etc/s6-overlay/s6-rc.d/backend/run && \
     chmod +x /etc/s6-overlay/s6-rc.d/backend/run
 
 # Frontend service
@@ -288,7 +288,7 @@ RUN mkdir -p /etc/s6-overlay/s6-rc.d/frontend/dependencies.d && \
     touch /etc/s6-overlay/s6-rc.d/frontend/dependencies.d/base && \
     touch /etc/s6-overlay/s6-rc.d/frontend/dependencies.d/backend && \
     touch /etc/s6-overlay/s6-rc.d/user/contents.d/frontend && \
-    printf '#!/bin/sh\nexec 2>&1\ncd /app/frontend\nexport PORT=3000\nexport NODE_ENV=production\nexport ORIGIN=http://localhost\nexec node build\n' > /etc/s6-overlay/s6-rc.d/frontend/run && \
+    printf '#!/command/with-contenv sh\nexec 2>&1\ncd /app/frontend\nexport PORT=3000\nexport NODE_ENV=production\nexport ORIGIN=${ORIGIN:-http://localhost}\nexec node build\n' > /etc/s6-overlay/s6-rc.d/frontend/run && \
     chmod +x /etc/s6-overlay/s6-rc.d/frontend/run
 
 # Nginx service (depends on backend and frontend)
@@ -309,7 +309,7 @@ ENV S6_VERBOSITY=1 \
     S6_CMD_WAIT_FOR_SERVICES_MAXTIME=30000 \
     PORT=3001 \
     DOCKER_HOST=unix:///var/run/docker.sock \
-    DOCKER_HOSTS="raspi1:Raspi Main:unix:///var/run/docker.sock:local" \
+    DOCKER_HOSTS="raspi1:Raspi Main:unix:///var/run/docker.sock:local|raspi2:Raspi 2:http://192.168.1.146:2375:remote" \
     JWT_SECRET=dockerverse-super-secret-key-2026 \
     WATCHTOWER_TOKEN="" \
     WATCHTOWER_URLS="" \
