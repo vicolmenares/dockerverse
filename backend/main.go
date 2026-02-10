@@ -3338,8 +3338,14 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 				info, infoErr := cli.Info(context.Background())
 				if infoErr == nil && info.ServerVersion != "" {
 					env.DockerVersion = info.ServerVersion
-				} else if pingResp.APIVersion != "" {
-					env.DockerVersion = pingResp.APIVersion
+				} else {
+					// Fallback: try ServerVersion API
+					sv, svErr := cli.ServerVersion(context.Background())
+					if svErr == nil && sv.Version != "" {
+						env.DockerVersion = sv.Version
+					} else if pingResp.APIVersion != "" {
+						env.DockerVersion = "API " + pingResp.APIVersion
+					}
 				}
 			}
 		}
