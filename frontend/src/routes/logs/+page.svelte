@@ -178,8 +178,9 @@
       );
       if (res.ok) {
         const data = await res.json();
-        if (Array.isArray(data)) {
-          const entries: LogEntry[] = data.map((line: string) => ({
+        const lines = Array.isArray(data) ? data : (data.logs || []);
+        if (lines.length > 0) {
+          const entries: LogEntry[] = lines.map((line: string) => ({
             key,
             name: c.name,
             line,

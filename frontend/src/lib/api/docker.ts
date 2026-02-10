@@ -223,7 +223,7 @@ export function createEventStream(callbacks: SSECallbacks): EventSource {
 
 export function createLogStream(hostId: string, containerId: string, onLog: (line: string) => void): EventSource {
 	const token = getAuthToken();
-	const baseUrl = `${API_BASE}/api/containers/${hostId}/${containerId}/logs/stream`;
+	const baseUrl = `${API_BASE}/api/logs/${hostId}/${containerId}/stream`;
 	const url = token ? `${baseUrl}?token=${encodeURIComponent(token)}` : baseUrl;
 	const eventSource = new EventSource(url);
 	

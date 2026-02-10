@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount, onDestroy } from "svelte";
   import { X, Loader2, CheckCircle2, AlertCircle, Download } from "lucide-svelte";
   import type { Container } from "$lib/api/docker";
   import { triggerContainerUpdate } from "$lib/api/docker";
@@ -134,11 +135,12 @@
     onclose();
   }
 
-  // Auto-start the update
-  $effect(() => {
+  // Auto-start the update once on mount
+  onMount(() => {
     startUpdate();
-    return cleanup;
   });
+
+  onDestroy(cleanup);
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
