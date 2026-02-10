@@ -169,9 +169,9 @@
   const isRunning = $derived(container.state === "running");
 </script>
 
-<div class="card card-hover p-4 flex flex-col gap-3">
+<div class="card card-hover p-4 flex flex-col h-[280px]">
   <!-- Header -->
-  <div class="flex items-start justify-between">
+  <div class="flex items-start justify-between flex-shrink-0">
     <div class="flex items-center gap-3 min-w-0">
       <div class="relative flex-shrink-0">
         <span
@@ -234,184 +234,203 @@
     </span>
   </div>
 
-  <!-- Stats Grid (only when running) -->
-  {#if isRunning && stats}
-    <div class="grid grid-cols-4 gap-2 py-2 border-y border-border">
-      <div class="text-center">
-        <p
-          class="text-xs text-foreground-muted flex items-center justify-center gap-1 mb-1"
-        >
-          <Cpu class="w-3 h-3" />
-        </p>
-        <p
-          class="text-sm font-mono {stats.cpuPercent > 50
-            ? 'text-accent-orange'
-            : 'text-foreground'}"
-        >
-          {stats.cpuPercent.toFixed(1)}%
-        </p>
+  <!-- Scrollable content zone -->
+  <div class="flex-1 min-h-0 overflow-y-auto space-y-3 mt-3 scrollbar-thin">
+    <!-- Stats Grid (only when running) -->
+    {#if isRunning && stats}
+      <div class="grid grid-cols-4 gap-2 py-2 border-y border-border">
+        <div class="text-center">
+          <p
+            class="text-xs text-foreground-muted flex items-center justify-center gap-1 mb-1"
+          >
+            <Cpu class="w-3 h-3" />
+          </p>
+          <p
+            class="text-sm font-mono {stats.cpuPercent > 50
+              ? 'text-accent-orange'
+              : 'text-foreground'}"
+          >
+            {stats.cpuPercent.toFixed(1)}%
+          </p>
+        </div>
+        <div class="text-center">
+          <p
+            class="text-xs text-foreground-muted flex items-center justify-center gap-1 mb-1"
+          >
+            <HardDrive class="w-3 h-3" />
+          </p>
+          <p
+            class="text-sm font-mono {stats.memoryPercent > 70
+              ? 'text-accent-orange'
+              : 'text-foreground'}"
+          >
+            {stats.memoryPercent.toFixed(1)}%
+          </p>
+        </div>
+        <div class="text-center">
+          <p
+            class="text-xs text-foreground-muted flex items-center justify-center gap-1 mb-1"
+          >
+            <ArrowUpDown class="w-3 h-3" />
+          </p>
+          <p class="text-sm font-mono text-foreground">
+            {formatBytes(stats.networkRx)}/{formatBytes(stats.networkTx)}
+          </p>
+        </div>
+        <div class="text-center">
+          <p class="text-xs text-foreground-muted mb-1">{t.uptime}</p>
+          <p class="text-sm font-mono text-running">
+            {formatUptime(container.status)}
+          </p>
+        </div>
       </div>
-      <div class="text-center">
-        <p
-          class="text-xs text-foreground-muted flex items-center justify-center gap-1 mb-1"
-        >
-          <HardDrive class="w-3 h-3" />
-        </p>
-        <p
-          class="text-sm font-mono {stats.memoryPercent > 70
-            ? 'text-accent-orange'
-            : 'text-foreground'}"
-        >
-          {stats.memoryPercent.toFixed(1)}%
-        </p>
+    {:else if !isRunning}
+      <div class="py-2 border-y border-border text-center">
+        <p class="text-sm text-foreground-muted">{t.stoppedContainer}</p>
       </div>
-      <div class="text-center">
-        <p
-          class="text-xs text-foreground-muted flex items-center justify-center gap-1 mb-1"
-        >
-          <ArrowUpDown class="w-3 h-3" />
-        </p>
-        <p class="text-sm font-mono text-foreground">
-          {formatBytes(stats.networkRx)}/{formatBytes(stats.networkTx)}
-        </p>
-      </div>
-      <div class="text-center">
-        <p class="text-xs text-foreground-muted mb-1">{t.uptime}</p>
-        <p class="text-sm font-mono text-running">
-          {formatUptime(container.status)}
-        </p>
-      </div>
-    </div>
-  {:else if !isRunning}
-    <div class="py-2 border-y border-border text-center">
-      <p class="text-sm text-foreground-muted">{t.stoppedContainer}</p>
-    </div>
-  {/if}
+    {/if}
 
-  <!-- Container Details: Ports, IP, Volumes -->
-  {#if container.ports?.length > 0 || Object.keys(container.networks || {}).length > 0 || container.volumes > 0}
-    <div class="flex flex-wrap gap-1.5">
-      {#each (container.ports || []).filter(p => p.public > 0) as port}
-        <span class="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 bg-primary/10 text-primary rounded-full border border-primary/20">
-          <ExternalLink class="w-2.5 h-2.5" />
-          :{port.public}
-        </span>
-      {/each}
-      {#each Object.entries(container.networks || {}) as [netName, ip]}
-        {#if ip}
-          <span class="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 bg-accent-cyan/10 text-accent-cyan rounded-full border border-accent-cyan/20" title="{netName}: {ip}">
-            <Network class="w-2.5 h-2.5" />
-            {ip}
+    <!-- Container Details: Ports, IP, Volumes -->
+    {#if container.ports?.length > 0 || Object.keys(container.networks || {}).length > 0 || container.volumes > 0}
+      {@const allBadges = [
+        ...(container.ports || []).filter(p => p.public > 0).map(p => ({ type: 'port' as const, label: `:${p.public}`, key: `port-${p.public}` })),
+        ...Object.entries(container.networks || {}).filter(([, ip]) => ip).map(([netName, ip]) => ({ type: 'network' as const, label: ip as string, title: `${netName}: ${ip}`, key: `net-${netName}` })),
+        ...(container.volumes > 0 ? [{ type: 'volume' as const, label: `${container.volumes} vol${container.volumes > 1 ? 's' : ''}`, key: 'volumes' }] : []),
+      ]}
+      {@const visibleBadges = allBadges.slice(0, 4)}
+      {@const hiddenCount = allBadges.length - visibleBadges.length}
+      <div class="flex flex-wrap gap-1.5">
+        {#each visibleBadges as badge (badge.key)}
+          {#if badge.type === 'port'}
+            <span class="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 bg-primary/10 text-primary rounded-full border border-primary/20">
+              <ExternalLink class="w-2.5 h-2.5" />
+              {badge.label}
+            </span>
+          {:else if badge.type === 'network'}
+            <span class="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 bg-accent-cyan/10 text-accent-cyan rounded-full border border-accent-cyan/20" title={badge.title}>
+              <Network class="w-2.5 h-2.5" />
+              {badge.label}
+            </span>
+          {:else}
+            <span class="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 bg-accent-purple/10 text-accent-purple rounded-full border border-accent-purple/20">
+              <Box class="w-2.5 h-2.5" />
+              {badge.label}
+            </span>
+          {/if}
+        {/each}
+        {#if hiddenCount > 0}
+          <span
+            class="inline-flex items-center text-[10px] px-1.5 py-0.5 bg-background-tertiary text-foreground-muted rounded-full cursor-help"
+            title={allBadges.slice(4).map(b => b.label).join(', ')}
+          >
+            +{hiddenCount}
           </span>
         {/if}
-      {/each}
-      {#if container.volumes > 0}
-        <span class="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 bg-accent-purple/10 text-accent-purple rounded-full border border-accent-purple/20">
-          <Box class="w-2.5 h-2.5" />
-          {container.volumes} vol{container.volumes > 1 ? 's' : ''}
-        </span>
-      {/if}
-    </div>
-  {/if}
-
-  <!-- Actions -->
-  <div class="flex items-center justify-between gap-2">
-    <div class="flex gap-1">
-      {#if isRunning}
-        <button
-          class="btn-icon hover:bg-background-tertiary"
-          onclick={onTerminal}
-          title={t.terminal}
-        >
-          <TermIcon class="w-4 h-4" />
-        </button>
-        <button
-          class="btn-icon hover:bg-background-tertiary"
-          onclick={onLogs}
-          title={t.logs}
-        >
-          <ScrollText class="w-4 h-4" />
-        </button>
-      {:else}
-        <!-- Show logs even for stopped containers -->
-        <button
-          class="btn-icon hover:bg-background-tertiary"
-          onclick={onLogs}
-          title={t.logs}
-        >
-          <ScrollText class="w-4 h-4" />
-        </button>
-      {/if}
-    </div>
-
-    <div class="flex gap-1">
-      {#if hasUpdate}
-        <button
-          class="flex items-center gap-1.5 px-2.5 py-1.5 bg-accent-orange/20 text-accent-orange rounded-lg hover:bg-accent-orange/30 transition-colors"
-          onclick={handleUpdate}
-          disabled={updating}
-          title={updateTooltip}
-        >
-          {#if updating}
-            <Loader2 class="w-4 h-4 animate-spin" />
-          {:else}
-            <Download class="w-4 h-4" />
-          {/if}
-          <span class="text-xs font-medium"
-            >{$language === "es" ? "Actualizar" : "Update"}</span
-          >
-        </button>
-      {:else if isRunning}
-        <button
-          class="btn-icon hover:bg-primary/20 hover:text-primary"
-          onclick={handleCheckUpdate}
-          disabled={checking}
-          title={$language === "es" ? "Verificar actualización" : "Check for update"}
-        >
-          {#if checking}
-            <Loader2 class="w-4 h-4 animate-spin" />
-          {:else}
-            <RefreshCw class="w-4 h-4" />
-          {/if}
-        </button>
-      {/if}
-      {#if isRunning}
-        <button
-          class="btn-icon hover:bg-stopped/20 hover:text-stopped"
-          onclick={() => handleAction("stop")}
-          disabled={loading}
-          title={t.stop}
-        >
-          <Square class="w-4 h-4" />
-        </button>
-        <button
-          class="btn-icon hover:bg-primary/20 hover:text-primary"
-          onclick={() => handleAction("restart")}
-          disabled={loading}
-          title={t.restart}
-        >
-          <RotateCcw class="w-4 h-4" />
-        </button>
-      {:else}
-        <!-- Prominent Start button for stopped containers -->
-        <button
-          class="flex items-center gap-1.5 px-3 py-1.5 bg-running/20 text-running rounded-lg hover:bg-running/30 transition-colors"
-          onclick={() => handleAction("start")}
-          disabled={loading}
-          title={t.start}
-        >
-          <Play class="w-4 h-4" />
-          <span class="text-xs font-medium">{t.start}</span>
-        </button>
-      {/if}
-    </div>
+      </div>
+    {/if}
   </div>
 
-  <!-- Host tag -->
-  <div class="text-xs text-foreground-muted">
-    <span class="px-1.5 py-0.5 bg-background-tertiary rounded"
-      >{container.hostId}</span
-    >
+  <!-- Pinned footer: Actions + Host tag -->
+  <div class="mt-auto pt-2 space-y-2 flex-shrink-0">
+    <!-- Actions -->
+    <div class="flex items-center justify-between gap-2">
+      <div class="flex gap-1">
+        {#if isRunning}
+          <button
+            class="btn-icon hover:bg-background-tertiary"
+            onclick={onTerminal}
+            title={t.terminal}
+          >
+            <TermIcon class="w-4 h-4" />
+          </button>
+          <button
+            class="btn-icon hover:bg-background-tertiary"
+            onclick={onLogs}
+            title={t.logs}
+          >
+            <ScrollText class="w-4 h-4" />
+          </button>
+        {:else}
+          <!-- Show logs even for stopped containers -->
+          <button
+            class="btn-icon hover:bg-background-tertiary"
+            onclick={onLogs}
+            title={t.logs}
+          >
+            <ScrollText class="w-4 h-4" />
+          </button>
+        {/if}
+      </div>
+
+      <div class="flex gap-1">
+        {#if hasUpdate}
+          <button
+            class="flex items-center gap-1.5 px-2.5 py-1.5 bg-accent-orange/20 text-accent-orange rounded-lg hover:bg-accent-orange/30 transition-colors"
+            onclick={handleUpdate}
+            disabled={updating}
+            title={updateTooltip}
+          >
+            {#if updating}
+              <Loader2 class="w-4 h-4 animate-spin" />
+            {:else}
+              <Download class="w-4 h-4" />
+            {/if}
+            <span class="text-xs font-medium"
+              >{$language === "es" ? "Actualizar" : "Update"}</span
+            >
+          </button>
+        {:else if isRunning}
+          <button
+            class="btn-icon hover:bg-primary/20 hover:text-primary"
+            onclick={handleCheckUpdate}
+            disabled={checking}
+            title={$language === "es" ? "Verificar actualización" : "Check for update"}
+          >
+            {#if checking}
+              <Loader2 class="w-4 h-4 animate-spin" />
+            {:else}
+              <RefreshCw class="w-4 h-4" />
+            {/if}
+          </button>
+        {/if}
+        {#if isRunning}
+          <button
+            class="btn-icon hover:bg-stopped/20 hover:text-stopped"
+            onclick={() => handleAction("stop")}
+            disabled={loading}
+            title={t.stop}
+          >
+            <Square class="w-4 h-4" />
+          </button>
+          <button
+            class="btn-icon hover:bg-primary/20 hover:text-primary"
+            onclick={() => handleAction("restart")}
+            disabled={loading}
+            title={t.restart}
+          >
+            <RotateCcw class="w-4 h-4" />
+          </button>
+        {:else}
+          <!-- Prominent Start button for stopped containers -->
+          <button
+            class="flex items-center gap-1.5 px-3 py-1.5 bg-running/20 text-running rounded-lg hover:bg-running/30 transition-colors"
+            onclick={() => handleAction("start")}
+            disabled={loading}
+            title={t.start}
+          >
+            <Play class="w-4 h-4" />
+            <span class="text-xs font-medium">{t.start}</span>
+          </button>
+        {/if}
+      </div>
+    </div>
+
+    <!-- Host tag -->
+    <div class="text-xs text-foreground-muted">
+      <span class="px-1.5 py-0.5 bg-background-tertiary rounded"
+        >{container.hostId}</span
+      >
+    </div>
   </div>
 </div>
 

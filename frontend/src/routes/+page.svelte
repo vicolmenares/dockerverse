@@ -47,7 +47,11 @@
   let isLoading = $state(true);
   let connectionError = $state<string | null>(null);
   let viewMode = $state<"grid" | "table">("grid");
-  let filterState = $state<"all" | "running" | "stopped" | "updates">("all");
+  let filterState = $state<"all" | "running" | "stopped" | "updates">(
+    (typeof localStorage !== "undefined"
+      ? localStorage.getItem("dockerverse_filterState") as any
+      : null) || "all"
+  );
   let resourceMetric = $state<"cpu" | "memory" | "network" | "restarts">("cpu");
   let showResourceLeaderboard = $state(true);
   let topN = $state(
@@ -59,6 +63,14 @@
     localStorage.setItem("dockerverse_topN", String(topN));
   });
   const topNOptions = [5, 10, 15, 20, 30];
+
+  $effect(() => {
+    localStorage.setItem("dockerverse_filterState", filterState);
+  });
+
+  function toggleFilter(state: "all" | "running" | "stopped" | "updates") {
+    filterState = filterState === state ? "all" : state;
+  }
 
   // Get current translations
   let t = $derived(translations[$language]);
@@ -310,7 +322,7 @@
 
       <!-- svelte-ignore a11y_click_events_have_key_events -->
       <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div class="card card-hover p-4 flex items-center gap-4 cursor-pointer {filterState === 'all' ? 'ring-2 ring-accent-cyan' : ''}" onclick={() => filterState = 'all'}>
+      <div class="card card-hover p-4 flex items-center gap-4 cursor-pointer {filterState === 'all' ? 'ring-2 ring-accent-cyan' : ''}" onclick={() => toggleFilter('all')}>
         <div class="p-3 bg-accent-cyan/10 rounded-xl">
           <Box class="w-6 h-6 text-accent-cyan" />
         </div>
@@ -322,7 +334,7 @@
 
       <!-- svelte-ignore a11y_click_events_have_key_events -->
       <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div class="card card-hover p-4 flex items-center gap-4 cursor-pointer {filterState === 'running' ? 'ring-2 ring-running' : ''}" onclick={() => filterState = 'running'}>
+      <div class="card card-hover p-4 flex items-center gap-4 cursor-pointer {filterState === 'running' ? 'ring-2 ring-running' : ''}" onclick={() => toggleFilter('running')}>
         <div class="p-3 bg-running/10 rounded-xl">
           <Wifi class="w-6 h-6 text-running" />
         </div>
@@ -334,7 +346,7 @@
 
       <!-- svelte-ignore a11y_click_events_have_key_events -->
       <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div class="card card-hover p-4 flex items-center gap-4 cursor-pointer {filterState === 'stopped' ? 'ring-2 ring-stopped' : ''}" onclick={() => filterState = 'stopped'}>
+      <div class="card card-hover p-4 flex items-center gap-4 cursor-pointer {filterState === 'stopped' ? 'ring-2 ring-stopped' : ''}" onclick={() => toggleFilter('stopped')}>
         <div class="p-3 bg-stopped/10 rounded-xl">
           <WifiOff class="w-6 h-6 text-stopped" />
         </div>
@@ -346,7 +358,7 @@
 
       <!-- svelte-ignore a11y_click_events_have_key_events -->
       <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div class="card card-hover p-4 flex items-center gap-4 cursor-pointer {filterState === 'updates' ? 'ring-2 ring-accent-orange' : ''}" onclick={() => filterState = 'updates'}>
+      <div class="card card-hover p-4 flex items-center gap-4 cursor-pointer {filterState === 'updates' ? 'ring-2 ring-accent-orange' : ''}" onclick={() => toggleFilter('updates')}>
         <div class="p-3 bg-accent-orange/10 rounded-xl">
           <ArrowUpCircle class="w-6 h-6 text-accent-orange" />
         </div>
@@ -550,7 +562,7 @@
               'all'
                 ? 'bg-primary text-white'
                 : 'bg-background-secondary text-foreground-muted hover:text-foreground'}"
-              onclick={() => (filterState = "all")}
+              onclick={() => toggleFilter("all")}
             >
               {t.all}
             </button>
@@ -559,7 +571,7 @@
               'running'
                 ? 'bg-running text-white'
                 : 'bg-background-secondary text-foreground-muted hover:text-foreground'}"
-              onclick={() => (filterState = "running")}
+              onclick={() => toggleFilter("running")}
             >
               {t.running}
             </button>
@@ -568,7 +580,7 @@
               'stopped'
                 ? 'bg-stopped text-white'
                 : 'bg-background-secondary text-foreground-muted hover:text-foreground'}"
-              onclick={() => (filterState = "stopped")}
+              onclick={() => toggleFilter("stopped")}
             >
               {t.stopped}
             </button>
@@ -579,7 +591,7 @@
       {#if isLoading}
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {#each [1, 2, 3, 4, 5, 6] as _}
-            <div class="card p-4 animate-pulse">
+            <div class="card p-4 animate-pulse h-[280px]">
               <div class="h-4 bg-background-tertiary rounded w-2/3 mb-3"></div>
               <div class="h-3 bg-background-tertiary rounded w-1/2 mb-4"></div>
               <div class="h-12 bg-background-tertiary rounded w-full"></div>

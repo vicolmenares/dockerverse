@@ -194,6 +194,11 @@
   }
 }
 
+/* Thin scrollbar for card content */
+.scrollbar-thin::-webkit-scrollbar { width: 4px; }
+.scrollbar-thin::-webkit-scrollbar-thumb { background: rgb(var(--color-background-tertiary)); border-radius: 9999px; opacity: 0.5; }
+.scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+
 /* xterm.js terminal styling */
 .xterm {
   @apply p-2;
