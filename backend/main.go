@@ -2160,12 +2160,12 @@ func (dm *DockerManager) GetHostStats(ctx context.Context) []HostStats {
 								statsMu.Lock()
 								totalCPU += cpu
 								totalMemUsage += stats.MemoryStats.Usage
-								statsMu.Lock()
+								if stats.MemoryStats.Limit > maxMemLimit {
+									maxMemLimit = stats.MemoryStats.Limit
+								}
+								statsMu.Unlock()
 							}
 							statsResp.Body.Close()
-							if stats.MemoryStats.Limit > maxMemLimit {
-								maxMemLimit = stats.MemoryStats.Limit
-							}
 						}(c.ID)
 					}
 				}
