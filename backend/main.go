@@ -2420,6 +2420,11 @@ func (h *WSHub) Broadcast(msgType string, data interface{}) {
 func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc *NotificationService, hub *WSHub, emailSvc *EmailService, envStore *EnvironmentStore) {
 	api := app.Group("/api")
 
+	// Debug endpoint to inspect parsed hosts (temporary)
+	api.Get("/debug/hosts", func(c *fiber.Ctx) error {
+		return c.JSON(hosts)
+	})
+
 	// =========================
 	// Auth routes (no auth required)
 	// =========================
