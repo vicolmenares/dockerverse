@@ -1,3 +1,22 @@
+### 2026-02-12 - Fix SSH/IP real en DOCKER_HOSTS y backend
+
+- Cambios:
+   - DOCKER_HOSTS actualizado para usar IP real de cada raspi (ejemplo: raspi1:Raspeberry Main:192.168.1.10:local|raspi2:Raspeberry Secondary:192.168.1.11:remote).
+   - Backend (main.go) ajustado para derivar correctamente la IP para SSH, evitando localhost.
+   - Compose actualizado para reflejar nueva config.
+   - Redeploy completo con ./deploy-to-raspi.sh.
+- Archivos:
+   - `backend/main.go`
+   - `docker-compose.unified.yml`
+- Tests:
+   - `go test ./...` (backend): OK (sin tests).
+   - `npm --prefix frontend run check`: OK (0 errors, 0 warnings).
+- Deploy a Raspberry Pi: completado con `./deploy-to-raspi.sh`.
+   - Resultado: OK (contenedor healthy en `:3007`).
+- Verificacion en Raspberry Pi: OK
+   - UI muestra hosts online, disco y Files/Console funcionando (esperado).
+   - SSH conecta a IP real, no localhost.
+- Git push: pendiente tras este update.
 # DockerVerse - Guía Completa de Continuación de Desarrollo
 
 > **Documento de transferencia de conocimiento para continuar el desarrollo desde macOS**

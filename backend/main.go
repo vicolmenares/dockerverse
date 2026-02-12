@@ -138,8 +138,10 @@ func parseHostsConfig(config string) []HostConfig {
 
 func deriveSSHHost(h HostConfig) string {
 	if h.IsLocal {
-		if h.ID != "" {
-			return h.ID
+		// If Address is an IP, use it; else fallback to localhost
+		addr := strings.TrimSpace(h.Address)
+		if addr != "" && net.ParseIP(addr) != nil {
+			return addr
 		}
 		return "localhost"
 	}
