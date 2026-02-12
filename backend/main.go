@@ -138,12 +138,13 @@ func parseHostsConfig(config string) []HostConfig {
 
 func deriveSSHHost(h HostConfig) string {
 	if h.IsLocal {
-		// If Address is an IP, use it; else fallback to localhost
+		// If Address is an IP, use it; else fallback to host.docker.internal
+		// `host.docker.internal` is provided via extra_hosts mapping in compose
 		addr := strings.TrimSpace(h.Address)
 		if addr != "" && net.ParseIP(addr) != nil {
 			return addr
 		}
-		return "localhost"
+		return "host.docker.internal"
 	}
 	addr := strings.TrimSpace(h.Address)
 	if addr == "" {
