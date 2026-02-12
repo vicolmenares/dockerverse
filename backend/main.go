@@ -2369,26 +2369,73 @@ func (dm *DockerManager) GetHostStats(ctx context.Context) []HostStats {
 
 func (dm *DockerManager) ContainerAction(ctx context.Context, hostID, containerID, action string) error {
 	cli, err := dm.GetClient(hostID)
-	if err != nil {
-		return err
+	if err == nil {
+		// Try Docker API first
+		switch action {
+		case "start":
+			if err := cli.ContainerStart(ctx, containerID, container.StartOptions{}); err == nil {
+				return nil
+			} else {
+				log.Printf("ContainerAction: docker API start failed for %s on %s: %v", containerID, hostID, err)
+			}
+		case "stop":
+			timeout := 10
+			if err := cli.ContainerStop(ctx, containerID, container.StopOptions{Timeout: &timeout}); err == nil {
+				return nil
+			} else {
+				log.Printf("ContainerAction: docker API stop failed for %s on %s: %v", containerID, hostID, err)
+			}
+		case "restart":
+			timeout := 10
+			if err := cli.ContainerRestart(ctx, containerID, container.StopOptions{Timeout: &timeout}); err == nil {
+				return nil
+			} else {
+				log.Printf("ContainerAction: docker API restart failed for %s on %s: %v", containerID, hostID, err)
+			}
+		case "pause":
+			if err := cli.ContainerPause(ctx, containerID); err == nil {
+				return nil
+			} else {
+				log.Printf("ContainerAction: docker API pause failed for %s on %s: %v", containerID, hostID, err)
+			}
+		case "unpause":
+			if err := cli.ContainerUnpause(ctx, containerID); err == nil {
+				return nil
+			} else {
+				log.Printf("ContainerAction: docker API unpause failed for %s on %s: %v", containerID, hostID, err)
+			}
+		default:
+			return fmt.Errorf("unknown action: %s", action)
+		}
+	} else {
+		log.Printf("ContainerAction: docker client unavailable for host %s: %v", hostID, err)
 	}
 
+	// Fallback: try to perform action over SSH by running the docker CLI remotely.
+	// This helps when the Docker remote API is not exposed but SSH access is available.
+	var sshCmd string
 	switch action {
 	case "start":
-		return cli.ContainerStart(ctx, containerID, container.StartOptions{})
+		sshCmd = fmt.Sprintf("docker start %s", containerID)
 	case "stop":
-		timeout := 10
-		return cli.ContainerStop(ctx, containerID, container.StopOptions{Timeout: &timeout})
+		sshCmd = fmt.Sprintf("docker stop %s", containerID)
 	case "restart":
-		timeout := 10
-		return cli.ContainerRestart(ctx, containerID, container.StopOptions{Timeout: &timeout})
+		sshCmd = fmt.Sprintf("docker restart %s", containerID)
 	case "pause":
-		return cli.ContainerPause(ctx, containerID)
+		sshCmd = fmt.Sprintf("docker pause %s", containerID)
 	case "unpause":
-		return cli.ContainerUnpause(ctx, containerID)
+		sshCmd = fmt.Sprintf("docker unpause %s", containerID)
 	default:
 		return fmt.Errorf("unknown action: %s", action)
 	}
+
+	out, err := runSSHCommand(hostID, sshCmd)
+	if err != nil {
+		log.Printf("ContainerAction: ssh fallback failed for host=%s cmd=%q out=%q err=%v", hostID, sshCmd, out, err)
+		return fmt.Errorf("action failed: %v (ssh fallback output: %s)", err, out)
+	}
+	log.Printf("ContainerAction: ssh fallback succeeded for host=%s cmd=%q output=%s", hostID, sshCmd, out)
+	return nil
 }
 
 func (dm *DockerManager) GetContainerLogs(ctx context.Context, hostID, containerID string, tail int, follow bool) (io.ReadCloser, error) {
