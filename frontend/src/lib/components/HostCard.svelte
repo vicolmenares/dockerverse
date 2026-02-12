@@ -9,12 +9,20 @@
   } from "lucide-svelte";
   import type { Host } from "$lib/api/docker";
   import { selectedHost, language, translations } from "$lib/stores/docker";
-  import ResourceChart from "./ResourceChart.svelte";
 
-  let { host, onclick }: { host: Host; onclick?: () => void } = $props();
+  let {
+    host,
+    onclick,
+    resourcesOpen = false,
+    onToggleResources,
+  }: {
+    host: Host;
+    onclick?: () => void;
+    resourcesOpen?: boolean;
+    onToggleResources?: (hostId: string) => void;
+  } = $props();
 
   let isSelected = $derived($selectedHost === host.id);
-  let showResources = $state(false);
   let t = $derived(translations[$language]);
 
   function handleClick() {
@@ -67,7 +75,7 @@
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
-  class="card card-hover p-5 cursor-pointer transition-all {isSelected
+  class="card card-hover p-5 cursor-pointer transition-all bg-gradient-to-br from-background-secondary/70 via-background-secondary/40 to-background-tertiary/10 {isSelected
     ? 'ring-2 ring-primary'
     : ''}"
   onclick={handleClick}
@@ -201,10 +209,11 @@
       class="mt-3 w-full flex items-center justify-center gap-1 py-1.5 text-xs text-foreground-muted hover:text-foreground hover:bg-background-tertiary/50 rounded-lg transition-colors"
       onclick={(e) => {
         e.stopPropagation();
-        showResources = !showResources;
+        onToggleResources?.(host.id);
       }}
+      aria-pressed={resourcesOpen}
     >
-      {#if showResources}
+      {#if resourcesOpen}
         <ChevronUp class="w-4 h-4" />
         <span>{t.hideResources || "Hide resources"}</span>
       {:else}
@@ -212,10 +221,5 @@
         <span>{t.showResources || "Show resources"}</span>
       {/if}
     </button>
-  {/if}
-
-  <!-- Resource Charts -->
-  {#if showResources && host.online}
-    <ResourceChart {host} />
   {/if}
 </div>

@@ -1952,7 +1952,11 @@ func getDiskInfo(ctx context.Context, cli *client.Client, hostID string) []DiskI
 
 	resp, err := cli.ContainerCreate(dfCtx, &container.Config{
 		Image: "busybox",
-		Cmd:   []string{"df", "-B1", "/hostfs"},
+		Cmd: []string{
+			"sh",
+			"-c",
+			"df -B1 /hostfs /hostfs/mnt /hostfs/media /hostfs/run/media 2>/dev/null",
+		},
 	}, &container.HostConfig{
 		Binds:      []string{"/:/hostfs:ro"},
 		AutoRemove: true,
@@ -2022,6 +2026,9 @@ func getDiskInfo(ctx context.Context, cli *client.Client, hostID string) []DiskI
 		used, _ := strconv.ParseUint(fields[2], 10, 64)
 		free, _ := strconv.ParseUint(fields[3], 10, 64)
 		mountPoint := fields[5]
+		if !strings.HasPrefix(mountPoint, "/hostfs") {
+			continue
+		}
 		// Map /hostfs -> /
 		if mountPoint == "/hostfs" {
 			mountPoint = "/"
@@ -2115,6 +2122,7 @@ func (dm *DockerManager) GetHostStats(ctx context.Context) []HostStats {
 				hs.ContainerCount = len(containers)
 				var totalCPU float64
 				var totalMemUsage uint64
+				var maxMemLimit uint64
 				var runningCount int
 				var statsWg sync.WaitGroup
 				var statsMu sync.Mutex
@@ -2125,7 +2133,7 @@ func (dm *DockerManager) GetHostStats(ctx context.Context) []HostStats {
 						statsWg.Add(1)
 						go func(containerID string) {
 							defer statsWg.Done()
-							statsCtx, statsCancel := context.WithTimeout(ctx, 2*time.Second)
+							statsCtx, statsCancel := context.WithTimeout(ctx, 4*time.Second)
 							defer statsCancel()
 							statsResp, err := cli.ContainerStats(statsCtx, containerID, false)
 							if err != nil {
@@ -2152,9 +2160,12 @@ func (dm *DockerManager) GetHostStats(ctx context.Context) []HostStats {
 								statsMu.Lock()
 								totalCPU += cpu
 								totalMemUsage += stats.MemoryStats.Usage
-								statsMu.Unlock()
+								statsMu.Lock()
 							}
 							statsResp.Body.Close()
+							if stats.MemoryStats.Limit > maxMemLimit {
+								maxMemLimit = stats.MemoryStats.Limit
+							}
 						}(c.ID)
 					}
 				}
@@ -2166,6 +2177,9 @@ func (dm *DockerManager) GetHostStats(ctx context.Context) []HostStats {
 				}
 				hs.CPUPercent = totalCPU
 				hs.MemoryUsed = totalMemUsage
+				if memTotal == 0 && maxMemLimit > 0 {
+					memTotal = maxMemLimit
+				}
 				hs.MemoryTotal = memTotal
 				if memTotal > 0 {
 					hs.MemoryPercent = float64(totalMemUsage) / float64(memTotal) * 100.0
