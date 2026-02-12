@@ -168,6 +168,59 @@ func deriveSSHHost(h HostConfig) string {
 	return addr
 }
 
+// deriveSSHCandidates returns a list of hostname/IP candidates to try when dialing SSH.
+// This allows the backend to attempt multiple fallbacks (explicit IP, host.docker.internal,
+// plain id, etc.) which helps in containerized environments where DNS/resolution may differ.
+func deriveSSHCandidates(h HostConfig) []string {
+	var cands []string
+	addr := strings.TrimSpace(h.Address)
+
+	if h.IsLocal {
+		// If Address is an IP, try it first
+		if addr != "" && net.ParseIP(addr) != nil {
+			cands = append(cands, addr)
+		}
+		// Always try host.docker.internal as a fallback (provided via extra_hosts)
+		cands = append(cands, "host.docker.internal")
+	} else {
+		// Try to extract host from address (strip scheme, path, user)
+		if addr != "" {
+			if parts := strings.SplitN(addr, "://", 2); len(parts) == 2 {
+				addr = parts[1]
+			}
+			if parts := strings.SplitN(addr, "/", 2); len(parts) == 2 {
+				addr = parts[0]
+			}
+			if parts := strings.SplitN(addr, "@", 2); len(parts) == 2 {
+				addr = parts[1]
+			}
+			if parts := strings.SplitN(addr, ":", 2); len(parts) == 2 {
+				addr = parts[0]
+			}
+			if addr != "" {
+				cands = append(cands, addr)
+			}
+		}
+		// Always also try the host ID (may resolve via internal DNS)
+		cands = append(cands, h.ID)
+	}
+
+	// Ensure uniqueness while preserving order
+	seen := make(map[string]struct{})
+	uniq := make([]string, 0, len(cands))
+	for _, s := range cands {
+		if s == "" {
+			continue
+		}
+		if _, ok := seen[s]; ok {
+			continue
+		}
+		seen[s] = struct{}{}
+		uniq = append(uniq, s)
+	}
+	return uniq
+}
+
 func getHostConfigByID(hostID string) *HostConfig {
 	for _, h := range hosts {
 		if h.ID == hostID {
@@ -268,32 +321,44 @@ func dialSSH(hostID string) (*ssh.Client, error) {
 	if h == nil {
 		return nil, fmt.Errorf("unknown host: %s", hostID)
 	}
-	host := deriveSSHHost(*h)
-	if host == "" {
+	candidates := deriveSSHCandidates(*h)
+	if len(candidates) == 0 {
 		return nil, fmt.Errorf("ssh host not configured for %s", hostID)
 	}
 	authMethod, err := getSSHAuthMethod()
 	if err != nil {
 		return nil, err
 	}
-	addr := net.JoinHostPort(host, sshPort)
-	log.Printf("dialSSH: hostID=%s resolvedHost=%s addr=%s", hostID, host, addr)
 	config := &ssh.ClientConfig{
 		User:            sshUser,
 		Auth:            []ssh.AuthMethod{authMethod},
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 		Timeout:         8 * time.Second,
 	}
-	conn, err := net.DialTimeout("tcp", addr, 8*time.Second)
-	if err != nil {
-		log.Printf("dialSSH error: hostID=%s addr=%s err=%v", hostID, addr, err)
-		return nil, err
+	var lastErr error
+	for _, cand := range candidates {
+		addr := net.JoinHostPort(cand, sshPort)
+		log.Printf("dialSSH: hostID=%s trying candidate=%s addr=%s", hostID, cand, addr)
+		conn, err := net.DialTimeout("tcp", addr, 8*time.Second)
+		if err != nil {
+			log.Printf("dialSSH: candidate failed hostID=%s addr=%s err=%v", hostID, addr, err)
+			lastErr = err
+			continue
+		}
+		clientConn, chans, reqs, err := ssh.NewClientConn(conn, addr, config)
+		if err != nil {
+			log.Printf("dialSSH: ssh handshake failed hostID=%s addr=%s err=%v", hostID, addr, err)
+			lastErr = err
+			conn.Close()
+			continue
+		}
+		log.Printf("dialSSH: hostID=%s connected via %s", hostID, addr)
+		return ssh.NewClient(clientConn, chans, reqs), nil
 	}
-	clientConn, chans, reqs, err := ssh.NewClientConn(conn, addr, config)
-	if err != nil {
-		return nil, err
+	if lastErr != nil {
+		return nil, fmt.Errorf("all ssh candidates failed for %s: last error: %w", hostID, lastErr)
 	}
-	return ssh.NewClient(clientConn, chans, reqs), nil
+	return nil, fmt.Errorf("no ssh candidates available for %s", hostID)
 }
 
 func runSSHCommand(hostID, cmd string) (string, error) {
