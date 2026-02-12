@@ -1215,3 +1215,29 @@ npm run dev
 - Verificacion en Raspberry Pi: OK
    - `curl -I http://192.168.1.145:3007` -> HTTP 200.
 - Git push: completado.
+
+### 2026-02-12 - SSH in-app + SFTP + discos via SSH + alertas pausadas
+
+- Cambios:
+   - SSH embebido por host (WebSocket `/ws/ssh/:hostId`) y file manager SFTP con upload/download.
+   - Discos ahora se leen via `df` por SSH (sin contenedor busybox) con dedupe de mounts.
+   - Cards de contenedores con altura fija y numeracion tabular para evitar cambios de tamano.
+   - Alertas de CPU/Mem deshabilitadas por defecto con bootstrap de migracion.
+- Archivos:
+   - `backend/main.go`
+   - `backend/go.mod`, `backend/go.sum`
+   - `frontend/src/lib/api/docker.ts`
+   - `frontend/src/lib/components/Terminal.svelte`
+   - `frontend/src/lib/components/HostCard.svelte`
+   - `frontend/src/lib/components/HostFiles.svelte`
+   - `frontend/src/lib/components/ContainerCard.svelte`
+   - `frontend/src/routes/+page.svelte`
+- Tests:
+   - `go test ./...` (backend): OK (sin tests).
+   - `npm --prefix frontend run check`: OK (0 errors, 0 warnings).
+- Deploy a Raspberry Pi: completado con `./deploy-to-raspi.sh`.
+   - Resultado: OK (contenedor healthy en `:3007`).
+   - API test del script: HTTP 401 (esperado sin auth).
+- Verificacion en Raspberry Pi: OK
+   - `curl -I http://192.168.1.145:3007` -> HTTP 200.
+- Git push: pendiente.

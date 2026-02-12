@@ -7,6 +7,7 @@
     ChevronDown,
     ChevronUp,
     Terminal as TerminalIcon,
+    FolderOpen,
   } from "lucide-svelte";
   import type { Host } from "$lib/api/docker";
   import { selectedHost, language, translations } from "$lib/stores/docker";
@@ -16,11 +17,15 @@
     onclick,
     resourcesOpen = false,
     onToggleResources,
+    onOpenHostTerminal,
+    onOpenHostFiles,
   }: {
     host: Host;
     onclick?: () => void;
     resourcesOpen?: boolean;
     onToggleResources?: (hostId: string) => void;
+    onOpenHostTerminal?: (host: Host) => void;
+    onOpenHostFiles?: (host: Host) => void;
   } = $props();
 
   let isSelected = $derived($selectedHost === host.id);
@@ -99,16 +104,26 @@
     </div>
     <div class="flex items-center gap-2 text-sm">
       {#if host.sshHost}
-        <a
+        <button
           class="inline-flex items-center gap-1.5 px-2.5 py-1 bg-background-tertiary/70 text-foreground-muted rounded-lg hover:text-foreground hover:bg-background-tertiary transition-colors"
-          href={`ssh://${host.sshHost}`}
-          target="_blank"
-          rel="noreferrer"
-          onclick={(e) => e.stopPropagation()}
+          onclick={(e) => {
+            e.stopPropagation();
+            onOpenHostTerminal?.(host);
+          }}
         >
           <TerminalIcon class="w-3.5 h-3.5" />
-          <span class="text-xs font-medium">SSH</span>
-        </a>
+          <span class="text-xs font-medium">Console</span>
+        </button>
+        <button
+          class="inline-flex items-center gap-1.5 px-2.5 py-1 bg-background-tertiary/70 text-foreground-muted rounded-lg hover:text-foreground hover:bg-background-tertiary transition-colors"
+          onclick={(e) => {
+            e.stopPropagation();
+            onOpenHostFiles?.(host);
+          }}
+        >
+          <FolderOpen class="w-3.5 h-3.5" />
+          <span class="text-xs font-medium">Files</span>
+        </button>
       {/if}
       <span class="flex items-center gap-2 text-sm">
         <span class="w-2 h-2 rounded-full {getStatusColor(host.online)}"></span>

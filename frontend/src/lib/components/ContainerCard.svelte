@@ -169,7 +169,7 @@
   const isRunning = $derived(container.state === "running");
 </script>
 
-<div class="card card-hover p-4 flex flex-col gap-3">
+<div class="card card-hover p-4 flex flex-col gap-3 h-[270px]">
   <!-- Header -->
   <div class="flex items-start justify-between">
     <div class="flex items-center gap-3 min-w-0">
@@ -235,7 +235,7 @@
   </div>
 
   <!-- Stats Grid (fixed height to avoid layout shift) -->
-  <div class="border-y border-border rounded-lg bg-background-tertiary/40 px-2 py-2 min-h-[72px]">
+  <div class="border-y border-border rounded-lg bg-background-tertiary/40 px-2 py-2 min-h-[76px]">
     <div class="grid grid-cols-4 gap-2">
       <div class="text-center">
         <p
@@ -244,7 +244,7 @@
           <Cpu class="w-3 h-3" />
         </p>
         <p
-          class="text-sm font-mono {stats && isRunning && stats.cpuPercent > 50
+          class="text-sm font-mono tabular-nums {stats && isRunning && stats.cpuPercent > 50
             ? 'text-accent-orange'
             : 'text-foreground'}"
         >
@@ -262,7 +262,7 @@
           <HardDrive class="w-3 h-3" />
         </p>
         <p
-          class="text-sm font-mono {stats && isRunning && stats.memoryPercent > 70
+          class="text-sm font-mono tabular-nums {stats && isRunning && stats.memoryPercent > 70
             ? 'text-accent-orange'
             : 'text-foreground'}"
         >
@@ -279,7 +279,7 @@
         >
           <ArrowUpDown class="w-3 h-3" />
         </p>
-        <p class="text-sm font-mono text-foreground">
+        <p class="text-sm font-mono tabular-nums text-foreground whitespace-nowrap">
           {#if isRunning && stats}
             {formatBytes(stats.networkRx)}/{formatBytes(stats.networkTx)}
           {:else}
@@ -289,7 +289,7 @@
       </div>
       <div class="text-center">
         <p class="text-xs text-foreground-muted mb-1">{t.uptime}</p>
-        <p class="text-sm font-mono text-running">
+        <p class="text-sm font-mono tabular-nums text-running whitespace-nowrap">
           {#if isRunning}
             {formatUptime(container.status)}
           {:else}
@@ -311,23 +311,23 @@
 
   <!-- Container Details: Ports, IP, Volumes -->
   {#if container.ports?.length > 0 || Object.keys(container.networks || {}).length > 0 || container.volumes > 0}
-    <div class="flex flex-wrap gap-1.5">
+    <div class="flex flex-wrap gap-1.5 min-h-[32px] max-h-[32px] overflow-hidden">
       {#each (container.ports || []).filter(p => p.public > 0) as port}
-        <span class="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 bg-primary/10 text-primary rounded-full border border-primary/20">
+        <span class="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 bg-primary/10 text-primary rounded-full border border-primary/20 whitespace-nowrap">
           <ExternalLink class="w-2.5 h-2.5" />
           :{port.public}
         </span>
       {/each}
       {#each Object.entries(container.networks || {}) as [netName, ip]}
         {#if ip}
-          <span class="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 bg-accent-cyan/10 text-accent-cyan rounded-full border border-accent-cyan/20" title="{netName}: {ip}">
+          <span class="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 bg-accent-cyan/10 text-accent-cyan rounded-full border border-accent-cyan/20 whitespace-nowrap" title="{netName}: {ip}">
             <Network class="w-2.5 h-2.5" />
             {ip}
           </span>
         {/if}
       {/each}
       {#if container.volumes > 0}
-        <span class="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 bg-accent-purple/10 text-accent-purple rounded-full border border-accent-purple/20">
+        <span class="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 bg-accent-purple/10 text-accent-purple rounded-full border border-accent-purple/20 whitespace-nowrap">
           <Box class="w-2.5 h-2.5" />
           {container.volumes} vol{container.volumes > 1 ? 's' : ''}
         </span>
