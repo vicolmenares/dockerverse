@@ -191,12 +191,17 @@
     loadData();
   }
 
-  onMount(async () => {
-    await loadData();
-    startStatsStream();
+  onMount(() => {
+    let active = true;
 
-    // Check for image updates after initial load
-    checkForUpdates();
+    void (async () => {
+      await loadData();
+      if (!active) return;
+      startStatsStream();
+
+      // Check for image updates after initial load
+      checkForUpdates();
+    })();
 
     // Listen for refresh events from header
     window.addEventListener("dockerverse:refresh", handleRefresh);
@@ -205,6 +210,7 @@
     const dataInterval = setInterval(loadData, 30000);
     const updateInterval = setInterval(checkForUpdates, 15 * 60 * 1000);
     return () => {
+      active = false;
       clearInterval(dataInterval);
       clearInterval(updateInterval);
       window.removeEventListener("dockerverse:refresh", handleRefresh);

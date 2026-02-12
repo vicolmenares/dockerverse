@@ -1121,3 +1121,28 @@ npm run dev
 - Verificacion en Raspberry Pi: OK
    - `curl -I http://localhost:3007` -> HTTP 200.
 - Git push: completado (incluye `.env` por solicitud).
+
+### 2026-02-12 - Fix svelte-check (errores)
+
+- Base de trabajo: rama `feature/toggle-filters-host-rename-2026-02-12`.
+- Cambios:
+   - `onMount` sincronizado en Dashboard y Terminal para evitar promesas en retorno.
+   - `auth.update` expuesto y tipado en store para actualizar avatar.
+   - Bulk update client agregado en API frontend con resultados agregados.
+   - Validacion de rol admin usando `roles`.
+   - Agregado `@types/node` para tipado de `process` en Vite.
+- Archivos:
+   - `frontend/src/routes/+page.svelte`
+   - `frontend/src/lib/components/Terminal.svelte`
+   - `frontend/src/lib/stores/auth.ts`
+   - `frontend/src/lib/api/docker.ts`
+   - `frontend/src/routes/+layout.svelte`
+   - `frontend/package.json`
+   - `frontend/package-lock.json`
+- Tests (frontend): `npm --prefix frontend run check`
+   - Resultado: OK con warnings de a11y y estado local en componentes (sin errores).
+- Deploy a Raspberry Pi: completado con `./deploy-to-raspi.sh`.
+   - Resultado: OK (contenedor healthy en `:3007`).
+- Verificacion en Raspberry Pi: OK
+   - `curl -I http://localhost:3007` -> HTTP 200.
+- Git push: completado.

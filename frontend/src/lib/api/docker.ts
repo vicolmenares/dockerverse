@@ -90,6 +90,21 @@ export interface ImageUpdate {
 	checkedAt: number;
 }
 
+export interface BulkUpdateResultItem {
+	containerId: string;
+	containerName: string;
+	hostId: string;
+	success: boolean;
+	error?: string;
+}
+
+export interface BulkUpdateResult {
+	matched: number;
+	updated: number;
+	failed: number;
+	results: BulkUpdateResultItem[];
+}
+
 // Fetch with timeout utility
 async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs = 8000): Promise<Response> {
 	const controller = new AbortController();
@@ -155,6 +170,61 @@ export async function triggerContainerUpdate(hostId: string, containerId: string
 		throw new Error(data.error || 'Failed to trigger update');
 	}
 	return res.json();
+}
+
+export async function triggerBulkUpdate(
+	hostId?: string,
+	nameFilter?: string,
+	dryRun = false
+): Promise<BulkUpdateResult> {
+	const containers = await fetchContainers();
+	const filter = nameFilter?.toLowerCase().trim() || '';
+	const matched = containers.filter((container) => {
+		if (hostId && container.hostId !== hostId) return false;
+		if (filter && !container.name.toLowerCase().includes(filter)) return false;
+		return true;
+	});
+
+	if (dryRun) {
+		return {
+			matched: matched.length,
+			updated: 0,
+			failed: 0,
+			results: []
+		};
+	}
+
+	const results = await Promise.all(
+		matched.map(async (container) => {
+			try {
+				await triggerContainerUpdate(container.hostId, container.id);
+				return {
+					containerId: container.id,
+					containerName: container.name,
+					hostId: container.hostId,
+					success: true
+				};
+			} catch (error) {
+				return {
+					containerId: container.id,
+					containerName: container.name,
+					hostId: container.hostId,
+					success: false,
+					error: error instanceof Error ? error.message : 'Update failed'
+				};
+			}
+		})
+	);
+
+	const updated = results.filter((r) => r.success).length;
+	const failed = results.length - updated;
+
+	return {
+		matched: matched.length,
+		updated,
+		failed,
+		results
+	};
 }
 
 // SSE Event Source with callbacks for all message types
