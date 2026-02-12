@@ -25,6 +25,9 @@ raspi1:Raspeberry Main:192.168.1.10:remote|raspi2:Raspeberry Secondary:192.168.1
 ```
 
 Added logging to `backend/main.go` in `dialSSH()` to surface the resolved host and TCP address on dial attempts. This helps debugging connection errors like `connect: connection refused` or unresolved hostnames.
+ - Backend now attempts multiple SSH address fallbacks when dialing (explicit IP, derived host from DOCKER_HOSTS, `host.docker.internal`, and host ID). See `deriveSSHCandidates()` in `backend/main.go`.
+ - After applying the fallback, redeploy and verify `/api/debug/hosts` and backend logs for which candidate succeeded.
+ - Git push: committed changes to branch `feature/toggle-filters-host-rename-2026-02-12` (please push if not already pushed from the deploy environment).
 # DockerVerse - Guía Completa de Continuación de Desarrollo
 
 > **Documento de transferencia de conocimiento para continuar el desarrollo desde macOS**
