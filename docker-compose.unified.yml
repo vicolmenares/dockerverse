@@ -69,6 +69,8 @@ services:
     # Use the same network as other containers
     networks:
       - container_network_ipv4
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     
     # Container labels
     labels:
