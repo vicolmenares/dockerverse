@@ -1171,3 +1171,22 @@ npm run dev
 - Verificacion en Raspberry Pi: OK
    - `curl -I http://localhost:3007` -> HTTP 200.
 - Git push: pendiente.
+
+### 2026-02-12 - Hosts no aparecen (investigacion + fix)
+
+- Logs (raspi-main):
+   - `getDiskInfo(raspi1)`: `No such image: busybox:latest`.
+   - `getDiskInfo(raspi2)`: `403 Forbidden` (remote daemon denies create).
+   - `Error saving environments: open data/environments.json: no such file or directory`.
+- Diagnostico: deadlock por `statsMu.Lock()` duplicado en `GetHostStats` bloqueaba la agregacion de stats, afectando render de hosts.
+- Fix aplicado:
+   - Mutex corregido y actualizacion de `maxMemLimit` dentro del lock.
+- Tests:
+   - `go test ./...` (backend): OK (sin tests).
+   - `npm --prefix frontend run check`: OK.
+- Deploy a Raspberry Pi: completado con `./deploy-to-raspi.sh`.
+   - Resultado: OK (contenedor healthy en `:3007`).
+   - API test del script: HTTP 401 (esperado sin auth).
+- Verificacion en Raspberry Pi: OK
+   - `curl -I http://localhost:3007` -> HTTP 200.
+- Git push: pendiente.
