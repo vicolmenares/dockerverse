@@ -42,19 +42,18 @@ services:
     
     # Environment variables
     environment:
-      # Backend configuration
-      - PORT=3001
-      - DOCKER_HOST=unix:///var/run/docker.sock
-      - JWT_SECRET=${JWT_SECRET:-dockerverse-super-secret-key-2026}
+      PORT: "3001"
+      DOCKER_HOST: "unix:///var/run/docker.sock"
+      JWT_SECRET: "${JWT_SECRET:-dockerverse-super-secret-key-2026}"
       # Docker hosts configuration (pipe-separated)
       # Format: id:name:address:local/remote
-      - DOCKER_HOSTS=${DOCKER_HOSTS:-raspi1:Raspeberry Main:192.168.1.10:remote|raspi2:Raspeberry Secondary:192.168.1.11:remote}
+      DOCKER_HOSTS: "raspi1:Raspeberry Main:192.168.1.10:remote|raspi2:Raspeberry Secondary:192.168.1.11:remote"
       # Watchtower integration
       - WATCHTOWER_TOKEN=${WATCHTOWER_TOKEN:-}
       - WATCHTOWER_URLS=${WATCHTOWER_URLS:-}
       # Frontend configuration
-      - NODE_ENV=production
-      - ORIGIN=${ORIGIN:-http://localhost:3007}
+      NODE_ENV: "production"
+      ORIGIN: "${ORIGIN:-http://localhost:3007}"
       # s6-overlay configuration
       - S6_VERBOSITY=1
       - S6_BEHAVIOUR_IF_STAGE2_FAILS=2
