@@ -2161,9 +2161,17 @@ func getDiskInfo(ctx context.Context, hostID string) []DiskInfo {
 	diskCacheMu.RUnlock()
 
 	output, err := runSSHCommand(hostID, "df -B1 / /mnt /media /run/media 2>/dev/null")
+	// Some systems return a non-zero exit code for `df` when some mountpoints
+	// do not exist or other non-fatal conditions occur. The SSH session will
+	// return an error in that case but may still produce valid output. Treat
+	// the output as usable if it's non-empty; only fail when there is no
+	// output to parse.
 	if err != nil {
-		log.Printf("getDiskInfo(%s): ssh df failed: %v", hostID, err)
-		return nil
+		if strings.TrimSpace(output) == "" {
+			log.Printf("getDiskInfo(%s): ssh df failed and produced no output: %v", hostID, err)
+			return nil
+		}
+		log.Printf("getDiskInfo(%s): ssh df returned error (non-fatal), will parse output: %v", hostID, err)
 	}
 
 	// Parse df output
