@@ -276,6 +276,7 @@ func dialSSH(hostID string) (*ssh.Client, error) {
 		return nil, err
 	}
 	addr := net.JoinHostPort(host, sshPort)
+	log.Printf("dialSSH: hostID=%s resolvedHost=%s addr=%s", hostID, host, addr)
 	config := &ssh.ClientConfig{
 		User:            sshUser,
 		Auth:            []ssh.AuthMethod{authMethod},
@@ -284,6 +285,7 @@ func dialSSH(hostID string) (*ssh.Client, error) {
 	}
 	conn, err := net.DialTimeout("tcp", addr, 8*time.Second)
 	if err != nil {
+		log.Printf("dialSSH error: hostID=%s addr=%s err=%v", hostID, addr, err)
 		return nil, err
 	}
 	clientConn, chans, reqs, err := ssh.NewClientConn(conn, addr, config)

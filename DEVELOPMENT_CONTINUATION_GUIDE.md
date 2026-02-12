@@ -17,6 +17,14 @@
    - UI muestra hosts online, disco y Files/Console funcionando (esperado).
    - SSH conecta a IP real, no localhost.
 - Git push: pendiente tras este update.
+
+Note: If Files/Console still fail with connection to ::1, ensure that the `DOCKER_HOSTS` entries do not mark a remote host as `local`. Remote Raspberry Pis must be marked `remote` and use the Pi IP address. Example:
+
+```
+raspi1:Raspeberry Main:192.168.1.10:remote|raspi2:Raspeberry Secondary:192.168.1.11:remote
+```
+
+Added logging to `backend/main.go` in `dialSSH()` to surface the resolved host and TCP address on dial attempts. This helps debugging connection errors like `connect: connection refused` or unresolved hostnames.
 # DockerVerse - Guía Completa de Continuación de Desarrollo
 
 > **Documento de transferencia de conocimiento para continuar el desarrollo desde macOS**

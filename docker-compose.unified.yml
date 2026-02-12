@@ -48,7 +48,7 @@ services:
       - JWT_SECRET=${JWT_SECRET:-dockerverse-super-secret-key-2026}
       # Docker hosts configuration (pipe-separated)
       # Format: id:name:address:local/remote
-      - DOCKER_HOSTS=${DOCKER_HOSTS:-raspi1:Raspeberry Main:192.168.1.10:local|raspi2:Raspeberry Secondary:192.168.1.11:remote}
+      - DOCKER_HOSTS=${DOCKER_HOSTS:-raspi1:Raspeberry Main:192.168.1.10:remote|raspi2:Raspeberry Secondary:192.168.1.11:remote}
       # Watchtower integration
       - WATCHTOWER_TOKEN=${WATCHTOWER_TOKEN:-}
       - WATCHTOWER_URLS=${WATCHTOWER_URLS:-}
