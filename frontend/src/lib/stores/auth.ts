@@ -197,6 +197,7 @@ function createAuthStore() {
 
 	return {
 		subscribe,
+		update,
 		
 		// Login with credentials
 		login: async (credentials: LoginCredentials): Promise<LoginResult> => {
@@ -513,7 +514,7 @@ export async function uploadAvatar(file: File): Promise<string> {
 				const data = await response.json();
 				
 				// Update user in store
-				auth.update(state => {
+				auth.update((state: AuthState) => {
 					if (state.user) {
 						return {
 							...state,
@@ -555,7 +556,7 @@ export async function deleteAvatar(): Promise<void> {
 	}
 	
 	// Update user in store
-	auth.update(state => {
+	auth.update((state: AuthState) => {
 		if (state.user) {
 			return {
 				...state,

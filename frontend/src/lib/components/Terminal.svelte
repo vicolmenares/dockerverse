@@ -487,9 +487,14 @@
     }
   }
 
-  onMount(async () => {
-    await initTerminal();
-    connectWebSocket();
+  onMount(() => {
+    let active = true;
+
+    void (async () => {
+      await initTerminal();
+      if (!active) return;
+      connectWebSocket();
+    })();
 
     // Window resize handler
     const resizeObserver = new ResizeObserver(() => {
@@ -498,6 +503,7 @@
     resizeObserver.observe(terminalElement);
 
     return () => {
+      active = false;
       resizeObserver.disconnect();
     };
   });
