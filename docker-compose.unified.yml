@@ -37,6 +37,8 @@ services:
       - nginx_cache:/var/cache/nginx
       # Optional: logs persistence
       - logs:/var/log/dockerverse
+      # SSH keys + persistent data
+      - /home/pi/dockerverse/data:/data
     
     # Environment variables
     environment:
@@ -46,7 +48,7 @@ services:
       - JWT_SECRET=${JWT_SECRET:-dockerverse-super-secret-key-2026}
       # Docker hosts configuration (pipe-separated)
       # Format: id:name:address:local/remote
-      - DOCKER_HOSTS=${DOCKER_HOSTS:-raspi1:Raspi Main:unix:///var/run/docker.sock:local|raspi2:Raspi 2:http://192.168.1.146:2375:remote}
+      - DOCKER_HOSTS=${DOCKER_HOSTS:-raspi1:Raspeberry Main:192.168.1.10:local|raspi2:Raspeberry Secondary:192.168.1.11:remote}
       # Watchtower integration
       - WATCHTOWER_TOKEN=${WATCHTOWER_TOKEN:-}
       - WATCHTOWER_URLS=${WATCHTOWER_URLS:-}
@@ -59,6 +61,11 @@ services:
       - S6_CMD_WAIT_FOR_SERVICES_MAXTIME=30000
       # Timezone
       - TZ=${TZ:-America/Mexico_City}
+      # SSH configuration for host console + SFTP
+      - SSH_USER=${SSH_USER:-pi}
+      - SSH_PORT=${SSH_PORT:-22}
+      - SSH_KEY_PATH=${SSH_KEY_PATH:-/data/ssh/id_rsa}
+      - SSH_KEY_PASSPHRASE=${SSH_KEY_PASSPHRASE:-}
     
     # Use the same network as other containers
     networks:
