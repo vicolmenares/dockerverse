@@ -169,7 +169,7 @@
   const isRunning = $derived(container.state === "running");
 </script>
 
-<div class="card card-hover p-4 flex flex-col gap-3 h-[270px]">
+<div class="card card-hover p-4 flex flex-col gap-3 h-[300px]">
   <!-- Header -->
   <div class="flex items-start justify-between">
     <div class="flex items-center gap-3 min-w-0">
@@ -234,68 +234,58 @@
     </span>
   </div>
 
-  <!-- Stats Grid (fixed height to avoid layout shift) -->
-  <div class="border-y border-border rounded-lg bg-background-tertiary/40 px-2 py-2 min-h-[76px]">
-    <div class="grid grid-cols-4 gap-2">
-      <div class="text-center">
-        <p
-          class="text-xs text-foreground-muted flex items-center justify-center gap-1 mb-1"
-        >
-          <Cpu class="w-3 h-3" />
-        </p>
-        <p
-          class="text-sm font-mono tabular-nums {stats && isRunning && stats.cpuPercent > 50
-            ? 'text-accent-orange'
-            : 'text-foreground'}"
-        >
+  <!-- Metrics Panel (stable layout) -->
+  <div class="border border-border rounded-lg bg-background-tertiary/40 px-3 py-2 min-h-[96px]">
+    <div class="grid grid-cols-2 gap-2">
+      <div class="flex items-center justify-between rounded-md bg-background/40 px-2 py-1">
+        <span class="text-[11px] text-foreground-muted flex items-center gap-1">
+          <Cpu class="w-3 h-3" /> CPU
+        </span>
+        <span class="text-sm font-mono tabular-nums {stats && isRunning && stats.cpuPercent > 50
+          ? 'text-accent-orange'
+          : 'text-foreground'}">
           {#if isRunning && stats}
             {stats.cpuPercent.toFixed(1)}%
           {:else}
             —
           {/if}
-        </p>
+        </span>
       </div>
-      <div class="text-center">
-        <p
-          class="text-xs text-foreground-muted flex items-center justify-center gap-1 mb-1"
-        >
-          <HardDrive class="w-3 h-3" />
-        </p>
-        <p
-          class="text-sm font-mono tabular-nums {stats && isRunning && stats.memoryPercent > 70
-            ? 'text-accent-orange'
-            : 'text-foreground'}"
-        >
+      <div class="flex items-center justify-between rounded-md bg-background/40 px-2 py-1">
+        <span class="text-[11px] text-foreground-muted flex items-center gap-1">
+          <HardDrive class="w-3 h-3" /> RAM
+        </span>
+        <span class="text-sm font-mono tabular-nums {stats && isRunning && stats.memoryPercent > 70
+          ? 'text-accent-orange'
+          : 'text-foreground'}">
           {#if isRunning && stats}
             {stats.memoryPercent.toFixed(1)}%
           {:else}
             —
           {/if}
-        </p>
+        </span>
       </div>
-      <div class="text-center">
-        <p
-          class="text-xs text-foreground-muted flex items-center justify-center gap-1 mb-1"
-        >
-          <ArrowUpDown class="w-3 h-3" />
-        </p>
-        <p class="text-sm font-mono tabular-nums text-foreground whitespace-nowrap">
+      <div class="flex items-center justify-between rounded-md bg-background/40 px-2 py-1">
+        <span class="text-[11px] text-foreground-muted flex items-center gap-1">
+          <ArrowUpDown class="w-3 h-3" /> Net
+        </span>
+        <span class="text-[11px] font-mono tabular-nums text-foreground whitespace-nowrap">
           {#if isRunning && stats}
             {formatBytes(stats.networkRx)}/{formatBytes(stats.networkTx)}
           {:else}
             —
           {/if}
-        </p>
+        </span>
       </div>
-      <div class="text-center">
-        <p class="text-xs text-foreground-muted mb-1">{t.uptime}</p>
-        <p class="text-sm font-mono tabular-nums text-running whitespace-nowrap">
+      <div class="flex items-center justify-between rounded-md bg-background/40 px-2 py-1">
+        <span class="text-[11px] text-foreground-muted">{t.uptime}</span>
+        <span class="text-[11px] font-mono tabular-nums text-running whitespace-nowrap">
           {#if isRunning}
             {formatUptime(container.status)}
           {:else}
             —
           {/if}
-        </p>
+        </span>
       </div>
     </div>
     <p class="mt-1 text-[10px] text-center text-foreground-muted">
@@ -311,7 +301,7 @@
 
   <!-- Container Details: Ports, IP, Volumes -->
   {#if container.ports?.length > 0 || Object.keys(container.networks || {}).length > 0 || container.volumes > 0}
-    <div class="flex flex-wrap gap-1.5 min-h-[32px] max-h-[32px] overflow-hidden">
+    <div class="flex gap-2 min-h-[36px] max-h-[36px] overflow-x-auto overflow-y-hidden whitespace-nowrap">
       {#each (container.ports || []).filter(p => p.public > 0) as port}
         <span class="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 bg-primary/10 text-primary rounded-full border border-primary/20 whitespace-nowrap">
           <ExternalLink class="w-2.5 h-2.5" />
