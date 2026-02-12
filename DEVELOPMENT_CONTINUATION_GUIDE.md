@@ -2,7 +2,7 @@
 
 > **Documento de transferencia de conocimiento para continuar el desarrollo desde macOS**
 > 
-> Última actualización: 8 de febrero de 2026
+> Última actualización: 12 de febrero de 2026
 > Versión actual: v2.3.0
 
 ---
@@ -24,6 +24,10 @@
 13. [API Reference](#api-reference)
 14. [Guía de Troubleshooting](#guía-de-troubleshooting)
 15. [Roadmap y Próximos Pasos](#roadmap-y-próximos-pasos)
+16. [Estado del Repositorio (Git)](#estado-del-repositorio-git)
+17. [Mapa de Módulos UI/UX](#mapa-de-módulos-uiux)
+18. [Mapa de Funcionalidades End-to-End](#mapa-de-funcionalidades-end-to-end)
+19. [Tracking de Cambios](#tracking-de-cambios)
 
 ---
 
@@ -1057,7 +1061,63 @@ npm run dev
 - ✅ P11: Profile `PATCH /api/auth/profile` funciona
 - ✅ P12: 3 containers corriendo (nginx, frontend, backend)
 
+## Estado del Repositorio (Git)
+
+- Rama actual: HEAD detach en `2f575b9` ("feat: Add a bulk update modal for managing Docker containers."), sin cambios locales visibles en el árbol de trabajo.
+- Origen: `origin/master` en `06af6de` (con `d5cd321` previo). El HEAD local está **adelantado 1 commit** y **atrasado 2 commits** respecto a `origin/master` (divergencia).
+- Acción sugerida: crear una rama desde `2f575b9` y hacer rebase/merge contra `origin/master` antes de publicar; evitar `git reset --hard` hasta respaldar la rama local.
+
+## Mapa de Módulos UI/UX
+
+- **Layout y navegación**: shell, header, sidebar, menú de usuario, badge de actualizaciones y palette en [frontend/src/routes/+layout.svelte](frontend/src/routes/+layout.svelte), soportado por [frontend/src/lib/components/CommandPalette.svelte](frontend/src/lib/components/CommandPalette.svelte) y [frontend/src/lib/components/Login.svelte](frontend/src/lib/components/Login.svelte).
+- **Dashboard principal**: hosts, tarjetas de contenedores, leaderboard de recursos, filtros y preloads de terminal/logs en [frontend/src/routes/+page.svelte](frontend/src/routes/+page.svelte) usando [frontend/src/lib/components/HostCard.svelte](frontend/src/lib/components/HostCard.svelte), [frontend/src/lib/components/ContainerCard.svelte](frontend/src/lib/components/ContainerCard.svelte), [frontend/src/lib/components/ResourceChart.svelte](frontend/src/lib/components/ResourceChart.svelte), [frontend/src/lib/components/UpdateModal.svelte](frontend/src/lib/components/UpdateModal.svelte) y [frontend/src/lib/components/BulkUpdateModal.svelte](frontend/src/lib/components/BulkUpdateModal.svelte).
+- **Logs**: panel dedicado con modos single/multi/agrupado y descarga en [frontend/src/routes/logs/+page.svelte](frontend/src/routes/logs/+page.svelte); visor flotante con filtros por nivel/fecha en [frontend/src/lib/components/LogViewer.svelte](frontend/src/lib/components/LogViewer.svelte).
+- **Settings page-based**: layout protegido y breadcrumb en [frontend/src/routes/settings/+layout.svelte](frontend/src/routes/settings/+layout.svelte); secciones hijas para profile, security (password/2FA/auto-logout), users, notifications, appearance, data, environments y about bajo [frontend/src/routes/settings](frontend/src/routes/settings).
+- **Terminal web**: ventana flotante con temas, WebGL y WebSocket en [frontend/src/lib/components/Terminal.svelte](frontend/src/lib/components/Terminal.svelte).
+- **Estado y API**: stores globales en [frontend/src/lib/stores/auth.ts](frontend/src/lib/stores/auth.ts) y [frontend/src/lib/stores/docker.ts](frontend/src/lib/stores/docker.ts); helpers HTTP/SSE/WS en [frontend/src/lib/api/docker.ts](frontend/src/lib/api/docker.ts).
+
+## Mapa de Funcionalidades End-to-End
+
+- **Autenticación y sesiones**: JWT + refresh + rotación, TOTP y recovery codes en [backend/main.go](backend/main.go); login/persistencia/auto-logout configurable en [frontend/src/lib/stores/auth.ts](frontend/src/lib/stores/auth.ts) y [frontend/src/lib/components/Login.svelte](frontend/src/lib/components/Login.svelte).
+- **Seguridad de sesión**: seguimiento de actividad y guard de rutas de settings en [frontend/src/routes/+layout.svelte](frontend/src/routes/+layout.svelte) y [frontend/src/routes/settings/+layout.svelte](frontend/src/routes/settings/+layout.svelte), con opciones de auto-logout.
+- **Usuarios y roles**: CRUD y roles admin/user implementados en [backend/main.go](backend/main.go); UI administrativa en [frontend/src/routes/settings/users](frontend/src/routes/settings/users).
+- **Hosts/Entornos**: parser de `DOCKER_HOSTS`, persistencia (`EnvironmentStore`) y backoff de health en [backend/main.go](backend/main.go); UI vinculada al ítem "Environments" en el sidebar.
+- **Contenedores y métricas**: SSE `/api/events` alimenta [frontend/src/lib/stores/docker.ts](frontend/src/lib/stores/docker.ts) vía [frontend/src/lib/api/docker.ts](frontend/src/lib/api/docker.ts) para stats, hosts y contenedores; render en HostCard/ContainerCard y leaderboard.
+- **Acciones y updates**: start/stop/restart y detección de updates; flujo de actualización individual en [frontend/src/lib/components/UpdateModal.svelte](frontend/src/lib/components/UpdateModal.svelte) y masiva en [frontend/src/lib/components/BulkUpdateModal.svelte](frontend/src/lib/components/BulkUpdateModal.svelte) contra endpoints de Watchtower definidos en [backend/main.go](backend/main.go).
+- **Logs y observabilidad**: streaming SSE por contenedor desde [backend/main.go](backend/main.go) consumido en [frontend/src/routes/logs/+page.svelte](frontend/src/routes/logs/+page.svelte) y [frontend/src/lib/components/LogViewer.svelte](frontend/src/lib/components/LogViewer.svelte), con búsqueda, filtros y exportación.
+- **Terminal**: WebSocket `/ws/terminal/{host}/{container}` implementado en [backend/main.go](backend/main.go) y consumido por [frontend/src/lib/components/Terminal.svelte](frontend/src/lib/components/Terminal.svelte) con temas y WebGL.
+- **Notificaciones y umbrales**: AppSettings (CPU/Mem thresholds, Apprise/Telegram/Email, flags de eventos) en [backend/main.go](backend/main.go); interfaz en settings/notifications y limpieza de datos en settings/data.
+- **Buenas prácticas aplicadas**: separación de stores y API, `fetchWithTimeout` en todas las llamadas, SSE con reconexión, tokens rotados y guardados en storage, settings modularizados por ruta, componentes auto-contenidos para operaciones críticas (terminal, logs, updates).
+
 ---
 
-*Documento actualizado el 8 de febrero de 2026*
+*Documento actualizado el 12 de febrero de 2026*
 *DockerVerse v2.3.0*
+
+## Tracking de Cambios
+
+### 2026-02-12 - Toggle de filtros y rename de hosts
+
+- Base de trabajo: commit 32d36f7 (deployment activo).
+- Cambios:
+   - Toggle de filtros en cards de resumen (Total/Running/Stopped/Updates) para permitir deseleccionar con segundo click.
+   - Renombrado de hosts por display name en `DOCKER_HOSTS` a "Raspeberry Main" y "Raspberry Secondary".
+   - Default de host local en backend alineado a "Raspeberry Main".
+- Archivos:
+   - `frontend/src/routes/+page.svelte`
+   - `.env`
+   - `backend/main.go`
+- Tests (frontend): `npm --prefix frontend run check`
+   - Resultado: FALLA.
+   - Errores principales:
+      - `frontend/vite.config.ts`: falta `@types/node` (process no definido).
+      - `frontend/src/lib/components/Terminal.svelte`: firma async en `onMount`.
+      - `frontend/src/lib/stores/auth.ts`: `auth.update` no existe (tipado).
+      - `frontend/src/lib/components/BulkUpdateModal.svelte`: exports no encontrados en `api/docker`.
+      - `frontend/src/routes/+layout.svelte`: `currentUser.role` vs `roles`.
+- Deploy a Raspberry Pi: completado con `./deploy-to-raspi.sh`.
+   - Resultado: OK (contenedor healthy en `:3007`).
+   - API test del script: HTTP 401 (esperado sin auth).
+- Verificacion en Raspberry Pi: OK
+   - `curl -I http://localhost:3007` -> HTTP 200.
+- Git push: completado (incluye `.env` por solicitud).
