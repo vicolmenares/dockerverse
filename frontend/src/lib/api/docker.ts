@@ -75,6 +75,7 @@ export interface Host {
 	memoryTotal: number;
 	online: boolean;
 	disks: DiskInfo[];
+	sshHost?: string;
 }
 
 export interface ImageUpdate {

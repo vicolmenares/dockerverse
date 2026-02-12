@@ -6,6 +6,7 @@
     Database,
     ChevronDown,
     ChevronUp,
+    Terminal as TerminalIcon,
   } from "lucide-svelte";
   import type { Host } from "$lib/api/docker";
   import { selectedHost, language, translations } from "$lib/stores/docker";
@@ -64,11 +65,17 @@
   let diskTotalUsed = $derived(
     (host.disks || []).reduce((sum, d) => sum + d.usedBytes, 0),
   );
+  let diskTotalFree = $derived(
+    (host.disks || []).reduce((sum, d) => sum + d.freeBytes, 0),
+  );
   let diskTotalSize = $derived(
     (host.disks || []).reduce((sum, d) => sum + d.totalBytes, 0),
   );
   let diskPercent = $derived(
     diskTotalSize > 0 ? (diskTotalUsed / diskTotalSize) * 100 : 0,
+  );
+  let diskPercentText = $derived(
+    diskTotalSize > 0 ? `${diskPercent.toFixed(1)}%` : "—",
   );
 </script>
 
@@ -90,10 +97,24 @@
         <p class="text-sm text-foreground-muted">{host.id}</p>
       </div>
     </div>
-    <span class="flex items-center gap-2 text-sm">
-      <span class="w-2 h-2 rounded-full {getStatusColor(host.online)}"></span>
-      {host.online ? t.online : t.offline}
-    </span>
+    <div class="flex items-center gap-2 text-sm">
+      {#if host.sshHost}
+        <a
+          class="inline-flex items-center gap-1.5 px-2.5 py-1 bg-background-tertiary/70 text-foreground-muted rounded-lg hover:text-foreground hover:bg-background-tertiary transition-colors"
+          href={`ssh://${host.sshHost}`}
+          target="_blank"
+          rel="noreferrer"
+          onclick={(e) => e.stopPropagation()}
+        >
+          <TerminalIcon class="w-3.5 h-3.5" />
+          <span class="text-xs font-medium">SSH</span>
+        </a>
+      {/if}
+      <span class="flex items-center gap-2 text-sm">
+        <span class="w-2 h-2 rounded-full {getStatusColor(host.online)}"></span>
+        {host.online ? t.online : t.offline}
+      </span>
+    </div>
   </div>
 
   <div class="grid grid-cols-4 gap-3">
@@ -135,14 +156,14 @@
     <!-- Disk -->
     <div class="text-center">
       <p class="metric-value tabular-nums {getDiskColor(diskPercent)}">
-        {diskPercent.toFixed(1)}%
+        {diskPercentText}
       </p>
       <p class="metric-label flex items-center justify-center gap-1">
         <Database class="w-3 h-3" /> Disk
       </p>
       {#if diskTotalSize > 0}
         <p class="text-[10px] text-foreground-muted">
-          {formatSize(diskTotalUsed)} / {formatSize(diskTotalSize)}
+          {formatSize(diskTotalFree)} {$language === "es" ? "libre" : "free"} / {formatSize(diskTotalSize)}
         </p>
       {/if}
     </div>
@@ -196,7 +217,7 @@
                 style="width: {Math.min(pct, 100)}%"
               ></div>
             </div>
-            <span class="tabular-nums">{formatSize(disk.usedBytes)}/{formatSize(disk.totalBytes)}</span>
+            <span class="tabular-nums">{formatSize(disk.freeBytes)}/{formatSize(disk.totalBytes)}</span>
           </div>
         {/each}
       </div>

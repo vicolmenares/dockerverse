@@ -234,9 +234,9 @@
     </span>
   </div>
 
-  <!-- Stats Grid (only when running) -->
-  {#if isRunning && stats}
-    <div class="grid grid-cols-4 gap-2 py-2 border-y border-border">
+  <!-- Stats Grid (fixed height to avoid layout shift) -->
+  <div class="border-y border-border rounded-lg bg-background-tertiary/40 px-2 py-2 min-h-[72px]">
+    <div class="grid grid-cols-4 gap-2">
       <div class="text-center">
         <p
           class="text-xs text-foreground-muted flex items-center justify-center gap-1 mb-1"
@@ -244,11 +244,15 @@
           <Cpu class="w-3 h-3" />
         </p>
         <p
-          class="text-sm font-mono {stats.cpuPercent > 50
+          class="text-sm font-mono {stats && isRunning && stats.cpuPercent > 50
             ? 'text-accent-orange'
             : 'text-foreground'}"
         >
-          {stats.cpuPercent.toFixed(1)}%
+          {#if isRunning && stats}
+            {stats.cpuPercent.toFixed(1)}%
+          {:else}
+            —
+          {/if}
         </p>
       </div>
       <div class="text-center">
@@ -258,11 +262,15 @@
           <HardDrive class="w-3 h-3" />
         </p>
         <p
-          class="text-sm font-mono {stats.memoryPercent > 70
+          class="text-sm font-mono {stats && isRunning && stats.memoryPercent > 70
             ? 'text-accent-orange'
             : 'text-foreground'}"
         >
-          {stats.memoryPercent.toFixed(1)}%
+          {#if isRunning && stats}
+            {stats.memoryPercent.toFixed(1)}%
+          {:else}
+            —
+          {/if}
         </p>
       </div>
       <div class="text-center">
@@ -272,21 +280,34 @@
           <ArrowUpDown class="w-3 h-3" />
         </p>
         <p class="text-sm font-mono text-foreground">
-          {formatBytes(stats.networkRx)}/{formatBytes(stats.networkTx)}
+          {#if isRunning && stats}
+            {formatBytes(stats.networkRx)}/{formatBytes(stats.networkTx)}
+          {:else}
+            —
+          {/if}
         </p>
       </div>
       <div class="text-center">
         <p class="text-xs text-foreground-muted mb-1">{t.uptime}</p>
         <p class="text-sm font-mono text-running">
-          {formatUptime(container.status)}
+          {#if isRunning}
+            {formatUptime(container.status)}
+          {:else}
+            —
+          {/if}
         </p>
       </div>
     </div>
-  {:else if !isRunning}
-    <div class="py-2 border-y border-border text-center">
-      <p class="text-sm text-foreground-muted">{t.stoppedContainer}</p>
-    </div>
-  {/if}
+    <p class="mt-1 text-[10px] text-center text-foreground-muted">
+      {#if !isRunning}
+        {t.stoppedContainer}
+      {:else if !stats}
+        {$language === "es" ? "Esperando metricas" : "Waiting for metrics"}
+      {:else}
+        &nbsp;
+      {/if}
+    </p>
+  </div>
 
   <!-- Container Details: Ports, IP, Volumes -->
   {#if container.ports?.length > 0 || Object.keys(container.networks || {}).length > 0 || container.volumes > 0}
