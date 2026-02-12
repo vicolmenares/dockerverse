@@ -328,6 +328,20 @@ export function createTerminalConnection(hostId: string, containerId: string): W
 	return new WebSocket(`${wsBase}/ws/terminal/${hostId}/${containerId}`);
 }
 
+// WebSocket for Host SSH
+export function createHostTerminalConnection(hostId: string): WebSocket {
+	const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+	let wsBase: string;
+	if (import.meta.env.DEV) {
+		wsBase = 'ws://localhost:3001';
+	} else if (API_BASE) {
+		wsBase = API_BASE.replace(/^http/, 'ws');
+	} else {
+		wsBase = `${protocol}//${window.location.host}`;
+	}
+	return new WebSocket(`${wsBase}/ws/ssh/${hostId}`);
+}
+
 // Alias for backwards compatibility
 export const createTerminalWebSocket = createTerminalConnection;
 

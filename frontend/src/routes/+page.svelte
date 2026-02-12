@@ -37,6 +37,7 @@
   import HostCard from "$lib/components/HostCard.svelte";
   import ContainerCard from "$lib/components/ContainerCard.svelte";
   import ResourceChart from "$lib/components/ResourceChart.svelte";
+  import HostFiles from "$lib/components/HostFiles.svelte";
 
   // Lazy load heavy components (xterm is ~1MB)
   let Terminal: any = $state(null);
@@ -45,6 +46,8 @@
   let eventSource: EventSource | null = null;
   let terminalContainer = $state<Container | null>(null);
   let logsContainer = $state<Container | null>(null);
+  let hostTerminal = $state<Host | null>(null);
+  let hostFiles = $state<Host | null>(null);
   let isLoading = $state(true);
   let connectionError = $state<string | null>(null);
   let viewMode = $state<"grid" | "table">("grid");
@@ -594,6 +597,8 @@
               {host}
               resourcesOpen={expandedHostId === host.id}
               onToggleResources={toggleHostResources}
+              onOpenHostTerminal={(target) => (hostTerminal = target)}
+              onOpenHostFiles={(target) => (hostFiles = target)}
             />
           {/each}
         </div>
@@ -767,6 +772,15 @@
     />
   {/if}
 
+  {#if hostTerminal && Terminal}
+    {@const TerminalComponent = Terminal}
+    <TerminalComponent
+      host={hostTerminal}
+      mode="host"
+      onClose={() => (hostTerminal = null)}
+    />
+  {/if}
+
   <!-- Logs Modal (Lazy Loaded) -->
   {#if logsContainer && LogViewer}
     {@const LogViewerComponent = LogViewer}
@@ -774,5 +788,9 @@
       container={logsContainer}
       onClose={() => (logsContainer = null)}
     />
+  {/if}
+
+  {#if hostFiles}
+    <HostFiles host={hostFiles} onClose={() => (hostFiles = null)} />
   {/if}
 </div>
