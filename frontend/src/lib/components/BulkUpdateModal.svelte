@@ -231,12 +231,14 @@
                         <div>
                             <label
                                 class="block text-sm font-medium text-foreground mb-2"
+                                for="bulk-update-host"
                             >
                                 {$language === "es"
                                     ? "Filtrar por Host (opcional)"
                                     : "Filter by Host (optional)"}
                             </label>
                             <select
+                                id="bulk-update-host"
                                 bind:value={selectedHostId}
                                 disabled={isLoading}
                                 class="w-full px-3 py-2 bg-background border border-border rounded-lg text-foreground disabled:opacity-50"
@@ -256,12 +258,14 @@
                         <div>
                             <label
                                 class="block text-sm font-medium text-foreground mb-2"
+                                for="bulk-update-name"
                             >
                                 {$language === "es"
                                     ? "Filtrar por nombre (opcional)"
                                     : "Filter by name (optional)"}
                             </label>
                             <input
+                                id="bulk-update-name"
                                 type="text"
                                 bind:value={nameFilter}
                                 disabled={isLoading}

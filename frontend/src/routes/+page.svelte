@@ -36,6 +36,7 @@
   } from "$lib/stores/docker";
   import HostCard from "$lib/components/HostCard.svelte";
   import ContainerCard from "$lib/components/ContainerCard.svelte";
+  import ResourceChart from "$lib/components/ResourceChart.svelte";
 
   // Lazy load heavy components (xterm is ~1MB)
   let Terminal: any = $state(null);
@@ -50,6 +51,7 @@
   let filterState = $state<"all" | "running" | "stopped" | "updates">("all");
   let resourceMetric = $state<"cpu" | "memory" | "network" | "restarts">("cpu");
   let showResourceLeaderboard = $state(true);
+  let expandedHostId = $state<string | null>(null);
   let topN = $state(
     typeof localStorage !== "undefined"
       ? parseInt(localStorage.getItem("dockerverse_topN") || "10", 10)
@@ -72,9 +74,18 @@
     $containers.filter((c) => c.state !== "running").length,
   );
   let onlineHosts = $derived($hosts.filter((h) => h.online).length);
+  let expandedHost = $derived(
+    expandedHostId
+      ? $hosts.find((h) => h.id === expandedHostId) || null
+      : null,
+  );
 
   function toggleFilter(next: "all" | "running" | "stopped" | "updates") {
     filterState = filterState === next ? "all" : next;
+  }
+
+  function toggleHostResources(hostId: string) {
+    expandedHostId = expandedHostId === hostId ? null : hostId;
   }
 
   // Filtered containers
@@ -533,9 +544,35 @@
       {:else}
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
           {#each $hosts as host}
-            <HostCard {host} />
+            <HostCard
+              {host}
+              resourcesOpen={expandedHostId === host.id}
+              onToggleResources={toggleHostResources}
+            />
           {/each}
         </div>
+
+        {#if expandedHost}
+          <div class="mt-5 card p-5 bg-gradient-to-br from-background-secondary/70 via-background-secondary/40 to-background-tertiary/10">
+            <div class="flex items-center justify-between mb-3">
+              <div class="flex items-center gap-3">
+                <div class="p-2.5 bg-background-tertiary/60 rounded-lg">
+                  <Server class="w-4.5 h-4.5 text-primary" />
+                </div>
+                <div>
+                  <p class="text-sm font-semibold text-foreground">
+                    {expandedHost.name}
+                  </p>
+                  <p class="text-xs text-foreground-muted">{expandedHost.id}</p>
+                </div>
+              </div>
+              <span class="text-xs text-foreground-muted">
+                {$language === "es" ? "Recursos en vivo" : "Live resources"}
+              </span>
+            </div>
+            <ResourceChart host={expandedHost} />
+          </div>
+        {/if}
       {/if}
     </section>
 

@@ -1146,3 +1146,28 @@ npm run dev
 - Verificacion en Raspberry Pi: OK
    - `curl -I http://localhost:3007` -> HTTP 200.
 - Git push: completado.
+
+### 2026-02-12 - Hosts modernos + memoria/discos + a11y
+
+- Base de trabajo: rama `feature/toggle-filters-host-rename-2026-02-12`.
+- Cambios:
+   - Rediseño de cards de hosts y recursos en panel dedicado para evitar expansion gris en card no seleccionada.
+   - Correcciones de a11y (labels, aria-labels, tabindex) y estado reactivo en logs.
+   - Ajustes backend: discos con `df` sobre `/mnt` y `/media`, y fallback de memoria total con limites de contenedor; timeout de stats aumentado.
+- Archivos:
+   - `frontend/src/lib/components/HostCard.svelte`
+   - `frontend/src/routes/+page.svelte`
+   - `frontend/src/lib/components/CommandPalette.svelte`
+   - `frontend/src/lib/components/BulkUpdateModal.svelte`
+   - `frontend/src/lib/components/EnvironmentModal.svelte`
+   - `frontend/src/routes/settings/appearance/+page.svelte`
+   - `frontend/src/routes/logs/+page.svelte`
+   - `backend/main.go`
+- Tests (frontend): `npm --prefix frontend run check`
+   - Resultado: OK (0 errors, 0 warnings).
+- Deploy a Raspberry Pi: completado con `./deploy-to-raspi.sh`.
+   - Resultado: OK (contenedor healthy en `:3007`).
+   - API test del script: HTTP 401 (esperado sin auth).
+- Verificacion en Raspberry Pi: OK
+   - `curl -I http://localhost:3007` -> HTTP 200.
+- Git push: pendiente.
