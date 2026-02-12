@@ -63,7 +63,7 @@ type AppSettings struct {
 }
 
 var hosts = parseHostsConfig(getEnvOrDefault("DOCKER_HOSTS",
-	"raspi1:Raspi Main:unix:///var/run/docker.sock:local"))
+	"raspi1:Raspeberry Main:unix:///var/run/docker.sock:local"))
 
 // Host health tracking for backoff on unreachable hosts
 var (
@@ -322,8 +322,8 @@ type Environment struct {
 	ID             string `json:"id"`
 	Name           string `json:"name"`
 	ConnectionType string `json:"connectionType"` // "socket" or "tcp"
-	Address        string `json:"address"`         // socket path or host:port
-	Protocol       string `json:"protocol"`        // "http" or "https"
+	Address        string `json:"address"`        // socket path or host:port
+	Protocol       string `json:"protocol"`       // "http" or "https"
 	IsLocal        bool   `json:"isLocal"`
 	Labels         string `json:"labels"`
 	Status         string `json:"status"` // "online", "offline", "unknown"
@@ -333,8 +333,8 @@ type Environment struct {
 	UpdateSchedule string `json:"updateSchedule"` // cron expression
 	ImagePrune     bool   `json:"imagePrune"`
 	// Feature flags
-	EventTracking  bool `json:"eventTracking"`
-	VulnScanning   bool `json:"vulnScanning"`
+	EventTracking bool `json:"eventTracking"`
+	VulnScanning  bool `json:"vulnScanning"`
 }
 
 // EnvironmentStore manages environment persistence
@@ -2342,8 +2342,8 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 				// Use wider time window (±2 periods = ±60s) for RPi clock drift
 				valid, validErr := totp.ValidateCustom(req.TOTPCode, user.TOTPSecret, time.Now(), totp.ValidateOpts{
 					Period:    30,
-					Skew:     2,
-					Digits:   otp.DigitsSix,
+					Skew:      2,
+					Digits:    otp.DigitsSix,
 					Algorithm: otp.AlgorithmSHA1,
 				})
 				log.Printf("2FA attempt for %s: valid=%v err=%v", user.Username, valid, validErr)
