@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -27,6 +28,7 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/compress"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/logger"
+	fbRecover "github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/gofiber/websocket/v2"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/go-containerregistry/pkg/crane"
@@ -388,6 +390,56 @@ func getEnvOrDefault(key, defaultVal string) string {
 		return val
 	}
 	return defaultVal
+}
+
+// isAdminRequest returns true if the request is from localhost or contains a valid admin JWT.
+func isAdminRequest(c *fiber.Ctx) bool {
+	ip := c.IP()
+	if ip == "127.0.0.1" || ip == "::1" || strings.HasPrefix(ip, "::ffff:127.0.0.1") {
+		return true
+	}
+	// Check token
+	auth := c.Get("Authorization")
+	var tokenStr string
+	if auth != "" {
+		tokenStr = strings.TrimPrefix(auth, "Bearer ")
+	} else {
+		tokenStr = c.Query("token")
+	}
+	if tokenStr == "" {
+		return false
+	}
+	claims, err := validateToken(tokenStr)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(claims.Role, "admin")
+}
+
+// tailFileLines returns the last `n` lines from the specified file.
+func tailFileLines(path string, n int) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", fmt.Errorf("open log file: %w", err)
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	buf := make([]string, 0, n)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if len(buf) < n {
+			buf = append(buf, line)
+		} else {
+			// rotate
+			copy(buf[0:], buf[1:])
+			buf[n-1] = line
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return "", fmt.Errorf("read log file: %w", err)
+	}
+	return strings.Join(buf, "\n"), nil
 }
 
 func generateSecret() string {
@@ -4239,6 +4291,21 @@ func main() {
 	startBroadcaster(dm, hub)
 	startUpdateChecker(dm)
 
+	// Initialize logging to both stdout and a file under `DATA_DIR/logs/backend.log`.
+	// This makes it easier to fetch logs from the container filesystem.
+	logDir := filepath.Join(dataDir, "logs")
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		log.Printf("warning: could not create log dir %s: %v", logDir, err)
+	}
+	logPath := filepath.Join(logDir, "backend.log")
+	lf, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		log.Printf("warning: could not open log file %s: %v", logPath, err)
+	} else {
+		mw := io.MultiWriter(os.Stdout, lf)
+		log.SetOutput(mw)
+	}
+
 	app := fiber.New(fiber.Config{
 		AppName:      "DockerVerse API",
 		ReadTimeout:  30 * time.Second,
@@ -4246,6 +4313,7 @@ func main() {
 	})
 
 	// Middleware
+	app.Use(fbRecover.New(fbRecover.Config{EnableStackTrace: true}))
 	app.Use(logger.New())
 
 	// Enable compression (gzip, brotli, deflate)
@@ -4263,6 +4331,26 @@ func main() {
 
 	// Setup API routes
 	setupRoutes(app, dm, userStore, notifySvc, hub, emailSvc, envStore)
+
+	// Debug: expose recent backend logs for easier collection from the container.
+	// Query params: ?lines=200 (default 200)
+	app.Get("/api/debug/logs", func(c *fiber.Ctx) error {
+		if !isAdminRequest(c) {
+			return c.Status(401).SendString("unauthorized")
+		}
+		lines := 200
+		if s := c.Query("lines"); s != "" {
+			if v, err := strconv.Atoi(s); err == nil && v > 0 && v <= 5000 {
+				lines = v
+			}
+		}
+		logPath := filepath.Join(dataDir, "logs", "backend.log")
+		out, err := tailFileLines(logPath, lines)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+		return c.SendString(out)
+	})
 
 	// Get port from env or default
 	port := os.Getenv("PORT")
