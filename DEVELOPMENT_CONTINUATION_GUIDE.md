@@ -1190,3 +1190,28 @@ npm run dev
 - Verificacion en Raspberry Pi: OK
    - `curl -I http://localhost:3007` -> HTTP 200.
 - Git push: pendiente.
+
+### 2026-02-12 - SSH por host + paginacion containers + disk free
+
+- Cambios:
+   - Agregado `sshHost` en `HostStats` (backend) derivado de `DOCKER_HOSTS`.
+   - Boton SSH en cards de hosts con enlace `ssh://` (frontend).
+   - Metrica de disco ahora muestra espacio libre/total en host y por disco.
+   - `getDiskInfo` ahora elige imagen existente o intenta pull con fallback configurable (`DISK_INFO_IMAGE`).
+   - Redisenio de metricas de contenedores con panel fijo para evitar saltos de altura.
+   - Paginacion de contenedores con selector de tamano de pagina (9/12/18/24).
+- Archivos:
+   - `backend/main.go`
+   - `frontend/src/lib/api/docker.ts`
+   - `frontend/src/lib/components/HostCard.svelte`
+   - `frontend/src/lib/components/ContainerCard.svelte`
+   - `frontend/src/routes/+page.svelte`
+- Tests:
+   - `go test ./...` (backend): OK (sin tests).
+   - `npm --prefix frontend run check`: OK (0 errors, 0 warnings).
+- Deploy a Raspberry Pi: completado con `./deploy-to-raspi.sh`.
+   - Resultado: OK (contenedor healthy en `:3007`).
+   - API test del script: HTTP 401 (esperado sin auth).
+- Verificacion en Raspberry Pi: OK
+   - `curl -I http://192.168.1.145:3007` -> HTTP 200.
+- Git push: pendiente.

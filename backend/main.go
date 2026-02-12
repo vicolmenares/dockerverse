@@ -20,6 +20,7 @@ import (
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	imagetypes "github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/compress"
@@ -129,6 +130,35 @@ func parseHostsConfig(config string) []HostConfig {
 		})
 	}
 	return result
+}
+
+func deriveSSHHost(h HostConfig) string {
+	if h.IsLocal {
+		if h.ID != "" {
+			return h.ID
+		}
+		return "localhost"
+	}
+	addr := strings.TrimSpace(h.Address)
+	if addr == "" {
+		return h.ID
+	}
+	if parts := strings.SplitN(addr, "://", 2); len(parts) == 2 {
+		addr = parts[1]
+	}
+	if parts := strings.SplitN(addr, "/", 2); len(parts) == 2 {
+		addr = parts[0]
+	}
+	if parts := strings.SplitN(addr, "@", 2); len(parts) == 2 {
+		addr = parts[1]
+	}
+	if parts := strings.SplitN(addr, ":", 2); len(parts) == 2 {
+		addr = parts[0]
+	}
+	if addr == "" {
+		return h.ID
+	}
+	return addr
 }
 
 func isHostHealthy(hostID string) bool {
@@ -309,6 +339,7 @@ type HostStats struct {
 	MemoryUsed     uint64     `json:"memoryUsed"`
 	MemoryTotal    uint64     `json:"memoryTotal"`
 	Online         bool       `json:"online"`
+	SSHHost        string     `json:"sshHost"`
 	Disks          []DiskInfo `json:"disks"`
 }
 
@@ -1935,6 +1966,53 @@ var (
 	diskCacheAt = make(map[string]time.Time)
 )
 
+func resolveDiskImage(ctx context.Context, cli *client.Client) string {
+	preferred := strings.TrimSpace(getEnvOrDefault("DISK_INFO_IMAGE", "busybox:latest"))
+	candidates := []string{
+		preferred,
+		"busybox:latest",
+		"alpine:latest",
+		"debian:bookworm-slim",
+		"ubuntu:22.04",
+	}
+	seen := make(map[string]bool)
+	for _, candidate := range candidates {
+		if candidate == "" || seen[candidate] {
+			continue
+		}
+		seen[candidate] = true
+		if imageExists(ctx, cli, candidate) {
+			return candidate
+		}
+	}
+	for _, candidate := range candidates {
+		if candidate == "" {
+			continue
+		}
+		if pullImage(ctx, cli, candidate) {
+			return candidate
+		}
+	}
+	return ""
+}
+
+func imageExists(ctx context.Context, cli *client.Client, image string) bool {
+	_, _, err := cli.ImageInspectWithRaw(ctx, image)
+	return err == nil
+}
+
+func pullImage(ctx context.Context, cli *client.Client, imageName string) bool {
+	pullCtx, pullCancel := context.WithTimeout(ctx, 20*time.Second)
+	defer pullCancel()
+	reader, err := cli.ImagePull(pullCtx, imageName, imagetypes.PullOptions{})
+	if err != nil {
+		return false
+	}
+	defer reader.Close()
+	io.Copy(io.Discard, reader)
+	return imageExists(ctx, cli, imageName)
+}
+
 func getDiskInfo(ctx context.Context, cli *client.Client, hostID string) []DiskInfo {
 	// Check cache
 	diskCacheMu.RLock()
@@ -1946,12 +2024,18 @@ func getDiskInfo(ctx context.Context, cli *client.Client, hostID string) []DiskI
 	}
 	diskCacheMu.RUnlock()
 
+	image := resolveDiskImage(ctx, cli)
+	if image == "" {
+		log.Printf("getDiskInfo(%s): no suitable image found", hostID)
+		return nil
+	}
+
 	// Run df inside a busybox container with host root mounted read-only
 	dfCtx, dfCancel := context.WithTimeout(ctx, 15*time.Second)
 	defer dfCancel()
 
 	resp, err := cli.ContainerCreate(dfCtx, &container.Config{
-		Image: "busybox",
+		Image: image,
 		Cmd: []string{
 			"sh",
 			"-c",
@@ -1962,7 +2046,7 @@ func getDiskInfo(ctx context.Context, cli *client.Client, hostID string) []DiskI
 		AutoRemove: true,
 	}, nil, nil, "")
 	if err != nil {
-		log.Printf("getDiskInfo(%s): create failed: %v", hostID, err)
+		log.Printf("getDiskInfo(%s): create failed (image=%s): %v", hostID, image, err)
 		return nil
 	}
 
@@ -2073,9 +2157,10 @@ func (dm *DockerManager) GetHostStats(ctx context.Context) []HostStats {
 			defer wg.Done()
 
 			hs := HostStats{
-				ID:     h.ID,
-				Name:   h.Name,
-				Online: false,
+				ID:      h.ID,
+				Name:    h.Name,
+				Online:  false,
+				SSHHost: deriveSSHHost(h),
 			}
 
 			// Skip hosts in backoff period

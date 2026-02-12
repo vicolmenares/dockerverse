@@ -52,6 +52,12 @@
   let resourceMetric = $state<"cpu" | "memory" | "network" | "restarts">("cpu");
   let showResourceLeaderboard = $state(true);
   let expandedHostId = $state<string | null>(null);
+  let pageSize = $state(
+    typeof localStorage !== "undefined"
+      ? parseInt(localStorage.getItem("dockerverse_pageSize") || "12", 10)
+      : 12,
+  );
+  let currentPage = $state(1);
   let topN = $state(
     typeof localStorage !== "undefined"
       ? parseInt(localStorage.getItem("dockerverse_topN") || "10", 10)
@@ -60,7 +66,11 @@
   $effect(() => {
     localStorage.setItem("dockerverse_topN", String(topN));
   });
+  $effect(() => {
+    localStorage.setItem("dockerverse_pageSize", String(pageSize));
+  });
   const topNOptions = [5, 10, 15, 20, 30];
+  const pageSizeOptions = [9, 12, 18, 24];
 
   // Get current translations
   let t = $derived(translations[$language]);
@@ -88,6 +98,12 @@
     expandedHostId = expandedHostId === hostId ? null : hostId;
   }
 
+  $effect(() => {
+    filterState;
+    $selectedHost;
+    currentPage = 1;
+  });
+
   // Filtered containers
   let displayContainers = $derived.by(() => {
     let result = $filteredContainers;
@@ -103,6 +119,36 @@
     }
     return result;
   });
+
+  let totalPages = $derived(
+    Math.max(1, Math.ceil(displayContainers.length / pageSize)),
+  );
+  $effect(() => {
+    if (currentPage > totalPages) currentPage = totalPages;
+  });
+  let pagedContainers = $derived.by(() => {
+    const start = (currentPage - 1) * pageSize;
+    return displayContainers.slice(start, start + pageSize);
+  });
+  let pageNumbers = $derived.by(() => {
+    const maxButtons = 5;
+    const total = totalPages;
+    if (total <= maxButtons) {
+      return Array.from({ length: total }, (_, i) => i + 1);
+    }
+    const half = Math.floor(maxButtons / 2);
+    let start = Math.max(1, currentPage - half);
+    let end = Math.min(total, start + maxButtons - 1);
+    if (end - start + 1 < maxButtons) {
+      start = Math.max(1, end - maxButtons + 1);
+    }
+    return Array.from({ length: end - start + 1 }, (_, i) => start + i);
+  });
+
+  function goToPage(page: number) {
+    const clamped = Math.min(Math.max(1, page), totalPages);
+    currentPage = clamped;
+  }
 
   // Top 14 containers by selected resource metric
   let topContainers = $derived.by(() => {
@@ -640,7 +686,7 @@
         </div>
       {:else}
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {#each displayContainers as container (container.id)}
+          {#each pagedContainers as container (container.id)}
             <!-- svelte-ignore a11y_no_static_element_interactions -->
             <div onmouseenter={preloadComponents}>
               <ContainerCard
@@ -652,6 +698,62 @@
             </div>
           {/each}
         </div>
+
+        {#if displayContainers.length > pageSize}
+          <div class="mt-6 card px-4 py-3 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+            <div class="text-xs text-foreground-muted">
+              {#if displayContainers.length > 0}
+                {#if $language === "es"}
+                  Mostrando {(currentPage - 1) * pageSize + 1}-{Math.min(currentPage * pageSize, displayContainers.length)} de {displayContainers.length}
+                {:else}
+                  Showing {(currentPage - 1) * pageSize + 1}-{Math.min(currentPage * pageSize, displayContainers.length)} of {displayContainers.length}
+                {/if}
+              {/if}
+            </div>
+            <div class="flex items-center justify-center gap-1">
+              <button
+                class="px-2.5 py-1 rounded-md text-xs font-medium border border-border {currentPage === 1
+                  ? 'text-foreground-muted'
+                  : 'hover:bg-background-tertiary'}"
+                onclick={() => goToPage(currentPage - 1)}
+                disabled={currentPage === 1}
+              >
+                {$language === "es" ? "Anterior" : "Prev"}
+              </button>
+              {#each pageNumbers as page}
+                <button
+                  class="w-8 h-8 text-xs font-semibold rounded-lg border border-border transition-colors {page === currentPage
+                    ? 'bg-primary text-white'
+                    : 'text-foreground-muted hover:text-foreground hover:bg-background-tertiary'}"
+                  onclick={() => goToPage(page)}
+                >
+                  {page}
+                </button>
+              {/each}
+              <button
+                class="px-2.5 py-1 rounded-md text-xs font-medium border border-border {currentPage === totalPages
+                  ? 'text-foreground-muted'
+                  : 'hover:bg-background-tertiary'}"
+                onclick={() => goToPage(currentPage + 1)}
+                disabled={currentPage === totalPages}
+              >
+                {$language === "es" ? "Siguiente" : "Next"}
+              </button>
+            </div>
+            <div class="flex items-center justify-end gap-1">
+              {#each pageSizeOptions as size}
+                <button
+                  class="px-2.5 py-1 rounded-md text-xs font-medium border border-border {pageSize === size
+                    ? 'bg-background-tertiary text-foreground'
+                    : 'text-foreground-muted hover:text-foreground'}"
+                  onclick={() => (pageSize = size)}
+                >
+                  {size}
+                </button>
+              {/each}
+            </div>
+          </div>
+        {/if}
       {/if}
     </section>
   </main>
