@@ -1158,6 +1158,12 @@ npm run dev
 - Base de trabajo: rama `feature/toggle-filters-host-rename-2026-02-12`.
 - Cambios:
    - `onMount` sincronizado en Dashboard y Terminal para evitar promesas en retorno.
+
+### 2026-02-12 - Backend logging & debug endpoint
+
+- Commit: c453ab2
+- Cambios: Se añadió logging a fichero en `DATA_DIR/logs/backend.log`, middleware `recover` con stacktraces, y el endpoint `/api/debug/logs` (admin-only) para obtener las últimas líneas del log desde el contenedor.
+- Deploy: pendiente (se desplegará a la Raspi en el siguiente paso).
    - `auth.update` expuesto y tipado en store para actualizar avatar.
    - Bulk update client agregado en API frontend con resultados agregados.
    - Validacion de rol admin usando `roles`.
