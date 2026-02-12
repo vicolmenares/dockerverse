@@ -1240,4 +1240,4 @@ npm run dev
    - API test del script: HTTP 401 (esperado sin auth).
 - Verificacion en Raspberry Pi: OK
    - `curl -I http://192.168.1.145:3007` -> HTTP 200.
-- Git push: pendiente.
+- Git push: completado.
