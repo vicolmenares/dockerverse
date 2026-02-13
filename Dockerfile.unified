@@ -77,6 +77,8 @@ RUN apk add --no-cache \
     ca-certificates \
     tzdata \
     curl \
+    # SSH client for remote host access
+    openssh-client \
     # Nginx
     nginx \
     # Node.js runtime for SvelteKit
@@ -180,12 +182,12 @@ http {
 
     # Upstream - localhost communication (fastest)
     upstream frontend {
-        server 127.0.0.1:3000;
+        server 127.0.0.1:3003;
         keepalive 32;
     }
 
     upstream backend {
-        server 127.0.0.1:3001;
+        server 127.0.0.1:3002;
         keepalive 32;
     }
 
@@ -288,7 +290,7 @@ RUN mkdir -p /etc/s6-overlay/s6-rc.d/frontend/dependencies.d && \
     touch /etc/s6-overlay/s6-rc.d/frontend/dependencies.d/base && \
     touch /etc/s6-overlay/s6-rc.d/frontend/dependencies.d/backend && \
     touch /etc/s6-overlay/s6-rc.d/user/contents.d/frontend && \
-    printf '#!/command/with-contenv sh\nexec 2>&1\ncd /app/frontend\nexport PORT=3000\nexport NODE_ENV=production\nexport ORIGIN=${ORIGIN:-http://localhost}\nexec node build\n' > /etc/s6-overlay/s6-rc.d/frontend/run && \
+    printf '#!/command/with-contenv sh\nexec 2>&1\ncd /app/frontend\nexport PORT=3003\nexport NODE_ENV=production\nexport ORIGIN=${ORIGIN:-http://localhost}\nexec node build\n' > /etc/s6-overlay/s6-rc.d/frontend/run && \
     chmod +x /etc/s6-overlay/s6-rc.d/frontend/run
 
 # Nginx service (depends on backend and frontend)

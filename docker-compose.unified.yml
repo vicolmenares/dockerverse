@@ -42,12 +42,12 @@ services:
     
     # Environment variables
     environment:
-      PORT: "3001"
+      PORT: "3002"
       DOCKER_HOST: "unix:///var/run/docker.sock"
       JWT_SECRET: "${JWT_SECRET:-dockerverse-super-secret-key-2026}"
       # Docker hosts configuration (pipe-separated)
       # Format: id:name:address:local/remote
-      DOCKER_HOSTS: "raspi1:Raspeberry Main:tcp://192.168.1.145:23750:remote|raspi2:Raspeberry Secondary:tcp://192.168.1.11:23750:remote"
+      DOCKER_HOSTS: "raspi1:Raspeberry Main:tcp://192.168.1.145:23750:remote|raspi2:Raspeberry Secondary:tcp://192.168.1.146:2375:remote"
       # Watchtower integration
       WATCHTOWER_TOKEN: "${WATCHTOWER_TOKEN:-}"
       WATCHTOWER_URLS: "${WATCHTOWER_URLS:-}"
@@ -65,12 +65,6 @@ services:
       SSH_PORT: "${SSH_PORT:-22}"
       SSH_KEY_PATH: "${SSH_KEY_PATH:-/data/ssh/id_rsa}"
       SSH_KEY_PASSPHRASE: "${SSH_KEY_PASSPHRASE:-}"
-    
-    # Use the same network as other containers
-    networks:
-      - container_network_ipv4
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     
     # Container labels
     labels:
@@ -102,8 +96,3 @@ volumes:
     name: dockerverse_nginx_cache
   logs:
     name: dockerverse_logs
-
-# Network configuration - use existing external network
-networks:
-  container_network_ipv4:
-    external: true
