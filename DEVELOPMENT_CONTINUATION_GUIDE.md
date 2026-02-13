@@ -1,7 +1,7 @@
 ### 2026-02-12 - Fix SSH/IP real en DOCKER_HOSTS y backend
 
 - Cambios:
-   - DOCKER_HOSTS actualizado para usar IP real de cada raspi (ejemplo: raspi1:Raspeberry Main:192.168.1.10:local|raspi2:Raspeberry Secondary:192.168.1.11:remote).
+   - DOCKER_HOSTS actualizado para usar IP real de cada raspi (ejemplo: raspi1:Raspeberry Main:192.168.1.145:remote|raspi2:Raspeberry Secondary:192.168.1.146:remote).
    - Backend (main.go) ajustado para derivar correctamente la IP para SSH, evitando localhost.
    - Compose actualizado para reflejar nueva config.
    - Redeploy completo con ./deploy-to-raspi.sh.
@@ -21,7 +21,7 @@
 Note: If Files/Console still fail with connection to ::1, ensure that the `DOCKER_HOSTS` entries do not mark a remote host as `local`. Remote Raspberry Pis must be marked `remote` and use the Pi IP address. Example:
 
 ```
-raspi1:Raspeberry Main:192.168.1.10:remote|raspi2:Raspeberry Secondary:192.168.1.11:remote
+raspi1:Raspeberry Main:192.168.1.145:remote|raspi2:Raspeberry Secondary:192.168.1.146:remote
 ```
 
 Added logging to `backend/main.go` in `dialSSH()` to surface the resolved host and TCP address on dial attempts. This helps debugging connection errors like `connect: connection refused` or unresolved hostnames.

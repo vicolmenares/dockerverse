@@ -2591,6 +2591,11 @@ func (h *WSHub) Broadcast(msgType string, data interface{}) {
 // =============================================================================
 
 func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc *NotificationService, hub *WSHub, emailSvc *EmailService, envStore *EnvironmentStore) {
+	// Health check endpoint
+	app.Get("/health", func(c *fiber.Ctx) error {
+		return c.JSON(fiber.Map{"status": "ok"})
+	})
+
 	api := app.Group("/api")
 
 	// Debug endpoint to inspect parsed hosts (temporary)
