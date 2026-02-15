@@ -12,7 +12,6 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -3490,10 +3489,12 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 		imageName := inspect.Config.Image
 
 		// Call Watchtower HTTP API with separate context and longer timeout
-		// Include image name as query parameter to update only this specific container
-		ctx2, cancel2 := context.WithTimeout(context.Background(), 30*time.Second)
+		// Note: The ?image= parameter doesn't work reliably in all Watchtower versions
+		// Using endpoint without parameters triggers update for all containers with available updates
+		ctx2, cancel2 := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel2()
-		updateURL := fmt.Sprintf("%s/v1/update?image=%s", wtURL, url.QueryEscape(imageName))
+		updateURL := fmt.Sprintf("%s/v1/update", wtURL)
+		log.Printf("Watchtower update: URL=%s, container=%s (%s)", updateURL, containerID, imageName)
 		wtReq, err := http.NewRequestWithContext(ctx2, "POST", updateURL, nil)
 		if err != nil {
 			return c.Status(500).JSON(fiber.Map{"error": "Failed to create request: " + err.Error()})
