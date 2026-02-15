@@ -1444,6 +1444,33 @@ npm run dev
    - [docker-socket-proxy GitHub](https://github.com/Tecnativa/docker-socket-proxy)
    - [Docker Socket Proxy Security Guide](https://www.paulsblog.dev/how-to-secure-your-docker-environment-by-using-a-docker-socket-proxy/)
 
+### 2026-02-15 - Fix de actualización de contenedores (route ordering)
+
+- Problema identificado: Al intentar actualizar un contenedor via botón Update, se recibía error "unknown action: update".
+- Causa raíz: Conflicto de rutas en Fiber. La ruta genérica `/containers/:hostId/:containerId/:action` (línea 3460) se evaluaba ANTES que la ruta específica `/containers/:hostId/:containerId/update` (línea 3481), causando que Fiber matcheara "update" como un parámetro `:action` y llamara a `ContainerAction()` que no tiene case para "update".
+- Solución implementada:
+   - Movida la ruta específica de Watchtower `/containers/:hostId/:containerId/update` ANTES de la ruta genérica `/:action`.
+   - Agregados comentarios explicativos para prevenir este issue en el futuro.
+   - La ruta específica ahora se evalúa primero, permitiendo que las llamadas a `/update` sean manejadas correctamente por la integración con Watchtower HTTP API.
+- Comportamiento esperado:
+   - Botón "Update" en ContainerCard debe funcionar correctamente
+   - Watchtower HTTP API debe recibir la petición de actualización
+   - Cache de updates debe limpiarse después de actualización exitosa
+- Archivos modificados:
+   - `backend/main.go` (líneas 3460-3543 reordenadas)
+- Tests:
+   - `go build`: OK (compilación exitosa)
+   - `go test ./...`: OK (sin tests definidos)
+   - `npm --prefix frontend run check`: OK (0 errors, 0 warnings)
+- Deploy a Raspberry Pi: completado con `./deploy-to-raspi.sh`
+   - Resultado: OK (contenedor healthy en `:3007`)
+   - Build time: ~1.5 minutos
+   - API test: HTTP 401 (esperado sin auth)
+- Notas técnicas:
+   - Fiber evalúa rutas en orden de declaración
+   - Rutas más específicas deben declararse antes que rutas con parámetros genéricos
+   - Este patrón aplica a otros frameworks web (Express, FastAPI, etc.)
+
 ### 2026-02-10 - 2FA SHA1 fix + Docker version fallback
 
 - Commits: d5cd321, 06af6de (en master, mergeados a branch el 14 Feb)

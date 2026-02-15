@@ -3457,27 +3457,8 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 	})
 
 	// Container actions
-	protected.Post("/containers/:hostId/:containerId/:action", func(c *fiber.Ctx) error {
-		hostID := c.Params("hostId")
-		containerID := c.Params("containerId")
-		action := c.Params("action")
-
-		ctx := context.Background()
-		if err := dm.ContainerAction(ctx, hostID, containerID, action); err != nil {
-			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
-		}
-
-		// Broadcast the state change immediately
-		go func() {
-			time.Sleep(500 * time.Millisecond)
-			containers, _ := dm.GetAllContainers(context.Background())
-			hub.Broadcast("containers", containers)
-		}()
-
-		return c.JSON(fiber.Map{"success": true})
-	})
-
 	// Trigger Watchtower update for a specific container
+	// IMPORTANT: This must come BEFORE the generic /:action route to avoid conflicts
 	protected.Post("/containers/:hostId/:containerId/update", func(c *fiber.Ctx) error {
 		hostID := c.Params("hostId")
 		containerID := c.Params("containerId")
@@ -3540,6 +3521,28 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 			"success": true,
 			"message": "Update triggered for " + imageName,
 		})
+	})
+
+	// Generic container actions (start, stop, restart, pause, unpause)
+	// Note: 'update' is NOT handled here - use the specific /update endpoint above
+	protected.Post("/containers/:hostId/:containerId/:action", func(c *fiber.Ctx) error {
+		hostID := c.Params("hostId")
+		containerID := c.Params("containerId")
+		action := c.Params("action")
+
+		ctx := context.Background()
+		if err := dm.ContainerAction(ctx, hostID, containerID, action); err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+
+		// Broadcast the state change immediately
+		go func() {
+			time.Sleep(500 * time.Millisecond)
+			containers, _ := dm.GetAllContainers(context.Background())
+			hub.Broadcast("containers", containers)
+		}()
+
+		return c.JSON(fiber.Map{"success": true})
 	})
 
 	// Logs endpoint
