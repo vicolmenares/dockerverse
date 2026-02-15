@@ -12,6 +12,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -3473,23 +3474,27 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 		}
 
 		// Get the container's image name
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
+		ctx1, cancel1 := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel1()
 
 		cli, err := dm.GetClient(hostID)
 		if err != nil {
 			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 		}
 
-		inspect, err := cli.ContainerInspect(ctx, containerID)
+		inspect, err := cli.ContainerInspect(ctx1, containerID)
 		if err != nil {
 			return c.Status(500).JSON(fiber.Map{"error": "Failed to inspect container: " + err.Error()})
 		}
 
 		imageName := inspect.Config.Image
 
-		// Call Watchtower HTTP API
-		wtReq, err := http.NewRequestWithContext(ctx, "POST", wtURL+"/v1/update", nil)
+		// Call Watchtower HTTP API with separate context and longer timeout
+		// Include image name as query parameter to update only this specific container
+		ctx2, cancel2 := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel2()
+		updateURL := fmt.Sprintf("%s/v1/update?image=%s", wtURL, url.QueryEscape(imageName))
+		wtReq, err := http.NewRequestWithContext(ctx2, "POST", updateURL, nil)
 		if err != nil {
 			return c.Status(500).JSON(fiber.Map{"error": "Failed to create request: " + err.Error()})
 		}

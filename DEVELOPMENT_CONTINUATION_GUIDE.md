@@ -1471,6 +1471,70 @@ npm run dev
    - Rutas más específicas deben declararse antes que rutas con parámetros genéricos
    - Este patrón aplica a otros frameworks web (Express, FastAPI, etc.)
 
+### 2026-02-15 - Integración completa de Watchtower HTTP API
+
+- Problema identificado: La funcionalidad de actualización de contenedores estaba bloqueada por múltiples issues de configuración y networking.
+- Issues resueltos:
+   1. **Configuración de Watchtower**: Watchtower HTTP API no estaba configurado con las URLs correctas en DockerVerse
+   2. **Networking Docker**: DockerVerse no podía alcanzar Watchtower en el mismo host debido a aislamiento de redes Docker
+   3. **Timeout de contexto**: Request HTTP usaba el mismo contexto que ContainerInspect, causando timeouts de 10 segundos
+   4. **API sin parámetros**: Endpoint `/v1/update` sin parámetros actualizaba TODOS los contenedores (operación lenta)
+
+- Soluciones implementadas:
+   1. **Configuración de .env**:
+      - Agregado `WATCHTOWER_TOKEN=dockerverse-watchtower-2026`
+      - Agregado `WATCHTOWER_URLS=raspi1:http://172.26.0.1:8080|raspi2:http://192.168.1.146:8081`
+      - raspi1 usa IP del gateway Docker (172.26.0.1) para conectividad local
+      - raspi2 usa IP externa (192.168.1.146) ya que está en host diferente
+
+   2. **Docker Compose - extra_hosts**:
+      - Agregado `extra_hosts: ["host.docker.internal:host-gateway"]` en docker-compose.unified.yml
+      - Permite que el contenedor acceda a servicios en el host Docker
+
+   3. **Backend - Contextos separados**:
+      - Separados los contextos de ContainerInspect (10s) y HTTP request a Watchtower (30s)
+      - Previene que el timeout de inspect afecte el request HTTP
+
+   4. **Backend - Parámetro image en API**:
+      - Agregado query parameter `?image=<imageName>` al endpoint `/v1/update`
+      - Actualiza solo el contenedor específico en lugar de todos (mejora de 30s → 200ms)
+      - Importado paquete `net/url` para escape correcto de query parameters
+
+- Comportamiento final:
+   - ✅ Actualización de contenedores funciona en <220ms (antes: timeout 30s)
+   - ✅ Funciona en ambos hosts (raspi1 y raspi2)
+   - ✅ Manejo de errores correcto (contenedor inexistente, etc.)
+   - ✅ Watchtower logs confirman triggers HTTP API recibidos
+   - ✅ Backend logs muestran respuestas HTTP 200 exitosas
+
+- Archivos modificados:
+   - `.env` (agregadas WATCHTOWER_TOKEN y WATCHTOWER_URLS)
+   - `docker-compose.unified.yml` (agregado extra_hosts)
+   - `backend/main.go`:
+     - Línea 15: agregado import `"net/url"`
+     - Líneas 3476-3498: contextos separados + parámetro image
+
+- Tests exhaustivos realizados:
+   - ✅ Test 1: watchtower-main en raspi1 (179ms) - Success
+   - ✅ Test 2: adguardhome en raspi2 (60ms) - Success
+   - ✅ Test 3: actual-budget en raspi1 (211ms) - Success
+   - ✅ Test 4: Error handling - contenedor inexistente (HTTP 500) - Success
+   - ✅ Verificación de logs Watchtower: "Updates triggered by HTTP API request" confirmado
+   - ✅ Verificación de logs backend: HTTP 200 en todos los casos exitosos
+
+- Deploy a Raspberry Pi: completado con `./deploy-to-raspi.sh`
+   - Resultado: OK (contenedor healthy en `:3007`)
+   - Build time: ~1.5 minutos
+   - API test: HTTP 401 (esperado sin auth)
+
+- Notas técnicas:
+   - Watchtower HTTP API acepta parámetro `?image=` para updates selectivos ([docs](https://containrrr.dev/watchtower/http-api-mode/))
+   - Contenedores en bridge network no pueden acceder a host:port vía IP externa
+   - Gateway IP de bridge network es `.1` de la subnet (ej: 172.26.0.1 para 172.26.0.0/16)
+   - `extra_hosts: host-gateway` mapea a docker0 (172.17.0.1) no a la red custom
+
+- Git commit/push: pendiente (siguiente paso)
+
 ### 2026-02-10 - 2FA SHA1 fix + Docker version fallback
 
 - Commits: d5cd321, 06af6de (en master, mergeados a branch el 14 Feb)
