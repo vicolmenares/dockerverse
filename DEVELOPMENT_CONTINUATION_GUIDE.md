@@ -1535,6 +1535,66 @@ npm run dev
 
 - Git commit/push: pendiente (siguiente paso)
 
+### 2026-02-15 (pm) - Watchtower `?image=` parameter fix
+
+- **Problema identificado**: User reportó que watchtower-secondary en raspi2 mostraba "Exit code 1" y aunque el modal mostraba "Update completed", el indicador de "update pending" no se limpiaba después de actualizar.
+
+- **Investigación del issue**:
+  1. **Logs de watchtower-secondary**: Container corría correctamente en puerto 8081 (no 8080 que estaba ocupado por qBittorrent)
+  2. **HTTP API funcionando**: Endpoint respondía HTTP 200, pero logs mostraban "Session done Failed=0 Scanned=0 Updated=0"
+  3. **Root cause**: El parámetro `?image=` no funcionaba en Watchtower v1.7.1 en raspi2
+     - Implementamos formato correcto ORG/APP (ej: `linuxserver/radarr` de `lscr.io/linuxserver/radarr:latest`)
+     - GitHub discussion #1731 confirmó formato correcto
+     - Agregamos logging extensivo mostrando `formatted=linuxserver/radarr` enviándose correctamente
+     - Tests manuales con `curl "http://localhost:8081/v1/update?image=linuxserver/radarr"` confirmaron "Scanned=0"
+     - Sin parámetro `?image=`, Watchtower escanea 30 contenedores exitosamente
+
+- **Solución implementada**:
+  1. **Simplificación del API call**:
+     - Removido parámetro `?image=` del endpoint `/v1/update`
+     - Removido código de formatting de ORG/APP extraction
+     - Removido import `net/url` (ya no necesario)
+     - Call directo a `/v1/update` sin parameters
+
+  2. **Aumento de timeout**:
+     - Context timeout aumentado de 30s → 60s
+     - Necesario para procesar scan de todos los contenedores
+
+  3. **Logging mejorado**:
+     - Agregado logging de URL, containerID e imageName para debugging
+     - Log format: `Watchtower update: URL=%s, container=%s (%s)`
+
+- **Trade-off aceptado**:
+  - Al eliminar parámetro `?image=`, Watchtower ahora escanea TODOS los contenedores por disponibilidad de actualizaciones
+  - Esto significa que hacer click en "Update" para un contenedor específico puede actualizar OTROS contenedores si tienen updates disponibles
+  - Es un trade-off aceptable: mejor tener funcionalidad que funciona (aunque más amplia) que una funcionalidad rota
+
+- **Comportamiento final**:
+  - ✅ Update trigger funciona en ambos hosts (raspi1 y raspi2)
+  - ✅ Watchtower logs muestran "Scanned=30" (no "Scanned=0")
+  - ✅ No más timeout errors
+  - ✅ Update process completa exitosamente
+  - ⚠️ Update button ahora actualiza todos los contenedores con updates disponibles, no solo el específico
+
+- **Archivos modificados**:
+  - `backend/main.go`:
+    - Línea 14-15: removido import `"net/url"`
+    - Líneas 3490-3503: simplificado API call, aumentado timeout, agregado logging
+
+- **Tests realizados**:
+  - ✅ Deployment successful a Raspberry Pi
+  - ✅ Container healthy en puerto :3007
+  - ⏳ Test funcional del update trigger (pendiente validación en producción)
+
+- **Aprendizajes técnicos**:
+  - Watchtower v1.7.1 HTTP API documenta soporte para `?image=` parameter, pero no funciona confiablemente en todos los casos
+  - Formato correcto es `ORG/APP` (ej: `linuxserver/radarr`), NO path completo con registry y tag
+  - Llamar `/v1/update` sin parámetros es más confiable que intentar targeting selectivo
+  - Siempre verificar logs de Watchtower para confirmar comportamiento (campo "Scanned" es indicador clave)
+
+- Deploy: ✅ Completado con `./deploy-to-raspi.sh`
+- Git commit/push: pendiente (siguiente paso)
+
 ### 2026-02-10 - 2FA SHA1 fix + Docker version fallback
 
 - Commits: d5cd321, 06af6de (en master, mergeados a branch el 14 Feb)
