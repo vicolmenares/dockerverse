@@ -65,7 +65,11 @@ services:
       SSH_PORT: "${SSH_PORT:-22}"
       SSH_KEY_PATH: "${SSH_KEY_PATH:-/data/ssh/id_rsa}"
       SSH_KEY_PASSPHRASE: "${SSH_KEY_PASSPHRASE:-}"
-    
+
+    # Allow container to access services on the Docker host
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
     # Container labels
     labels:
       - "com.dockerverse.service=unified"
