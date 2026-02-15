@@ -3686,14 +3686,115 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 	}))
 
 	// WebSocket for terminal
+	// Helper function: SSH fallback for container terminal when Docker API exec is blocked
+	handleContainerTerminalSSH := func(c *websocket.Conn, hostID, containerID string) {
+		client, err := dialSSH(hostID)
+		if err != nil {
+			errMsg, _ := json.Marshal(map[string]string{"type": "error", "data": "SSH connection failed: " + err.Error()})
+			c.WriteMessage(websocket.TextMessage, errMsg)
+			return
+		}
+		defer client.Close()
+
+		session, err := client.NewSession()
+		if err != nil {
+			errMsg, _ := json.Marshal(map[string]string{"type": "error", "data": "SSH session failed: " + err.Error()})
+			c.WriteMessage(websocket.TextMessage, errMsg)
+			return
+		}
+		defer session.Close()
+
+		modes := ssh.TerminalModes{
+			ssh.ECHO:          1,
+			ssh.TTY_OP_ISPEED: 14400,
+			ssh.TTY_OP_OSPEED: 14400,
+		}
+		if err := session.RequestPty("xterm-256color", 40, 120, modes); err != nil {
+			errMsg, _ := json.Marshal(map[string]string{"type": "error", "data": "PTY request failed: " + err.Error()})
+			c.WriteMessage(websocket.TextMessage, errMsg)
+			return
+		}
+
+		stdout, err := session.StdoutPipe()
+		if err != nil {
+			errMsg, _ := json.Marshal(map[string]string{"type": "error", "data": err.Error()})
+			c.WriteMessage(websocket.TextMessage, errMsg)
+			return
+		}
+		stderr, err := session.StderrPipe()
+		if err != nil {
+			errMsg, _ := json.Marshal(map[string]string{"type": "error", "data": err.Error()})
+			c.WriteMessage(websocket.TextMessage, errMsg)
+			return
+		}
+		stdin, err := session.StdinPipe()
+		if err != nil {
+			errMsg, _ := json.Marshal(map[string]string{"type": "error", "data": err.Error()})
+			c.WriteMessage(websocket.TextMessage, errMsg)
+			return
+		}
+
+		// Execute docker exec via SSH
+		// Try bash first, fallback to sh
+		cmd := fmt.Sprintf("docker exec -it %s sh -c 'command -v bash >/dev/null && exec bash || exec sh'", containerID)
+		if err := session.Start(cmd); err != nil {
+			errMsg, _ := json.Marshal(map[string]string{"type": "error", "data": "Failed to start docker exec: " + err.Error()})
+			c.WriteMessage(websocket.TextMessage, errMsg)
+			return
+		}
+
+		// Send connection success message
+		connMsg, _ := json.Marshal(map[string]string{"type": "info", "data": "Connected via SSH fallback"})
+		c.WriteMessage(websocket.TextMessage, connMsg)
+
+		output := func(reader io.Reader) {
+			buf := make([]byte, 4096)
+			for {
+				n, err := reader.Read(buf)
+				if err != nil {
+					return
+				}
+				if n > 0 {
+					msg, _ := json.Marshal(map[string]string{"type": "output", "data": string(buf[:n])})
+					c.WriteMessage(websocket.TextMessage, msg)
+				}
+			}
+		}
+		go output(stdout)
+		go output(stderr)
+
+		for {
+			_, msg, err := c.ReadMessage()
+			if err != nil {
+				return
+			}
+			var wsMsg struct {
+				Type string `json:"type"`
+				Data string `json:"data"`
+				Cols int    `json:"cols"`
+				Rows int    `json:"rows"`
+			}
+			if json.Unmarshal(msg, &wsMsg) == nil {
+				if wsMsg.Type == "input" {
+					stdin.Write([]byte(wsMsg.Data))
+				} else if wsMsg.Type == "resize" {
+					if wsMsg.Cols > 0 && wsMsg.Rows > 0 {
+						session.WindowChange(wsMsg.Rows, wsMsg.Cols)
+					}
+				}
+			}
+		}
+	}
+
 	app.Get("/ws/terminal/:hostId/:containerId", websocket.New(func(c *websocket.Conn) {
 		hostID := c.Params("hostId")
 		containerID := c.Params("containerId")
 
 		cli, err := dm.GetClient(hostID)
 		if err != nil {
-			errMsg, _ := json.Marshal(map[string]string{"type": "error", "data": err.Error()})
-			c.WriteMessage(websocket.TextMessage, errMsg)
+			// No Docker client available, try SSH fallback directly
+			log.Printf("Terminal: no docker client for host=%s, attempting SSH fallback", hostID)
+			handleContainerTerminalSSH(c, hostID, containerID)
 			return
 		}
 
@@ -3710,6 +3811,14 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 
 		execIDResp, err := cli.ContainerExecCreate(ctx, containerID, execConfig)
 		if err != nil {
+			// Check if it's a 403 or other Docker API error - try SSH fallback
+			errStr := err.Error()
+			if strings.Contains(errStr, "403") || strings.Contains(errStr, "Forbidden") {
+				log.Printf("Terminal: docker exec blocked (403) for container=%s on host=%s, attempting SSH fallback", containerID, hostID)
+				handleContainerTerminalSSH(c, hostID, containerID)
+				return
+			}
+			// Other errors, report and exit
 			errMsg, _ := json.Marshal(map[string]string{"type": "error", "data": "Error creating exec: " + err.Error()})
 			c.WriteMessage(websocket.TextMessage, errMsg)
 			return

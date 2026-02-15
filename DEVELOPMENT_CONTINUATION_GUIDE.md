@@ -33,8 +33,8 @@ Added logging to `backend/main.go` in `dialSSH()` to surface the resolved host a
 
 > **Documento de transferencia de conocimiento para continuar el desarrollo desde macOS**
 > 
-> Última actualización: 12 de febrero de 2026
-> Versión actual: v2.3.0
+> Última actualización: 14 de febrero de 2026
+> Versión actual: v2.4.0
 
 ---
 
@@ -71,14 +71,14 @@ Added logging to `backend/main.go` in `dialSSH()` to surface the resolved host a
 - **Deployment**: Docker con arquitectura unificada (single container)
 - **Target**: Raspberry Pi 4/5 con Docker instalado
 
-### Características Principales (v2.3.0)
+### Características Principales (v2.4.0)
 
 - ✅ Gestión multi-host de contenedores Docker
 - ✅ Terminal web con WebSocket (7 temas, búsqueda, reconexión, WebGL, zoom)
 - ✅ Visor de logs estilo Databasement con filtros avanzados
 - ✅ Gráficos de recursos en tiempo real (CPU, RAM, Red, Disco)
 - ✅ Resource Leaderboard con tabs (CPU/Memory/Network/Restarts)
-- ✅ Sistema de autenticación con JWT + TOTP/MFA
+- ✅ Sistema de autenticación con JWT + TOTP/MFA (SHA1)
 - ✅ Detección de actualizaciones con indicadores animados
 - ✅ Panel de actualizaciones pendientes con dropdown
 - ✅ Subida de avatar de usuario
@@ -100,6 +100,19 @@ Added logging to `backend/main.go` in `dialSSH()` to surface the resolved host a
 - ✅ Update button on ContainerCard when updates available (v2.3.0)
 - ✅ Configurable Top Resources count selector (5/10/15/20/30) (v2.3.0)
 - ✅ Tabular-nums on all real-time numeric displays to prevent jitter (v2.3.0)
+- ✅ SSH console embebido por host via WebSocket (v2.4.0)
+- ✅ File manager SFTP con upload/download por host (v2.4.0)
+- ✅ Bulk update modal para actualización masiva de contenedores (v2.4.0)
+- ✅ Paginación de contenedores con selector (9/12/18/24) (v2.4.0)
+- ✅ Disk free via SSH (sin contenedor busybox) (v2.4.0)
+- ✅ Backend file logging con /api/debug/logs endpoint (v2.4.0)
+- ✅ SSH fallback para container actions cuando Docker API falla (v2.4.0)
+- ✅ Multiple SSH candidates con deriveSSHCandidates() (v2.4.0)
+- ✅ Environments CRUD page en settings (v2.4.0)
+- ✅ Logs page dedicada con modos single/multi/agrupado (v2.4.0)
+- ✅ Socket-proxy integration para acceso seguro al Docker daemon (v2.4.0)
+- ✅ Docker version fallback via ServerVersion API (v2.4.0)
+- ✅ Health endpoint /health para container healthcheck (v2.4.0)
 
 ---
 
@@ -235,7 +248,7 @@ Se eliminó el patrón de modal flotante (`Settings.svelte` como overlay `fixed 
 │           ▼                ▼                ▼               │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────┐    │
 │  │   Nginx     │  │  Go Backend │  │ SvelteKit Node  │    │
-│  │  (Port 80)  │  │ (Port 3001) │  │   (Port 3000)   │    │
+│  │  (Port 80)  │  │ (Port 3002) │  │   (Port 3003)   │    │
 │  │  Reverse    │  │   Fiber     │  │   SSR/Hydrate   │    │
 │  │   Proxy     │  │    API      │  │                 │    │
 │  └──────┬──────┘  └─────────────┘  └─────────────────┘    │
@@ -246,11 +259,12 @@ Se eliminó el patrón de modal flotante (`Settings.svelte` como overlay `fixed 
 │                       /*     → Frontend                     │
 └─────────────────────────────────────────────────────────────┘
                               │
-                              ▼
-                    ┌─────────────────┐
-                    │  Docker Socket  │
-                    │   (Read-Only)   │
-                    └─────────────────┘
+                    ┌─────────┴─────────┐
+                    ▼                   ▼
+          ┌─────────────────┐  ┌────────────────┐
+          │  Docker Socket  │  │  SSH (port 22)  │
+          │   (Read-Only)   │  │  to remote hosts│
+          └─────────────────┘  └────────────────┘
 ```
 
 ### Diagrama de Red Multi-Host
@@ -261,26 +275,30 @@ Se eliminó el patrón de modal flotante (`Settings.svelte` como overlay `fixed 
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                  │
 │  ┌──────────────────┐                                           │
-│  │   Windows Dev    │                                           │
+│  │   macOS Dev      │                                           │
 │  │  (Este equipo)   │ ─────────────────────────┐               │
-│  │  SSH + SCP       │                          │               │
+│  │  SSH + rsync     │                          │               │
 │  └──────────────────┘                          │               │
 │                                                 ▼               │
-│  ┌──────────────────┐    ┌──────────────────┐  │               │
-│  │   Raspberry Pi   │    │   Raspberry Pi   │  │               │
-│  │  192.168.1.145   │    │  192.168.1.146   │  │               │
-│  │  (Server Main)   │    │   (Server 2)     │  │               │
-│  │  Port: 3007      │    │   Port: 3006     │  │               │
-│  │  DockerVerse     │    │   Docker Host    │  │               │
-│  └──────────────────┘    └──────────────────┘  │               │
-│           │                       │             │               │
-│           └───────────────────────┘             │               │
-│                     │                           │               │
-│                     ▼                           │               │
-│          Docker API via SSH                     │               │
-│                                                 │               │
+│  ┌──────────────────┐    ┌──────────────────┐                  │
+│  │   Raspberry Pi   │    │   Raspberry Pi   │                  │
+│  │  192.168.1.145   │    │  192.168.1.146   │                  │
+│  │  (Server Main)   │    │   (Server 2)     │                  │
+│  │  Port: 3007      │    │   Docker Host    │                  │
+│  │  DockerVerse     │    │   Port: 2375     │                  │
+│  │  socket-proxy    │    │                  │                  │
+│  │  Port: 23750     │    │                  │                  │
+│  └──────────────────┘    └──────────────────┘                  │
+│           │                       │                             │
+│           └───────────────────────┘                             │
+│                     │                                           │
+│           Docker API (TCP) + SSH                                │
+│                                                                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+> **Nota**: raspi1 usa socket-proxy (puerto 23750) para acceso seguro al Docker socket.
+> raspi2 expone Docker API directamente en puerto 2375.
 
 ---
 
@@ -293,12 +311,13 @@ Se eliminó el patrón de modal flotante (`Settings.svelte` como overlay `fixed 
 | Go | 1.23+ | Lenguaje principal |
 | Fiber | v2.52.0 | Framework web HTTP |
 | fiber/websocket | v2.2.1 | WebSocket support |
-| docker/docker | v27.0.0 | Docker API client |
+| docker/docker | v27.5.0 | Docker API client |
 | golang-jwt/jwt | v5.2.1 | JSON Web Tokens |
-| pquerna/otp | v1.4.0 | TOTP/2FA support |
+| pquerna/otp | v1.4.0 | TOTP/2FA support (SHA1) |
 | creack/pty | v1.1.21 | Terminal pseudo-TTY |
 | go-containerregistry | v0.20.3 | Registry digest comparison (crane) |
-| golang.org/x/crypto | v0.25.0 | bcrypt hashing |
+| pkg/sftp | v1.13.10 | SFTP file manager |
+| golang.org/x/crypto | v0.41.0 | bcrypt hashing, SSH |
 
 ### Frontend (SvelteKit)
 
@@ -315,6 +334,7 @@ Se eliminó el patrón de modal flotante (`Settings.svelte` como overlay `fixed 
 | lucide-svelte | ^0.408.0 | Iconos |
 | echarts | ^5.5.0 | Gráficos (opcional) |
 | clsx | ^2.1.1 | Utility classes |
+| @playwright/test | ^1.58.2 | E2E testing |
 
 ### Infrastructure
 
@@ -326,7 +346,7 @@ Se eliminó el patrón de modal flotante (`Settings.svelte` como overlay `fixed 
 | s6-overlay | v3 | Process supervisor |
 | Alpine Linux | 3.19 | Base image |
 
-### Herramientas de Desarrollo (Windows)
+### Herramientas de Desarrollo (macOS)
 
 | Herramienta | Versión | Propósito |
 |-------------|---------|-----------|
@@ -334,10 +354,11 @@ Se eliminó el patrón de modal flotante (`Settings.svelte` como overlay `fixed 
 | Node.js | 20.x LTS | Runtime frontend dev |
 | npm | 10.x | Package manager |
 | Go | 1.23.x | Backend development |
-| PowerShell | 7.x | Scripting |
-| Posh-SSH | 3.2.7 | SSH/SCP desde PowerShell |
+| Docker Desktop | 4.x | Containers |
 | Git | 2.x | Version control |
 | GitHub CLI | 2.x | GitHub operations |
+| SSH | Built-in | Conexión a Raspberry Pis |
+| rsync | Built-in | Sincronización de archivos |
 
 ---
 
@@ -351,7 +372,7 @@ dockerverse/
 │   ├── Dockerfile             # Go backend container
 │   ├── go.mod                 # Go dependencies
 │   ├── go.sum                 # Go checksums
-│   └── main.go                # Backend principal (~3500 líneas)
+│   └── main.go                # Backend principal (~4400 líneas)
 │       ├── Structs (User, Host, Container, etc.)
 │       ├── Auth (JWT, Refresh, TOTP)
 │       ├── Docker API integration
@@ -376,14 +397,18 @@ dockerverse/
 │   │   │   │   └── docker.ts  # API client (~400 líneas)
 │   │   │   ├── components/
 │   │   │   │   ├── index.ts
+│   │   │   │   ├── BulkUpdateModal.svelte   # Bulk update de contenedores
 │   │   │   │   ├── CommandPalette.svelte
 │   │   │   │   ├── ContainerCard.svelte
+│   │   │   │   ├── EnvironmentModal.svelte  # CRUD de environments
 │   │   │   │   ├── HostCard.svelte
+│   │   │   │   ├── HostFiles.svelte         # File manager SFTP
 │   │   │   │   ├── Login.svelte
 │   │   │   │   ├── LogViewer.svelte
 │   │   │   │   ├── ResourceChart.svelte
 │   │   │   │   ├── Settings.svelte (legacy, no longer imported)
-│   │   │   │   └── Terminal.svelte
+│   │   │   │   ├── Terminal.svelte
+│   │   │   │   └── UpdateModal.svelte       # Update individual de contenedor
 │   │   │   ├── settings/
 │   │   │   │   └── index.ts   # Shared translations & types
 │   │   │   └── stores/
@@ -392,7 +417,9 @@ dockerverse/
 │   │   └── routes/
 │   │       ├── +layout.svelte # Main layout (~640 líneas)
 │   │       ├── +page.svelte   # Dashboard page
-│   │       └── settings/      # Settings pages (v2.2.0)
+│   │       ├── logs/          # Logs page (v2.4.0)
+│   │       │   └── +page.svelte       # Backend logs viewer
+│   │       └── settings/      # Settings pages (v2.2.0+)
 │   │           ├── +layout.svelte     # Settings layout + auth guard
 │   │           ├── +page.svelte       # Settings menu
 │   │           ├── profile/+page.svelte
@@ -401,6 +428,7 @@ dockerverse/
 │   │           ├── notifications/+page.svelte
 │   │           ├── appearance/+page.svelte
 │   │           ├── data/+page.svelte
+│   │           ├── environments/+page.svelte  # Environments CRUD (v2.4.0)
 │   │           └── about/+page.svelte
 │   └── static/
 │       ├── robots.txt
@@ -410,8 +438,12 @@ dockerverse/
 ├── docker-compose.yml         # Multi-container (legacy)
 ├── docker-compose.unified.yml # Single container
 ├── Dockerfile.unified         # Unified build
-├── transfer.ps1               # Windows deploy script
-├── sync.ps1                   # Sync script
+├── deploy-to-raspi.sh         # Deploy automático a Raspberry Pi
+├── sync-to-raspi.sh           # Sync de archivos a Raspberry Pi
+├── setup-mac.sh               # Setup del entorno macOS
+├── transfer.ps1               # Windows deploy script (legacy)
+├── sync.ps1                   # Sync script (legacy)
+├── .env                       # Variables de entorno (no commitear secrets)
 ├── README.md                  # Basic readme
 ├── UNIFIED_CONTAINER_ARCHITECTURE.md
 └── DEVELOPMENT_CONTINUATION_GUIDE.md  # Este documento
@@ -472,6 +504,29 @@ dockerverse/
 | Sidebar Active State | Highlight del item actual | +layout.svelte |
 | Avatar Upload Fix | Corrección de API endpoint | auth.ts |
 
+### v2.4.0 - SSH, SFTP & Infrastructure Release
+
+| Feature | Descripción | Archivo(s) Principal(es) |
+|---------|-------------|-------------------------|
+| SSH Console | Terminal SSH embebida por host | Terminal.svelte, main.go |
+| SFTP File Manager | Navegador de archivos con upload/download | HostFiles.svelte, main.go |
+| Bulk Update Modal | Actualización masiva de contenedores | BulkUpdateModal.svelte, docker.ts |
+| Update Modal | Actualización individual con Watchtower | UpdateModal.svelte |
+| Container Pagination | Selector de página (9/12/18/24) | +page.svelte |
+| Disk Free via SSH | Métricas de disco sin busybox | main.go |
+| Backend Logging | File logging + /api/debug/logs | main.go |
+| SSH Fallback Actions | Container start/stop/restart via SSH | main.go |
+| SSH Candidates | deriveSSHCandidates() multiples IPs | main.go |
+| Environments CRUD | Página de gestión de environments | environments/+page.svelte, EnvironmentModal.svelte |
+| Logs Page | Visor de logs dedicado multi-modo | logs/+page.svelte |
+| Toggle Filters | Deseleccionar filtros en cards resumen | +page.svelte |
+| Host Rename | Display name configurable via DOCKER_HOSTS | main.go, .env |
+| Socket-proxy | Acceso seguro al Docker daemon (23750) | docker-compose.unified.yml |
+| Docker Version Fallback | ServerVersion API para daemons restringidos | main.go |
+| 2FA SHA1 Fix | Compatibilidad con authenticator apps | main.go |
+| Health Endpoint | /health para container healthcheck | main.go |
+| Port Reorganization | Backend 3002, Frontend 3003 | Dockerfile.unified, docker-compose.unified.yml |
+
 ---
 
 ## 💻 Configuración del Entorno de Desarrollo
@@ -480,13 +535,19 @@ dockerverse/
 
 ```bash
 # Backend
-PORT=3001
+PORT=3002                    # Puerto interno del backend (Nginx hace proxy)
 DOCKER_HOST=unix:///var/run/docker.sock
-DOCKER_HOSTS=raspi1:Raspi Main:unix:///var/run/docker.sock:local
+DOCKER_HOSTS=raspi1:Raspeberry Main:tcp://192.168.1.145:23750:remote|raspi2:Raspeberry Secondary:tcp://192.168.1.146:2375:remote
 JWT_SECRET=dockerverse-super-secret-key-2026
 DATA_PATH=/data
 WATCHTOWER_TOKEN=  # Watchtower HTTP API token (optional)
 WATCHTOWER_URLS=   # Watchtower URLs per host (optional, format: hostId:url|hostId:url)
+
+# SSH configuration for host console + SFTP
+SSH_USER=pi                  # Usuario SSH para conectar a hosts
+SSH_PORT=22                  # Puerto SSH
+SSH_KEY_PATH=/data/ssh/id_rsa  # Ruta a la clave SSH dentro del contenedor
+SSH_KEY_PASSPHRASE=          # Passphrase de la clave (opcional)
 
 # Frontend
 NODE_ENV=production
@@ -496,17 +557,20 @@ PUBLIC_API_URL=  # Empty for same-origin
 # Container
 TZ=America/Mexico_City
 S6_VERBOSITY=1
+S6_BEHAVIOUR_IF_STAGE2_FAILS=2
+S6_CMD_WAIT_FOR_SERVICES_MAXTIME=30000
 ```
 
 ### Puertos Utilizados
 
 | Puerto | Servicio | Descripción |
 |--------|----------|-------------|
-| 3000 | SvelteKit | Frontend SSR |
-| 3001 | Go/Fiber | Backend API |
-| 3006 | DockerVerse Prev | Versión anterior |
-| 3007 | DockerVerse | Producción |
-| 80 | Nginx (container) | Reverse proxy |
+| 3003 | SvelteKit | Frontend SSR (interno al contenedor) |
+| 3002 | Go/Fiber | Backend API (interno al contenedor) |
+| 3007 | DockerVerse | Producción (expuesto al host) |
+| 80 | Nginx (container) | Reverse proxy (interno, mapeado a 3007) |
+| 23750 | socket-proxy | Docker socket proxy en raspi1 |
+| 2375 | Docker API | Docker daemon expuesto en raspi2 |
 
 ---
 
@@ -564,10 +628,10 @@ code --install-extension GitHub.copilot-chat
 
 ### Configuración de Hosts
 
-| Host | IP | Usuario | Password | Puerto DockerVerse |
-|------|-----|---------|----------|-------------------|
-| raspi-main | 192.168.1.145 | pi | Pi16870403 | 3007 |
-| raspi-secondary | 192.168.1.146 | pi | Pi16870403 | N/A |
+| Host | IP | Usuario | Password | DockerVerse | Docker API |
+|------|-----|---------|----------|-------------|------------|
+| raspi-main | 192.168.1.145 | pi | Pi16870403 | :3007 | socket-proxy :23750 |
+| raspi-secondary | 192.168.1.146 | pi | Pi16870403 | N/A | :2375 (directo) |
 
 ### Conexión SSH desde Mac
 
@@ -664,31 +728,21 @@ curl -X POST http://192.168.1.145:3007/api/auth/login \
 Se incluye `deploy-to-raspi.sh`:
 
 ```bash
-#!/bin/bash
-# Uso: ./deploy-to-raspi.sh [--no-cache]
+# Uso:
+./deploy-to-raspi.sh            # Deploy completo (sync + build + restart)
+./deploy-to-raspi.sh --quick    # Solo sync de archivos (sin rebuild)
+./deploy-to-raspi.sh --no-cache # Force rebuild sin cache
+./deploy-to-raspi.sh --help     # Ver opciones
 
-RASPI_HOST="pi@192.168.1.145"
-RASPI_PATH="/home/pi/dockerverse"
-NO_CACHE=${1:-""}
-
-echo "📦 Syncing files..."
-rsync -avz --exclude 'node_modules' --exclude '.git' \
-  --exclude 'test-*' ./ $RASPI_HOST:$RASPI_PATH/
-
-echo "🔨 Building on Raspberry Pi..."
-ssh $RASPI_HOST "cd $RASPI_PATH && \
-  docker compose -f docker-compose.unified.yml down && \
-  docker compose -f docker-compose.unified.yml build $NO_CACHE && \
-  docker compose -f docker-compose.unified.yml up -d"
-
-echo "✅ Waiting for container..."
-sleep 10
-
-echo "🔍 Checking status..."
-ssh $RASPI_HOST "docker ps | grep dockerverse"
-
-echo "🎉 Deploy complete!"
+# Target: pi@192.168.1.145:/home/pi/dockerverse
+# Compose: docker-compose.unified.yml
 ```
+
+El script:
+1. Valida conexión SSH a la Raspberry Pi
+2. Sincroniza archivos con rsync (excluye node_modules, .git, logs, etc.)
+3. Ejecuta `docker compose up` con la config unificada
+4. Espera y verifica health del contenedor
 
 ---
 
@@ -829,6 +883,34 @@ cat backup/users.json | ssh raspi-main "docker exec -i dockerverse tee /data/use
 | GET | `/api/updates` | Lista de actualizaciones |
 | POST | `/api/updates/:hostId/:containerId/check` | Verificar imagen |
 | POST | `/api/containers/:hostId/:containerId/update` | Trigger Watchtower update |
+| POST | `/api/updates/bulk` | Bulk update de contenedores |
+
+#### Environments
+
+| Method | Endpoint | Descripción |
+|--------|----------|-------------|
+| GET | `/api/environments` | Lista de environments |
+| POST | `/api/environments` | Agregar environment |
+| PUT | `/api/environments/:id` | Actualizar environment |
+| DELETE | `/api/environments/:id` | Eliminar environment |
+| POST | `/api/environments/:id/test` | Test de conexión |
+
+#### Debug (admin-only)
+
+| Method | Endpoint | Descripción |
+|--------|----------|-------------|
+| GET | `/health` | Health check del contenedor |
+| GET | `/api/debug/logs` | Últimas líneas del backend.log (?lines=200) |
+| GET | `/api/debug/hosts` | Diagnóstico de parsing de hosts |
+
+#### SSH / SFTP
+
+| Method | Endpoint | Descripción |
+|--------|----------|-------------|
+| WS | `/ws/ssh/:hostId` | Terminal SSH al host via WebSocket |
+| GET | `/api/hosts/:hostId/files?path=` | Listar archivos (SFTP) |
+| GET | `/api/hosts/:hostId/files/download?path=` | Descargar archivo |
+| POST | `/api/hosts/:hostId/files/upload` | Subir archivo |
 
 ---
 
@@ -914,7 +996,30 @@ docker exec dockerverse sh -c 'echo "[NUEVO_JSON]" > /data/users.json'
 - [x] Deploy script updated to use `docker compose` v2 plugin syntax
 - [x] go.sum included in Dockerfile COPY for reliable builds
 
-### v2.4.0 (Planificado)
+### v2.4.0 (Completado - 12 Feb 2026)
+
+- [x] SSH console embebido por host (WebSocket `/ws/ssh/:hostId`)
+- [x] File manager SFTP con upload/download por host (HostFiles.svelte)
+- [x] Bulk update modal para actualización masiva (BulkUpdateModal.svelte)
+- [x] Paginación de contenedores con selector (9/12/18/24)
+- [x] Disk free via SSH (`df` directo, sin contenedor busybox)
+- [x] Backend file logging (`/data/logs/backend.log`) + recover middleware
+- [x] Debug endpoints (`/api/debug/logs`, `/api/debug/hosts`) admin-only
+- [x] SSH fallback para container actions (start/stop/restart via SSH)
+- [x] Multiple SSH candidates (`deriveSSHCandidates()`) para conexiones resilientes
+- [x] Environments CRUD page en settings
+- [x] Logs page dedicada con modos single/multi/agrupado y descarga
+- [x] Toggle de filtros en cards de resumen (deseleccionar con segundo click)
+- [x] Renombrado de hosts por display name
+- [x] Socket-proxy integration (puerto 23750) para acceso seguro al Docker daemon
+- [x] Docker version fallback via ServerVersion API (para daemons con acceso restringido)
+- [x] 2FA algorithm fix: SHA256→SHA1 para compatibilidad con authenticator apps
+- [x] Health endpoint `/health` para container healthcheck
+- [x] openssh-client incluido en container image
+- [x] Internal ports reorganizados (backend: 3002, frontend: 3003)
+- [x] `@types/node` y `@playwright/test` agregados al frontend
+
+### v2.5.0 (Planificado)
 
 - [ ] Container Activity chart (bar chart estilo Jobs Activity)
 - [ ] Docker Compose management (view/edit compose files)
@@ -923,7 +1028,7 @@ docker exec dockerverse sh -c 'echo "[NUEVO_JSON]" > /data/users.json'
 - [ ] Volume management UI
 - [ ] Container templates/presets
 
-### v2.5.0 (Planificado)
+### v3.0.0 (Planificado)
 
 - [ ] Multi-user permissions (RBAC)
 - [ ] Audit log
@@ -931,7 +1036,7 @@ docker exec dockerverse sh -c 'echo "[NUEVO_JSON]" > /data/users.json'
 - [ ] Webhook integrations
 - [ ] Dashboard widgets customization
 
-### v3.0.0 (Futuro)
+### v4.0.0 (Futuro)
 
 - [ ] Kubernetes support
 - [ ] Portainer import
@@ -1094,9 +1199,10 @@ npm run dev
 
 ## Estado del Repositorio (Git)
 
-- Rama actual: HEAD detach en `2f575b9` ("feat: Add a bulk update modal for managing Docker containers."), sin cambios locales visibles en el árbol de trabajo.
-- Origen: `origin/master` en `06af6de` (con `d5cd321` previo). El HEAD local está **adelantado 1 commit** y **atrasado 2 commits** respecto a `origin/master` (divergencia).
-- Acción sugerida: crear una rama desde `2f575b9` y hacer rebase/merge contra `origin/master` antes de publicar; evitar `git reset --hard` hasta respaldar la rama local.
+- Rama actual: `feature/toggle-filters-host-rename-2026-02-12`
+- Origen: `origin/master` en `06af6de`
+- Estado: Branch ~28 commits adelante de master, con merge de origin/master integrado (14 Feb 2026)
+- Remote: `https://github.com/vicolmenares/dockerverse.git`
 
 ## Mapa de Módulos UI/UX
 
@@ -1122,8 +1228,8 @@ npm run dev
 
 ---
 
-*Documento actualizado el 12 de febrero de 2026*
-*DockerVerse v2.3.0*
+*Documento actualizado el 14 de febrero de 2026*
+*DockerVerse v2.4.0*
 
 ## Tracking de Cambios
 
@@ -1278,3 +1384,73 @@ npm run dev
 - Verificacion en Raspberry Pi: OK
    - `curl -I http://192.168.1.145:3007` -> HTTP 200.
 - Git push: completado.
+
+### 2026-02-12 - SSH fallback para container actions + multiples candidatos SSH
+
+- Commits: f143d63, dd25250, 3540285, 07b0f9c, 47e3eef, dee5b24, 704a63c, d36ccb9, 2512405, 3021ed4, 344de3e
+- Cambios:
+   - Backend ahora intenta ejecutar container actions (start/stop/restart) via SSH cuando Docker API falla.
+   - `deriveSSHCandidates()` genera multiples IPs/hostnames para intentar conexion SSH.
+   - `dialSSH()` con logging detallado y timeout.
+   - Endpoint `/api/debug/hosts` para diagnostico de parsing de hosts.
+   - Soporte para local (unix socket) y remote (tcp) en DOCKER_HOSTS.
+   - Fix en env YAML: mapping para todas las vars y DOCKER_HOSTS entre comillas.
+   - `extra_hosts: host-gateway` para resolver `host.docker.internal`.
+   - `df` acepta salida con exit code non-zero y parsea si hay output.
+- Archivos:
+   - `backend/main.go`
+   - `docker-compose.unified.yml`
+   - `Dockerfile.unified`
+
+### 2026-02-12 - Socket-proxy y actualizacion de IPs
+
+- Commits: c4d8c1d, 1d757b2, 603a43f
+- Cambios:
+   - DOCKER_HOSTS actualizado para usar socket-proxy en raspi1 (puerto 23750).
+   - Intento de actualizar raspi2 IP a 192.168.1.11 revertido a 192.168.1.146 por problemas de conectividad.
+   - Puertos internos reorganizados: backend 3001→3002, frontend 3000→3003.
+   - openssh-client agregado al contenedor para SSH nativo.
+   - Health endpoint `/health` agregado al backend.
+   - Eliminada dependencia de red externa `container_network_ipv4`.
+- Archivos:
+   - `docker-compose.unified.yml`
+   - `Dockerfile.unified`
+   - `backend/main.go`
+
+### 2026-02-15 - SSH fallback para terminal de contenedores
+
+- Problema identificado: socket-proxy en raspi1 (puerto 23750) bloquea operaciones `ContainerExecCreate()` con error 403, impidiendo conexión a contenedores via terminal.
+- Causa raíz: socket-proxy requiere `EXEC=1` en variables de entorno para permitir operaciones de exec, que está deshabilitado por seguridad.
+- Solución implementada:
+   - Agregada función `handleContainerTerminalSSH()` que ejecuta `docker exec` via SSH cuando Docker API falla con 403.
+   - Modificado WebSocket handler `/ws/terminal/:hostId/:containerId` para detectar errores 403/"Forbidden" y hacer fallback a SSH.
+   - Usa `dialSSH()` y sesión SSH con PTY interactivo para manejar entrada/salida del terminal.
+   - Mantiene consistencia con patrón existente de SSH fallback para acciones de contenedor (start/stop/restart).
+- Archivos modificados:
+   - `backend/main.go` (líneas 3689-3780)
+- Tests:
+   - `go build`: OK (compilación exitosa)
+   - `go test ./...`: OK (sin tests definidos)
+   - `npm --prefix frontend run check`: OK (0 errors, 0 warnings)
+- Deploy a Raspberry Pi: completado con `./deploy-to-raspi.sh`
+   - Resultado: OK (contenedor healthy en `:3007`)
+   - Build time: ~2 minutos
+   - API test: HTTP 401 (esperado sin auth)
+- Verificación esperada:
+   - Terminal de contenedores en raspi1 debe funcionar via SSH fallback
+   - Terminal de contenedores en raspi2 debe funcionar directamente via Docker API
+   - Mensaje "Connected via SSH fallback" indica uso de fallback SSH
+- Referencias:
+   - [docker-socket-proxy GitHub](https://github.com/Tecnativa/docker-socket-proxy)
+   - [Docker Socket Proxy Security Guide](https://www.paulsblog.dev/how-to-secure-your-docker-environment-by-using-a-docker-socket-proxy/)
+
+### 2026-02-10 - 2FA SHA1 fix + Docker version fallback
+
+- Commits: d5cd321, 06af6de (en master, mergeados a branch el 14 Feb)
+- Cambios:
+   - TOTP setup corregido: SHA256→SHA1 para compatibilidad con Google Authenticator y Authy.
+   - Environments: fallback a `cli.ServerVersion()` cuando `cli.Info()` retorna 403.
+   - Test de conexion de environments usa `ServerVersion()` como alternativa.
+   - Muestra version real del Docker engine (ej: "29.2.1") en vez de version de API (ej: "1.53").
+- Archivos:
+   - `backend/main.go`
