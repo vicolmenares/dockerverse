@@ -1083,7 +1083,7 @@ func (s *UserStore) SetupTOTP(username string) (secret string, url string, err e
 		Issuer:      "DockerVerse",
 		AccountName: user.Email,
 		SecretSize:  32,
-		Algorithm:   otp.AlgorithmSHA256,
+		Algorithm:   otp.AlgorithmSHA1,
 	})
 	if err != nil {
 		return "", "", err
@@ -3874,15 +3874,24 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 				continue
 			}
 			pingCtx, pingCancel := context.WithTimeout(context.Background(), 3*time.Second)
-			_, err = cli.Ping(pingCtx)
+			pingResp, err := cli.Ping(pingCtx)
 			pingCancel()
 			if err != nil {
 				env.Status = "offline"
 			} else {
 				env.Status = "online"
+				// Try Info first, fallback to Ping response for version
 				info, infoErr := cli.Info(context.Background())
-				if infoErr == nil {
+				if infoErr == nil && info.ServerVersion != "" {
 					env.DockerVersion = info.ServerVersion
+				} else {
+					// Fallback: try ServerVersion API
+					sv, svErr := cli.ServerVersion(context.Background())
+					if svErr == nil && sv.Version != "" {
+						env.DockerVersion = sv.Version
+					} else if pingResp.APIVersion != "" {
+						env.DockerVersion = "API " + pingResp.APIVersion
+					}
 				}
 			}
 		}
@@ -4011,17 +4020,30 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 			return c.JSON(fiber.Map{"success": false, "error": err.Error()})
 		}
 		pingCtx, pingCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		_, err = cli.Ping(pingCtx)
+		pingResp, err := cli.Ping(pingCtx)
 		pingCancel()
 		if err != nil {
 			return c.JSON(fiber.Map{"success": false, "error": err.Error()})
 		}
-		info, _ := cli.Info(context.Background())
+		info, infoErr := cli.Info(context.Background())
+		version := info.ServerVersion
+		os := info.OperatingSystem
+		containers := info.Containers
+		if infoErr != nil || version == "" {
+			// Fallback: use ServerVersion from Ping or use version endpoint
+			sv, svErr := cli.ServerVersion(context.Background())
+			if svErr == nil {
+				version = sv.Version
+				os = sv.Os + "/" + sv.Arch
+			} else if pingResp.APIVersion != "" {
+				version = "API " + pingResp.APIVersion
+			}
+		}
 		return c.JSON(fiber.Map{
 			"success":       true,
-			"dockerVersion": info.ServerVersion,
-			"os":            info.OperatingSystem,
-			"containers":    info.Containers,
+			"dockerVersion": version,
+			"os":            os,
+			"containers":    containers,
 		})
 	})
 
