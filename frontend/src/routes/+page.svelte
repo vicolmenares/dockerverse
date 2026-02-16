@@ -338,6 +338,13 @@
     terminalContainer = container;
   }
 
+  async function openHostTerminal(host: Host) {
+    if (!Terminal) {
+      Terminal = (await import("$lib/components/Terminal.svelte")).default;
+    }
+    hostTerminal = host;
+  }
+
   async function openLogs(container: Container) {
     if (!LogViewer) {
       LogViewer = (await import("$lib/components/LogViewer.svelte")).default;
@@ -597,7 +604,7 @@
               {host}
               resourcesOpen={expandedHostId === host.id}
               onToggleResources={toggleHostResources}
-              onOpenHostTerminal={(target) => (hostTerminal = target)}
+              onOpenHostTerminal={openHostTerminal}
               onOpenHostFiles={(target) => (hostFiles = target)}
             />
           {/each}
