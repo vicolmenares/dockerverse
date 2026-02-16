@@ -8,7 +8,7 @@ const getApiBase = (): string => {
 export const API_BASE = getApiBase();
 
 // Auth helper
-function getAuthHeaders(): Record<string, string> {
+export function getAuthHeaders(): Record<string, string> {
 	const token = typeof localStorage !== 'undefined' ? localStorage.getItem('auth_access_token') : null;
 	const headers: Record<string, string> = { 'Content-Type': 'application/json' };
 	if (token) headers['Authorization'] = `Bearer ${token}`;

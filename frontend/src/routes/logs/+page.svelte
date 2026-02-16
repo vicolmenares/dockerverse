@@ -24,7 +24,7 @@
   } from "lucide-svelte";
   import { containers } from "$lib/stores/docker";
   import { language } from "$lib/stores/docker";
-  import { createLogStream, API_BASE } from "$lib/api/docker";
+  import { createLogStream, API_BASE, getAuthHeaders } from "$lib/api/docker";
   import type { Container } from "$lib/api/docker";
 
   type LogMode = "single" | "multi" | "grouped";
@@ -390,7 +390,9 @@
   // Fetch hosts on mount
   onMount(async () => {
     try {
-      const hostsRes = await fetch(`${API_BASE}/api/hosts`);
+      const hostsRes = await fetch(`${API_BASE}/api/hosts`, {
+        headers: getAuthHeaders()
+      });
       if (hostsRes.ok) {
         hosts = await hostsRes.json();
       }
