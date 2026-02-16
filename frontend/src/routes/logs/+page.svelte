@@ -227,6 +227,15 @@
     return `${c.id}@${c.hostId}`;
   }
 
+  function formatTimestamp(ts: number): string {
+    const date = new Date(ts);
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    const seconds = String(date.getSeconds()).padStart(2, '0');
+    const ms = String(date.getMilliseconds()).padStart(3, '0');
+    return `${hours}:${minutes}:${seconds}.${ms}`;
+  }
+
   function toggleContainer(c: Container) {
     const key = containerKey(c);
     const newSet = new Set(selectedContainers);
@@ -658,6 +667,36 @@
           {t.wrap}
         </button>
 
+        <!-- Font Size -->
+        <div class="flex items-center gap-0.5">
+          <button
+            class="btn-icon hover:bg-background-tertiary disabled:opacity-30"
+            onclick={() => preferences.fontSize = Math.max(10, preferences.fontSize - 1)}
+            disabled={preferences.fontSize <= 10}
+            title="Decrease font size"
+          >
+            <Type class="w-3 h-3" />
+          </button>
+          <span class="text-[10px] text-foreground-muted px-1 min-w-[2rem] text-center">{preferences.fontSize}px</span>
+          <button
+            class="btn-icon hover:bg-background-tertiary disabled:opacity-30"
+            onclick={() => preferences.fontSize = Math.min(24, preferences.fontSize + 1)}
+            disabled={preferences.fontSize >= 24}
+            title="Increase font size"
+          >
+            <Type class="w-4 h-4" />
+          </button>
+        </div>
+
+        <!-- Timestamps -->
+        <button
+          class="flex items-center gap-1 px-2 py-1 text-xs rounded-md transition-colors {preferences.showTimestamps ? 'bg-primary/15 text-primary' : 'text-foreground-muted hover:text-foreground'}"
+          onclick={() => (preferences.showTimestamps = !preferences.showTimestamps)}
+          title="Toggle timestamps"
+        >
+          {preferences.showTimestamps ? "12:34" : "···"}
+        </button>
+
         <div class="flex-1"></div>
 
         <!-- Search logs -->
@@ -710,10 +749,16 @@
                 <span class="text-xs font-medium {color}">{name}</span>
               </div>
               <div
-                class="flex-1 overflow-y-auto p-3 font-mono text-xs leading-relaxed {wrapLines ? 'whitespace-pre-wrap break-all' : 'whitespace-pre overflow-x-auto'}"
+                class="flex-1 overflow-y-auto p-3 font-mono leading-relaxed {wrapLines ? 'whitespace-pre-wrap break-all' : 'whitespace-pre overflow-x-auto'}"
+                style="font-size: {preferences.fontSize}px"
               >
                 {#each containerLogs as entry}
-                  <div class="text-foreground-muted hover:text-foreground hover:bg-background-tertiary/30 px-1 -mx-1 rounded">{entry.line}</div>
+                  <div class="text-foreground-muted hover:text-foreground hover:bg-background-tertiary/30 px-1 -mx-1 rounded">
+                    {#if preferences.showTimestamps}
+                      <span class="text-foreground-muted/50 select-none">{formatTimestamp(entry.ts)} </span>
+                    {/if}
+                    {entry.line}
+                  </div>
                 {/each}
               </div>
             </div>
@@ -723,10 +768,14 @@
         <!-- Single and Multi mode: unified log view -->
         <div
           bind:this={logAreaEl}
-          class="flex-1 overflow-y-auto p-3 font-mono text-xs leading-relaxed {wrapLines ? 'whitespace-pre-wrap break-all' : 'whitespace-pre overflow-x-auto'}"
+          class="flex-1 overflow-y-auto p-3 font-mono leading-relaxed {wrapLines ? 'whitespace-pre-wrap break-all' : 'whitespace-pre overflow-x-auto'}"
+          style="font-size: {preferences.fontSize}px"
         >
           {#each filteredLogs as entry}
             <div class="hover:bg-background-tertiary/30 px-1 -mx-1 rounded">
+              {#if preferences.showTimestamps}
+                <span class="text-foreground-muted/50 select-none">{formatTimestamp(entry.ts)} </span>
+              {/if}
               {#if mode === "multi"}
                 <span class="{entry.color} font-semibold">[{entry.name}]</span>{" "}
               {/if}
