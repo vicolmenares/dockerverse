@@ -520,6 +520,8 @@ type ContainerInfo struct {
 	Health   string            `json:"health"`
 	Networks map[string]string `json:"networks"`
 	Volumes  int               `json:"volumes"`
+	Stack    string            `json:"stack"`
+	Service  string            `json:"service"`
 }
 
 type ContainerStats struct {
@@ -2072,6 +2074,8 @@ func (dm *DockerManager) GetAllContainers(ctx context.Context) ([]ContainerInfo,
 					Health:   health,
 					Networks: networks,
 					Volumes:  len(c.Mounts),
+					Stack:    c.Labels["com.docker.compose.project"],
+					Service:  c.Labels["com.docker.compose.service"],
 				}
 
 				// Check state changes for notifications
