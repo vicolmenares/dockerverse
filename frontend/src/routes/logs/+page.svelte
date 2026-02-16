@@ -16,6 +16,11 @@
     Wifi,
     WifiOff,
     ChevronRight,
+    ChevronDown,
+    Layers,
+    Folder,
+    CheckSquare,
+    Package,
   } from "lucide-svelte";
   import { containers } from "$lib/stores/docker";
   import { language } from "$lib/stores/docker";
@@ -30,17 +35,6 @@
     containers: Container[];
     isCompose: boolean; // true for Docker Compose stacks, false for standalone group
     isExpanded?: boolean;
-  }
-
-  // Enhanced Container interface
-  interface Container {
-    id: string;
-    name: string;
-    hostId: string;
-    state: 'running' | 'exited' | 'paused' | 'restarting';
-    stack?: string; // com.docker.compose.project
-    service?: string; // com.docker.compose.service
-    labels?: Record<string, string>;
   }
 
   // Host interface
@@ -130,11 +124,12 @@
 
     // Group by stack label
     containers.forEach(c => {
-      if (c.stack) {
-        if (!byStack.has(c.stack)) {
-          byStack.set(c.stack, []);
+      const stackLabel = c.labels?.['com.docker.compose.project'];
+      if (stackLabel) {
+        if (!byStack.has(stackLabel)) {
+          byStack.set(stackLabel, []);
         }
-        byStack.get(c.stack)!.push(c);
+        byStack.get(stackLabel)!.push(c);
       } else {
         standalone.push(c);
       }
@@ -180,11 +175,15 @@
    * Select all containers in a stack
    */
   function selectAllInStack(stackName: string) {
-    const stack = groupedContainers.find(s => s.name === stackName);
+    const stack = groupedContainers.find((s: DockerStack) => s.name === stackName);
     if (!stack) return;
 
-    stack.containers.forEach(c => {
-      selectedContainers.add(containerKey(c));
+    stack.containers.forEach((c: Container) => {
+      const key = containerKey(c);
+      if (!selectedContainers.has(key)) {
+        selectedContainers.add(key);
+        startStream(c);
+      }
     });
     selectedContainers = new Set(selectedContainers);
   }
@@ -197,7 +196,7 @@
   );
 
   // Derived: containers grouped by stack (host-filtered)
-  let groupedContainers = $derived(() => {
+  let groupedContainers = $derived.by(() => {
     const filtered = selectedHost === 'all'
       ? $containers
       : $containers.filter(c => c.hostId === selectedHost);
@@ -511,25 +510,114 @@
         </div>
       </div>
 
-      <!-- Container List -->
-      <div class="flex-1 overflow-y-auto p-2 space-y-0.5">
-        {#each filteredContainers as c}
-          {@const key = containerKey(c)}
-          {@const isSelected = selectedContainers.has(key)}
-          <button
-            class="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-left transition-colors {isSelected ? 'bg-primary/10 border border-primary/30' : 'hover:bg-background-tertiary'}"
-            onclick={() => toggleContainer(c)}
-          >
-            <span class="w-2 h-2 rounded-full flex-shrink-0 {c.state === 'running' ? 'bg-running' : 'bg-stopped'}"></span>
-            <div class="min-w-0 flex-1">
-              <p class="text-xs font-medium text-foreground truncate">{c.name}</p>
-              <p class="text-[10px] text-foreground-muted truncate">{c.image}</p>
+      <!-- Stacks and containers list -->
+      <div class="flex-1 overflow-auto px-2 py-2 space-y-1">
+        {#each groupedContainers as stack}
+          <div class="stack-group" data-stack={stack.name}>
+            <!-- Stack header -->
+            <div class="w-full flex items-center gap-2 px-3 py-2 rounded hover:bg-background-tertiary transition-colors group">
+              <button
+                onclick={() => toggleStack(stack.name)}
+                class="flex items-center gap-2 flex-1"
+                aria-expanded={stack.isExpanded}
+                aria-label="Toggle {stack.name}"
+              >
+                <!-- Expand/collapse icon -->
+                {#if stack.isExpanded}
+                  <ChevronDown class="w-4 h-4 text-foreground-muted flex-shrink-0 transition-transform" />
+                {:else}
+                  <ChevronRight class="w-4 h-4 text-foreground-muted flex-shrink-0 transition-transform" />
+                {/if}
+
+                <!-- Stack icon -->
+                {#if stack.isCompose}
+                  <Layers class="w-4 h-4 text-primary flex-shrink-0" />
+                {:else}
+                  <Folder class="w-4 h-4 text-foreground-muted flex-shrink-0" />
+                {/if}
+
+                <!-- Stack name with count -->
+                <span class="flex-1 text-left text-sm font-medium group-hover:text-primary transition-colors">
+                  {stack.name}
+                  <span class="text-foreground-muted font-normal ml-1">
+                    ({stack.containers.length})
+                  </span>
+                </span>
+              </button>
+
+              <!-- Select all in stack -->
+              <button
+                onclick={(e) => {
+                  e.stopPropagation();
+                  selectAllInStack(stack.name);
+                }}
+                class="opacity-0 group-hover:opacity-100 transition-opacity p-1 hover:bg-primary/20 rounded"
+                title="Select all containers in {stack.name}"
+                aria-label="Select all in {stack.name}"
+              >
+                <CheckSquare class="w-3.5 h-3.5 text-primary" />
+              </button>
             </div>
-            {#if isSelected}
-              <Check class="w-3.5 h-3.5 text-primary flex-shrink-0" />
+
+            <!-- Containers (shown when expanded) -->
+            {#if stack.isExpanded}
+              <div class="ml-6 mt-1 space-y-0.5 animate-in slide-in-from-top-2">
+                {#each stack.containers as container}
+                  {@const key = containerKey(container)}
+                  {@const serviceLabel = container.labels?.['com.docker.compose.service']}
+                  <label
+                    class="flex items-center gap-2 px-3 py-1.5 rounded hover:bg-background-tertiary cursor-pointer group transition-all {selectedContainers.has(key) ? 'bg-primary/10' : ''}"
+                  >
+                    <!-- Checkbox -->
+                    <input
+                      type="checkbox"
+                      checked={selectedContainers.has(key)}
+                      onchange={() => toggleContainer(container)}
+                      class="w-3.5 h-3.5 accent-primary focus:ring-2 focus:ring-primary focus:ring-offset-1 focus:ring-offset-background-secondary rounded"
+                      aria-label="Select {container.name}"
+                    />
+
+                    <!-- Status indicator -->
+                    <div
+                      class="w-2 h-2 rounded-full flex-shrink-0"
+                      class:bg-running={container.state === 'running'}
+                      class:bg-stopped={container.state === 'exited'}
+                      class:bg-paused={container.state === 'paused'}
+                      class:bg-primary={container.state === 'restarting'}
+                      class:animate-pulse={container.state === 'restarting'}
+                      title={container.state}
+                    ></div>
+
+                    <!-- Container name -->
+                    <span class="flex-1 text-sm group-hover:text-primary transition-colors truncate" title={container.name}>
+                      {container.name}
+                    </span>
+
+                    <!-- Service badge (if from Compose) -->
+                    {#if serviceLabel}
+                      <span class="px-1.5 py-0.5 text-xs bg-background-tertiary text-foreground-muted rounded border border-border">
+                        {serviceLabel}
+                      </span>
+                    {/if}
+                  </label>
+                {/each}
+              </div>
             {/if}
-          </button>
+          </div>
         {/each}
+
+        <!-- Empty state -->
+        {#if groupedContainers.length === 0}
+          <div class="flex flex-col items-center justify-center py-8 text-center">
+            <Package class="w-12 h-12 text-foreground-muted mb-3" />
+            <p class="text-sm text-foreground-muted">
+              No containers found
+              {#if selectedHost !== 'all'}
+                on {hosts.find(h => h.id === selectedHost)?.name}
+              {/if}
+            </p>
+          </div>
+        {/if}
       </div>
     </div>
 
@@ -648,3 +736,25 @@
     </div>
   </div>
 </div>
+
+<style>
+  @keyframes slide-in-from-top-2 {
+    from {
+      opacity: 0;
+      transform: translateY(-8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .animate-in {
+    animation-duration: 200ms;
+    animation-timing-function: ease-out;
+  }
+
+  .slide-in-from-top-2 {
+    animation-name: slide-in-from-top-2;
+  }
+</style>
