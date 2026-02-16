@@ -23,6 +23,7 @@ import (
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/compress"
@@ -2508,6 +2509,192 @@ func (dm *DockerManager) GetContainerLogs(ctx context.Context, hostID, container
 	return cli.ContainerLogs(ctx, containerID, options)
 }
 
+// updateContainerImage updates a container using health check validation approach.
+// This implements a safe update strategy with minimal downtime:
+// 1. Pull new image
+// 2. Create temporary container (no ports) to validate image
+// 3. Health check validation (10-30s timeout)
+// 4. If healthy: remove temp → stop old → create new → start
+// 5. If unhealthy: remove temp → keep old running
+func (dm *DockerManager) updateContainerImage(ctx context.Context, hostID, containerID string) error {
+	cli, err := dm.GetClient(hostID)
+	if err != nil {
+		return fmt.Errorf("get docker client: %w", err)
+	}
+
+	// Step 1: Inspect current container to get configuration
+	log.Printf("[Update] Step 1: Inspecting container %s on host %s", containerID, hostID)
+	inspect, err := cli.ContainerInspect(ctx, containerID)
+	if err != nil {
+		return fmt.Errorf("inspect container: %w", err)
+	}
+
+	imageName := inspect.Config.Image
+	oldContainerName := strings.TrimPrefix(inspect.Name, "/")
+	log.Printf("[Update] Container: %s, Image: %s", oldContainerName, imageName)
+
+	// Step 2: Pull latest image
+	log.Printf("[Update] Step 2: Pulling image %s", imageName)
+	pullCtx, pullCancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer pullCancel()
+
+	pullResp, err := cli.ImagePull(pullCtx, imageName, image.PullOptions{})
+	if err != nil {
+		return fmt.Errorf("pull image: %w", err)
+	}
+	// Must read the pull response to ensure completion
+	_, _ = io.Copy(io.Discard, pullResp)
+	pullResp.Close()
+	log.Printf("[Update] Image pulled successfully")
+
+	// Step 3: Create temporary validation container (no ports, no name conflicts)
+	log.Printf("[Update] Step 3: Creating temporary validation container")
+	tempName := fmt.Sprintf("%s-validate-%d", oldContainerName, time.Now().Unix())
+
+	// Create config for temp container (similar to original but no ports)
+	tempConfig := &container.Config{
+		Image:        imageName,
+		Env:          inspect.Config.Env,
+		Cmd:          inspect.Config.Cmd,
+		Entrypoint:   inspect.Config.Entrypoint,
+		WorkingDir:   inspect.Config.WorkingDir,
+		User:         inspect.Config.User,
+		Labels:       inspect.Config.Labels,
+		Healthcheck:  inspect.Config.Healthcheck,
+	}
+
+	// Host config without port mappings
+	tempHostConfig := &container.HostConfig{
+		Binds:       inspect.HostConfig.Binds,
+		RestartPolicy: container.RestartPolicy{Name: "no"}, // No restart for temp
+		// Explicitly NO port bindings for temp container
+	}
+
+	tempCreateResp, err := cli.ContainerCreate(ctx, tempConfig, tempHostConfig, nil, nil, tempName)
+	if err != nil {
+		return fmt.Errorf("create temp container: %w", err)
+	}
+	tempID := tempCreateResp.ID
+	log.Printf("[Update] Temp container created: %s", tempID[:12])
+
+	// Cleanup function for temp container
+	cleanupTemp := func() {
+		cleanCtx, cleanCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cleanCancel()
+		cli.ContainerRemove(cleanCtx, tempID, container.RemoveOptions{Force: true})
+		log.Printf("[Update] Temp container removed: %s", tempID[:12])
+	}
+
+	// Step 4: Start temp container
+	log.Printf("[Update] Step 4: Starting temp container for validation")
+	if err := cli.ContainerStart(ctx, tempID, container.StartOptions{}); err != nil {
+		cleanupTemp()
+		return fmt.Errorf("start temp container: %w", err)
+	}
+
+	// Step 5: Health check validation (wait for healthy status or timeout)
+	log.Printf("[Update] Step 5: Validating image health (30s timeout)")
+	healthy := false
+	healthTimeout := time.After(30 * time.Second)
+	healthTicker := time.NewTicker(1 * time.Second)
+	defer healthTicker.Stop()
+
+healthCheck:
+	for {
+		select {
+		case <-healthTimeout:
+			log.Printf("[Update] Health check timeout - image validation failed")
+			break healthCheck
+		case <-healthTicker.C:
+			tempInspect, err := cli.ContainerInspect(ctx, tempID)
+			if err != nil {
+				log.Printf("[Update] Failed to inspect temp container: %v", err)
+				break healthCheck
+			}
+
+			// Check if container exited
+			if !tempInspect.State.Running {
+				if tempInspect.State.ExitCode == 0 {
+					// Container ran and exited successfully (some containers do this)
+					log.Printf("[Update] Container exited successfully (exit code 0)")
+					healthy = true
+					break healthCheck
+				}
+				log.Printf("[Update] Container exited with error (exit code %d)", tempInspect.State.ExitCode)
+				break healthCheck
+			}
+
+			// If container has health check defined, wait for it
+			if tempInspect.State.Health != nil {
+				status := tempInspect.State.Health.Status
+				log.Printf("[Update] Health status: %s", status)
+				if status == "healthy" {
+					healthy = true
+					break healthCheck
+				}
+				if status == "unhealthy" {
+					break healthCheck
+				}
+			} else {
+				// No health check defined, if running for 5s assume healthy
+				startedAt, err := time.Parse(time.RFC3339Nano, tempInspect.State.StartedAt)
+				if err == nil && time.Since(startedAt) > 5*time.Second {
+					log.Printf("[Update] No healthcheck defined, container running for 5s - assuming healthy")
+					healthy = true
+					break healthCheck
+				}
+			}
+		}
+	}
+
+	// Step 6: Decision based on health check
+	if !healthy {
+		cleanupTemp()
+		return fmt.Errorf("image validation failed: container unhealthy or crashed")
+	}
+
+	log.Printf("[Update] ✅ Image validated successfully")
+	cleanupTemp()
+
+	// Step 7: Stop old container
+	log.Printf("[Update] Step 7: Stopping old container %s", containerID[:12])
+	stopTimeout := 10
+	if err := cli.ContainerStop(ctx, containerID, container.StopOptions{Timeout: &stopTimeout}); err != nil {
+		return fmt.Errorf("stop old container: %w", err)
+	}
+
+	// Step 8: Remove old container
+	log.Printf("[Update] Step 8: Removing old container")
+	if err := cli.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true}); err != nil {
+		return fmt.Errorf("remove old container: %w", err)
+	}
+
+	// Step 9: Create new container with original configuration
+	log.Printf("[Update] Step 9: Creating new container with updated image")
+	newCreateResp, err := cli.ContainerCreate(
+		ctx,
+		inspect.Config,              // Original config
+		inspect.HostConfig,          // Original host config (with ports!)
+		nil,                         // Network config (will use default from HostConfig)
+		nil,                         // Platform
+		oldContainerName,            // Same name as before
+	)
+	if err != nil {
+		return fmt.Errorf("create new container: %w", err)
+	}
+	newID := newCreateResp.ID
+	log.Printf("[Update] New container created: %s", newID[:12])
+
+	// Step 10: Start new container
+	log.Printf("[Update] Step 10: Starting new container")
+	if err := cli.ContainerStart(ctx, newID, container.StartOptions{}); err != nil {
+		return fmt.Errorf("start new container: %w", err)
+	}
+
+	log.Printf("[Update] ✅ Container updated successfully: %s → %s", containerID[:12], newID[:12])
+	return nil
+}
+
 // =============================================================================
 // WebSocket Hub for Real-time Updates
 // =============================================================================
@@ -3463,59 +3650,13 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 		hostID := c.Params("hostId")
 		containerID := c.Params("containerId")
 
-		if watchtowerToken == "" {
-			return c.Status(400).JSON(fiber.Map{"error": "Watchtower not configured (WATCHTOWER_TOKEN not set)"})
-		}
+		// Create context with 10-minute timeout for the entire update process
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
 
-		wtURL, ok := watchtowerURLs[hostID]
-		if !ok {
-			return c.Status(400).JSON(fiber.Map{"error": "No Watchtower URL configured for host: " + hostID})
-		}
-
-		// Get the container's image name
-		ctx1, cancel1 := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel1()
-
-		cli, err := dm.GetClient(hostID)
-		if err != nil {
+		// Execute the update using the new health-check based update logic
+		if err := dm.updateContainerImage(ctx, hostID, containerID); err != nil {
 			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
-		}
-
-		inspect, err := cli.ContainerInspect(ctx1, containerID)
-		if err != nil {
-			return c.Status(500).JSON(fiber.Map{"error": "Failed to inspect container: " + err.Error()})
-		}
-
-		imageName := inspect.Config.Image
-
-		// Call Watchtower HTTP API with separate context and longer timeout
-		// Note: The ?image= parameter doesn't work reliably in all Watchtower versions
-		// Using endpoint without parameters triggers update for all containers with available updates
-		ctx2, cancel2 := context.WithTimeout(context.Background(), 60*time.Second)
-		defer cancel2()
-		updateURL := fmt.Sprintf("%s/v1/update", wtURL)
-		log.Printf("Watchtower update: URL=%s, container=%s (%s)", updateURL, containerID, imageName)
-		wtReq, err := http.NewRequestWithContext(ctx2, "POST", updateURL, nil)
-		if err != nil {
-			return c.Status(500).JSON(fiber.Map{"error": "Failed to create request: " + err.Error()})
-		}
-		wtReq.Header.Set("Authorization", "Bearer "+watchtowerToken)
-
-		httpClient := &http.Client{Timeout: 30 * time.Second}
-		resp, err := httpClient.Do(wtReq)
-		if err != nil {
-			return c.Status(502).JSON(fiber.Map{"error": "Watchtower API unreachable: " + err.Error()})
-		}
-		defer resp.Body.Close()
-
-		body, _ := io.ReadAll(resp.Body)
-
-		if resp.StatusCode != http.StatusOK {
-			return c.Status(502).JSON(fiber.Map{
-				"error":   "Watchtower returned error",
-				"status":  resp.StatusCode,
-				"details": string(body),
-			})
 		}
 
 		// Clear update cache for this container
@@ -3525,7 +3666,7 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 
 		return c.JSON(fiber.Map{
 			"success": true,
-			"message": "Update triggered for " + imageName,
+			"message": "Container updated successfully with health validation",
 		})
 	})
 
