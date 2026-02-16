@@ -3624,6 +3624,57 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 		return c.JSON(containers)
 	})
 
+	// GET /api/stacks?hostId=raspi1
+	// Returns Docker Compose stacks grouped by com.docker.compose.project label
+	protected.Get("/stacks", func(c *fiber.Ctx) error {
+		hostID := c.Query("hostId")
+		if hostID == "" {
+			return c.Status(400).JSON(fiber.Map{"error": "hostId required"})
+		}
+
+		cli, err := dm.GetClient(hostID)
+		if err != nil {
+			return c.Status(404).JSON(fiber.Map{"error": "Host not found"})
+		}
+
+		// List all containers
+		ctx := context.Background()
+		containers, err := cli.ContainerList(ctx, container.ListOptions{All: true})
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+
+		// Group by com.docker.compose.project label
+		stacks := make(map[string][]map[string]interface{})
+		standalone := []map[string]interface{}{}
+
+		for _, ctr := range containers {
+			project := ctr.Labels["com.docker.compose.project"]
+			service := ctr.Labels["com.docker.compose.service"]
+
+			containerInfo := map[string]interface{}{
+				"id":      ctr.ID,
+				"name":    strings.TrimPrefix(ctr.Names[0], "/"),
+				"state":   ctr.State,
+				"service": service,
+			}
+
+			if project != "" {
+				if _, exists := stacks[project]; !exists {
+					stacks[project] = []map[string]interface{}{}
+				}
+				stacks[project] = append(stacks[project], containerInfo)
+			} else {
+				standalone = append(standalone, containerInfo)
+			}
+		}
+
+		return c.JSON(fiber.Map{
+			"stacks":     stacks,
+			"standalone": standalone,
+		})
+	})
+
 	// Stats
 	protected.Get("/stats", func(c *fiber.Ctx) error {
 		ctx := context.Background()
