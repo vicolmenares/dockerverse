@@ -120,12 +120,90 @@
     return containerColors.get(key)!;
   }
 
+  /**
+   * Group containers by Docker Compose stack
+   * Returns array of DockerStack objects
+   */
+  function groupContainersByStack(containers: Container[]): DockerStack[] {
+    const byStack = new Map<string, Container[]>();
+    const standalone: Container[] = [];
+
+    // Group by stack label
+    containers.forEach(c => {
+      if (c.stack) {
+        if (!byStack.has(c.stack)) {
+          byStack.set(c.stack, []);
+        }
+        byStack.get(c.stack)!.push(c);
+      } else {
+        standalone.push(c);
+      }
+    });
+
+    // Convert to DockerStack array, sorted alphabetically
+    const result: DockerStack[] = Array.from(byStack.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([name, containers]) => ({
+        name,
+        containers: containers.sort((a, b) => a.name.localeCompare(b.name)),
+        isCompose: true,
+        isExpanded: expandedStacks.has(name)
+      }));
+
+    // Add standalone group if any
+    if (standalone.length > 0) {
+      result.push({
+        name: 'Standalone Containers',
+        containers: standalone.sort((a, b) => a.name.localeCompare(b.name)),
+        isCompose: false,
+        isExpanded: expandedStacks.has('Standalone Containers')
+      });
+    }
+
+    return result;
+  }
+
+  /**
+   * Toggle stack expansion
+   */
+  function toggleStack(stackName: string) {
+    if (expandedStacks.has(stackName)) {
+      expandedStacks.delete(stackName);
+    } else {
+      expandedStacks.add(stackName);
+    }
+    // Trigger reactivity
+    expandedStacks = new Set(expandedStacks);
+  }
+
+  /**
+   * Select all containers in a stack
+   */
+  function selectAllInStack(stackName: string) {
+    const stack = groupedContainers.find(s => s.name === stackName);
+    if (!stack) return;
+
+    stack.containers.forEach(c => {
+      selectedContainers.add(containerKey(c));
+    });
+    selectedContainers = new Set(selectedContainers);
+  }
+
   // Filter containers by host first, then by search
   let filteredByHost = $derived(
     selectedHost === 'all'
       ? $containers
       : $containers.filter(c => c.hostId === selectedHost)
   );
+
+  // Derived: containers grouped by stack (host-filtered)
+  let groupedContainers = $derived(() => {
+    const filtered = selectedHost === 'all'
+      ? $containers
+      : $containers.filter(c => c.hostId === selectedHost);
+
+    return groupContainersByStack(filtered);
+  });
 
   let filteredContainers = $derived(
     filteredByHost.filter(
@@ -320,6 +398,12 @@
     } catch (err) {
       console.error('Failed to fetch hosts:', err);
     }
+  });
+
+  // Debug: verify stack grouping
+  $effect(() => {
+    console.log('Grouped stacks:', groupedContainers);
+    console.log('Expanded:', Array.from(expandedStacks));
   });
 
   let t = $derived({
