@@ -36,6 +36,8 @@
   } from "$lib/stores/docker";
   import HostCard from "$lib/components/HostCard.svelte";
   import ContainerCard from "$lib/components/ContainerCard.svelte";
+  import ResourceChart from "$lib/components/ResourceChart.svelte";
+  import HostFiles from "$lib/components/HostFiles.svelte";
 
   // Lazy load heavy components (xterm is ~1MB)
   let Terminal: any = $state(null);
@@ -44,6 +46,8 @@
   let eventSource: EventSource | null = null;
   let terminalContainer = $state<Container | null>(null);
   let logsContainer = $state<Container | null>(null);
+  let hostTerminal = $state<Host | null>(null);
+  let hostFiles = $state<Host | null>(null);
   let isLoading = $state(true);
   let connectionError = $state<string | null>(null);
   let viewMode = $state<"grid" | "table">("grid");
@@ -54,6 +58,13 @@
   );
   let resourceMetric = $state<"cpu" | "memory" | "network" | "restarts">("cpu");
   let showResourceLeaderboard = $state(true);
+  let expandedHostId = $state<string | null>(null);
+  let pageSize = $state(
+    typeof localStorage !== "undefined"
+      ? parseInt(localStorage.getItem("dockerverse_pageSize") || "12", 10)
+      : 12,
+  );
+  let currentPage = $state(1);
   let topN = $state(
     typeof localStorage !== "undefined"
       ? parseInt(localStorage.getItem("dockerverse_topN") || "10", 10)
@@ -62,7 +73,11 @@
   $effect(() => {
     localStorage.setItem("dockerverse_topN", String(topN));
   });
+  $effect(() => {
+    localStorage.setItem("dockerverse_pageSize", String(pageSize));
+  });
   const topNOptions = [5, 10, 15, 20, 30];
+  const pageSizeOptions = [9, 12, 18, 24];
 
   $effect(() => {
     localStorage.setItem("dockerverse_filterState", filterState);
@@ -84,6 +99,25 @@
     $containers.filter((c) => c.state !== "running").length,
   );
   let onlineHosts = $derived($hosts.filter((h) => h.online).length);
+  let expandedHost = $derived(
+    expandedHostId
+      ? $hosts.find((h) => h.id === expandedHostId) || null
+      : null,
+  );
+
+  function toggleFilter(next: "all" | "running" | "stopped" | "updates") {
+    filterState = filterState === next ? "all" : next;
+  }
+
+  function toggleHostResources(hostId: string) {
+    expandedHostId = expandedHostId === hostId ? null : hostId;
+  }
+
+  $effect(() => {
+    filterState;
+    $selectedHost;
+    currentPage = 1;
+  });
 
   // Filtered containers
   let displayContainers = $derived.by(() => {
@@ -100,6 +134,36 @@
     }
     return result;
   });
+
+  let totalPages = $derived(
+    Math.max(1, Math.ceil(displayContainers.length / pageSize)),
+  );
+  $effect(() => {
+    if (currentPage > totalPages) currentPage = totalPages;
+  });
+  let pagedContainers = $derived.by(() => {
+    const start = (currentPage - 1) * pageSize;
+    return displayContainers.slice(start, start + pageSize);
+  });
+  let pageNumbers = $derived.by(() => {
+    const maxButtons = 5;
+    const total = totalPages;
+    if (total <= maxButtons) {
+      return Array.from({ length: total }, (_, i) => i + 1);
+    }
+    const half = Math.floor(maxButtons / 2);
+    let start = Math.max(1, currentPage - half);
+    let end = Math.min(total, start + maxButtons - 1);
+    if (end - start + 1 < maxButtons) {
+      start = Math.max(1, end - maxButtons + 1);
+    }
+    return Array.from({ length: end - start + 1 }, (_, i) => start + i);
+  });
+
+  function goToPage(page: number) {
+    const clamped = Math.min(Math.max(1, page), totalPages);
+    currentPage = clamped;
+  }
 
   // Top 14 containers by selected resource metric
   let topContainers = $derived.by(() => {
@@ -199,12 +263,17 @@
     loadData();
   }
 
-  onMount(async () => {
-    await loadData();
-    startStatsStream();
+  onMount(() => {
+    let active = true;
 
-    // Check for image updates after initial load
-    checkForUpdates();
+    void (async () => {
+      await loadData();
+      if (!active) return;
+      startStatsStream();
+
+      // Check for image updates after initial load
+      checkForUpdates();
+    })();
 
     // Listen for refresh events from header
     window.addEventListener("dockerverse:refresh", handleRefresh);
@@ -213,6 +282,7 @@
     const dataInterval = setInterval(loadData, 30000);
     const updateInterval = setInterval(checkForUpdates, 15 * 60 * 1000);
     return () => {
+      active = false;
       clearInterval(dataInterval);
       clearInterval(updateInterval);
       window.removeEventListener("dockerverse:refresh", handleRefresh);
@@ -278,6 +348,13 @@
       Terminal = (await import("$lib/components/Terminal.svelte")).default;
     }
     terminalContainer = container;
+  }
+
+  async function openHostTerminal(host: Host) {
+    if (!Terminal) {
+      Terminal = (await import("$lib/components/Terminal.svelte")).default;
+    }
+    hostTerminal = host;
   }
 
   async function openLogs(container: Container) {
@@ -535,9 +612,37 @@
       {:else}
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
           {#each $hosts as host}
-            <HostCard {host} />
+            <HostCard
+              {host}
+              resourcesOpen={expandedHostId === host.id}
+              onToggleResources={toggleHostResources}
+              onOpenHostTerminal={openHostTerminal}
+              onOpenHostFiles={(target) => (hostFiles = target)}
+            />
           {/each}
         </div>
+
+        {#if expandedHost}
+          <div class="mt-5 card p-5 bg-gradient-to-br from-background-secondary/70 via-background-secondary/40 to-background-tertiary/10">
+            <div class="flex items-center justify-between mb-3">
+              <div class="flex items-center gap-3">
+                <div class="p-2.5 bg-background-tertiary/60 rounded-lg">
+                  <Server class="w-4.5 h-4.5 text-primary" />
+                </div>
+                <div>
+                  <p class="text-sm font-semibold text-foreground">
+                    {expandedHost.name}
+                  </p>
+                  <p class="text-xs text-foreground-muted">{expandedHost.id}</p>
+                </div>
+              </div>
+              <span class="text-xs text-foreground-muted">
+                {$language === "es" ? "Recursos en vivo" : "Live resources"}
+              </span>
+            </div>
+            <ResourceChart host={expandedHost} />
+          </div>
+        {/if}
       {/if}
     </section>
 
@@ -605,7 +710,7 @@
         </div>
       {:else}
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {#each displayContainers as container (container.id)}
+          {#each pagedContainers as container (container.id)}
             <!-- svelte-ignore a11y_no_static_element_interactions -->
             <div onmouseenter={preloadComponents}>
               <ContainerCard
@@ -617,6 +722,62 @@
             </div>
           {/each}
         </div>
+
+        {#if displayContainers.length > pageSize}
+          <div class="mt-6 card px-4 py-3 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+            <div class="text-xs text-foreground-muted">
+              {#if displayContainers.length > 0}
+                {#if $language === "es"}
+                  Mostrando {(currentPage - 1) * pageSize + 1}-{Math.min(currentPage * pageSize, displayContainers.length)} de {displayContainers.length}
+                {:else}
+                  Showing {(currentPage - 1) * pageSize + 1}-{Math.min(currentPage * pageSize, displayContainers.length)} of {displayContainers.length}
+                {/if}
+              {/if}
+            </div>
+            <div class="flex items-center justify-center gap-1">
+              <button
+                class="px-2.5 py-1 rounded-md text-xs font-medium border border-border {currentPage === 1
+                  ? 'text-foreground-muted'
+                  : 'hover:bg-background-tertiary'}"
+                onclick={() => goToPage(currentPage - 1)}
+                disabled={currentPage === 1}
+              >
+                {$language === "es" ? "Anterior" : "Prev"}
+              </button>
+              {#each pageNumbers as page}
+                <button
+                  class="w-8 h-8 text-xs font-semibold rounded-lg border border-border transition-colors {page === currentPage
+                    ? 'bg-primary text-white'
+                    : 'text-foreground-muted hover:text-foreground hover:bg-background-tertiary'}"
+                  onclick={() => goToPage(page)}
+                >
+                  {page}
+                </button>
+              {/each}
+              <button
+                class="px-2.5 py-1 rounded-md text-xs font-medium border border-border {currentPage === totalPages
+                  ? 'text-foreground-muted'
+                  : 'hover:bg-background-tertiary'}"
+                onclick={() => goToPage(currentPage + 1)}
+                disabled={currentPage === totalPages}
+              >
+                {$language === "es" ? "Siguiente" : "Next"}
+              </button>
+            </div>
+            <div class="flex items-center justify-end gap-1">
+              {#each pageSizeOptions as size}
+                <button
+                  class="px-2.5 py-1 rounded-md text-xs font-medium border border-border {pageSize === size
+                    ? 'bg-background-tertiary text-foreground'
+                    : 'text-foreground-muted hover:text-foreground'}"
+                  onclick={() => (pageSize = size)}
+                >
+                  {size}
+                </button>
+              {/each}
+            </div>
+          </div>
+        {/if}
       {/if}
     </section>
   </main>
@@ -630,6 +791,15 @@
     />
   {/if}
 
+  {#if hostTerminal && Terminal}
+    {@const TerminalComponent = Terminal}
+    <TerminalComponent
+      host={hostTerminal}
+      mode="host"
+      onClose={() => (hostTerminal = null)}
+    />
+  {/if}
+
   <!-- Logs Modal (Lazy Loaded) -->
   {#if logsContainer && LogViewer}
     {@const LogViewerComponent = LogViewer}
@@ -637,5 +807,9 @@
       container={logsContainer}
       onClose={() => (logsContainer = null)}
     />
+  {/if}
+
+  {#if hostFiles}
+    <HostFiles host={hostFiles} onClose={() => (hostFiles = null)} />
   {/if}
 </div>

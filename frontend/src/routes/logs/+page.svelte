@@ -84,7 +84,7 @@
       : allLogs,
   );
 
-  let logAreaEl: HTMLDivElement;
+  let logAreaEl = $state<HTMLDivElement | null>(null);
 
   function containerKey(c: Container): string {
     return `${c.id}@${c.hostId}`;

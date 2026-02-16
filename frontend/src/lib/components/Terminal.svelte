@@ -15,12 +15,29 @@
     Settings,
     Zap,
   } from "lucide-svelte";
-  import type { Container } from "$lib/api/docker";
-  import { createTerminalWebSocket } from "$lib/api/docker";
+  import type { Container, Host } from "$lib/api/docker";
+  import { createHostTerminalConnection, createTerminalWebSocket } from "$lib/api/docker";
   import { language } from "$lib/stores/docker";
 
-  let { container, onClose }: { container: Container; onClose: () => void } =
-    $props();
+  let {
+    container,
+    host,
+    mode = "container",
+    onClose,
+  }: {
+    container?: Container;
+    host?: Host;
+    mode?: "container" | "host";
+    onClose: () => void;
+  } = $props();
+
+  let isHostMode = $derived(mode === "host");
+  const targetName = $derived(
+    isHostMode ? host?.name || "Host" : container?.name || "Container",
+  );
+  const targetHostId = $derived(
+    isHostMode ? host?.id || "" : container?.hostId || "",
+  );
 
   let terminalElement: HTMLDivElement;
   let terminal: any;
@@ -418,14 +435,20 @@
     error = null;
 
     try {
-      ws = createTerminalWebSocket(container.hostId, container.id);
+      if (isHostMode && host) {
+        ws = createHostTerminalConnection(host.id);
+      } else if (container) {
+        ws = createTerminalWebSocket(container.hostId, container.id);
+      } else {
+        throw new Error("Missing terminal target");
+      }
 
       ws.onopen = () => {
         isConnecting = false;
         connectionStatus = "connected";
         reconnectAttempts = 0;
         terminal.writeln(
-          `\x1b[32m● ${t.connected} to ${container.name}\x1b[0m\r\n`,
+          `\x1b[32m● ${t.connected} to ${targetName}\x1b[0m\r\n`,
         );
 
         // Send initial resize
@@ -487,9 +510,14 @@
     }
   }
 
-  onMount(async () => {
-    await initTerminal();
-    connectWebSocket();
+  onMount(() => {
+    let active = true;
+
+    void (async () => {
+      await initTerminal();
+      if (!active) return;
+      connectWebSocket();
+    })();
 
     // Window resize handler
     const resizeObserver = new ResizeObserver(() => {
@@ -498,6 +526,7 @@
     resizeObserver.observe(terminalElement);
 
     return () => {
+      active = false;
       resizeObserver.disconnect();
     };
   });
@@ -593,7 +622,7 @@
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `terminal_${container.name}_${new Date().toISOString().slice(0, 10)}.txt`;
+    a.download = `terminal_${targetName}_${new Date().toISOString().slice(0, 10)}.txt`;
     a.click();
     URL.revokeObjectURL(url);
   }
@@ -678,8 +707,10 @@
       </div>
       <span class="text-sm font-medium text-foreground flex items-center gap-2">
         <Zap class="w-3.5 h-3.5 {statusColor}" />
-        {container.name}
-        <span class="text-foreground-muted">@{container.hostId}</span>
+        {targetName}
+        {#if targetHostId}
+          <span class="text-foreground-muted">@{targetHostId}</span>
+        {/if}
       </span>
     </div>
 

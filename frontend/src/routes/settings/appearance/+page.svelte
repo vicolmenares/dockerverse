@@ -116,6 +116,8 @@
         <button
           class="relative w-11 h-6 rounded-full transition-colors {showStopped ? 'bg-primary' : 'bg-background-tertiary'}"
           onclick={() => { showStopped = !showStopped; saveSetting('showStopped', showStopped); }}
+          aria-label={showStopped ? 'Disable stopped containers' : 'Enable stopped containers'}
+          title={showStopped ? 'Disable stopped containers' : 'Enable stopped containers'}
         >
           <span class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform shadow-sm {showStopped ? 'translate-x-5' : ''}"></span>
         </button>
@@ -130,6 +132,8 @@
         <button
           class="relative w-11 h-6 rounded-full transition-colors {highlightUpdates ? 'bg-primary' : 'bg-background-tertiary'}"
           onclick={() => { highlightUpdates = !highlightUpdates; saveSetting('highlightUpdates', highlightUpdates); }}
+          aria-label={highlightUpdates ? 'Disable highlight updates' : 'Enable highlight updates'}
+          title={highlightUpdates ? 'Disable highlight updates' : 'Enable highlight updates'}
         >
           <span class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform shadow-sm {highlightUpdates ? 'translate-x-5' : ''}"></span>
         </button>

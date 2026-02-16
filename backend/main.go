@@ -10,8 +10,11 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
+	"path"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -20,17 +23,21 @@ import (
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/compress"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/logger"
+	fbRecover "github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/gofiber/websocket/v2"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/go-containerregistry/pkg/crane"
+	"github.com/pkg/sftp"
 	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
 	"golang.org/x/crypto/bcrypt"
+	"golang.org/x/crypto/ssh"
 )
 
 // =============================================================================
@@ -50,20 +57,21 @@ type AppSettings struct {
 	CPUThreshold    float64 `json:"cpuThreshold"`
 	MemoryThreshold float64 `json:"memoryThreshold"`
 	// Apprise configuration
-	AppriseURL      string   `json:"appriseUrl"`
-	AppriseKey      string   `json:"appriseKey"`
-	TelegramEnabled bool     `json:"telegramEnabled"`
-	TelegramURL     string   `json:"telegramUrl"`
-	EmailEnabled    bool     `json:"emailEnabled"`
-	NotifyOnStop    bool     `json:"notifyOnStop"`
-	NotifyOnStart   bool     `json:"notifyOnStart"`
-	NotifyOnHighCPU bool     `json:"notifyOnHighCpu"`
-	NotifyOnHighMem bool     `json:"notifyOnHighMem"`
-	NotifyTags      []string `json:"notifyTags"`
+	AppriseURL         string   `json:"appriseUrl"`
+	AppriseKey         string   `json:"appriseKey"`
+	TelegramEnabled    bool     `json:"telegramEnabled"`
+	TelegramURL        string   `json:"telegramUrl"`
+	EmailEnabled       bool     `json:"emailEnabled"`
+	NotifyOnStop       bool     `json:"notifyOnStop"`
+	NotifyOnStart      bool     `json:"notifyOnStart"`
+	NotifyOnHighCPU    bool     `json:"notifyOnHighCpu"`
+	NotifyOnHighMem    bool     `json:"notifyOnHighMem"`
+	AlertsBootstrapped bool     `json:"alertsBootstrapped,omitempty"`
+	NotifyTags         []string `json:"notifyTags"`
 }
 
 var hosts = parseHostsConfig(getEnvOrDefault("DOCKER_HOSTS",
-	"raspi1:Raspi Main:unix:///var/run/docker.sock:local"))
+	"raspi1:Raspeberry Main:unix:///var/run/docker.sock:local"))
 
 // Host health tracking for backoff on unreachable hosts
 var (
@@ -131,6 +139,100 @@ func parseHostsConfig(config string) []HostConfig {
 	return result
 }
 
+func deriveSSHHost(h HostConfig) string {
+	if h.IsLocal {
+		// If Address is an IP, use it; else fallback to host.docker.internal
+		// `host.docker.internal` is provided via extra_hosts mapping in compose
+		addr := strings.TrimSpace(h.Address)
+		if addr != "" && net.ParseIP(addr) != nil {
+			return addr
+		}
+		return "host.docker.internal"
+	}
+	addr := strings.TrimSpace(h.Address)
+	if addr == "" {
+		return h.ID
+	}
+	if parts := strings.SplitN(addr, "://", 2); len(parts) == 2 {
+		addr = parts[1]
+	}
+	if parts := strings.SplitN(addr, "/", 2); len(parts) == 2 {
+		addr = parts[0]
+	}
+	if parts := strings.SplitN(addr, "@", 2); len(parts) == 2 {
+		addr = parts[1]
+	}
+	if parts := strings.SplitN(addr, ":", 2); len(parts) == 2 {
+		addr = parts[0]
+	}
+	if addr == "" {
+		return h.ID
+	}
+	return addr
+}
+
+// deriveSSHCandidates returns a list of hostname/IP candidates to try when dialing SSH.
+// This allows the backend to attempt multiple fallbacks (explicit IP, host.docker.internal,
+// plain id, etc.) which helps in containerized environments where DNS/resolution may differ.
+func deriveSSHCandidates(h HostConfig) []string {
+	var cands []string
+	addr := strings.TrimSpace(h.Address)
+
+	if h.IsLocal {
+		// If Address is an IP, try it first
+		if addr != "" && net.ParseIP(addr) != nil {
+			cands = append(cands, addr)
+		}
+		// Always try host.docker.internal as a fallback (provided via extra_hosts)
+		cands = append(cands, "host.docker.internal")
+	} else {
+		// Try to extract host from address (strip scheme, path, user)
+		if addr != "" {
+			if parts := strings.SplitN(addr, "://", 2); len(parts) == 2 {
+				addr = parts[1]
+			}
+			if parts := strings.SplitN(addr, "/", 2); len(parts) == 2 {
+				addr = parts[0]
+			}
+			if parts := strings.SplitN(addr, "@", 2); len(parts) == 2 {
+				addr = parts[1]
+			}
+			if parts := strings.SplitN(addr, ":", 2); len(parts) == 2 {
+				addr = parts[0]
+			}
+			if addr != "" {
+				cands = append(cands, addr)
+			}
+		}
+		// Always also try the host ID (may resolve via internal DNS)
+		cands = append(cands, h.ID)
+	}
+
+	// Ensure uniqueness while preserving order
+	seen := make(map[string]struct{})
+	uniq := make([]string, 0, len(cands))
+	for _, s := range cands {
+		if s == "" {
+			continue
+		}
+		if _, ok := seen[s]; ok {
+			continue
+		}
+		seen[s] = struct{}{}
+		uniq = append(uniq, s)
+	}
+	return uniq
+}
+
+func getHostConfigByID(hostID string) *HostConfig {
+	for _, h := range hosts {
+		if h.ID == hostID {
+			return &h
+		}
+	}
+	return nil
+}
+
 func isHostHealthy(hostID string) bool {
 	hostHealthMu.RLock()
 	defer hostHealthMu.RUnlock()
@@ -183,13 +285,162 @@ var (
 	smtp2goAPIKey  = getEnvOrDefault("SMTP2GO_API_KEY", "api-0BCAE7D34EA545FE9041EDA3EEF6C8DD")
 	smtpFrom       = getEnvOrDefault("SMTP_FROM", "docker-verse@nerdslabs.com")
 	smtpSenderName = getEnvOrDefault("SMTP_SENDER_NAME", "DockerVerse")
+	sshUser        = getEnvOrDefault("SSH_USER", "pi")
+	sshPort        = getEnvOrDefault("SSH_PORT", "22")
+	sshKeyPath     = getEnvOrDefault("SSH_KEY_PATH", "/data/ssh/id_rsa")
+	sshKeyPass     = getEnvOrDefault("SSH_KEY_PASSPHRASE", "")
 )
+
+var (
+	sshAuthOnce   sync.Once
+	sshAuthMethod ssh.AuthMethod
+	sshAuthErr    error
+)
+
+func getSSHAuthMethod() (ssh.AuthMethod, error) {
+	sshAuthOnce.Do(func() {
+		keyData, err := os.ReadFile(sshKeyPath)
+		if err != nil {
+			sshAuthErr = fmt.Errorf("read ssh key: %w", err)
+			return
+		}
+		var signer ssh.Signer
+		if sshKeyPass != "" {
+			signer, err = ssh.ParsePrivateKeyWithPassphrase(keyData, []byte(sshKeyPass))
+		} else {
+			signer, err = ssh.ParsePrivateKey(keyData)
+		}
+		if err != nil {
+			sshAuthErr = fmt.Errorf("parse ssh key: %w", err)
+			return
+		}
+		sshAuthMethod = ssh.PublicKeys(signer)
+	})
+	return sshAuthMethod, sshAuthErr
+}
+
+func dialSSH(hostID string) (*ssh.Client, error) {
+	h := getHostConfigByID(hostID)
+	if h == nil {
+		return nil, fmt.Errorf("unknown host: %s", hostID)
+	}
+	candidates := deriveSSHCandidates(*h)
+	if len(candidates) == 0 {
+		return nil, fmt.Errorf("ssh host not configured for %s", hostID)
+	}
+	authMethod, err := getSSHAuthMethod()
+	if err != nil {
+		return nil, err
+	}
+	config := &ssh.ClientConfig{
+		User:            sshUser,
+		Auth:            []ssh.AuthMethod{authMethod},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         8 * time.Second,
+	}
+	var lastErr error
+	for _, cand := range candidates {
+		addr := net.JoinHostPort(cand, sshPort)
+		log.Printf("dialSSH: hostID=%s trying candidate=%s addr=%s", hostID, cand, addr)
+		conn, err := net.DialTimeout("tcp", addr, 8*time.Second)
+		if err != nil {
+			log.Printf("dialSSH: candidate failed hostID=%s addr=%s err=%v", hostID, addr, err)
+			lastErr = err
+			continue
+		}
+		clientConn, chans, reqs, err := ssh.NewClientConn(conn, addr, config)
+		if err != nil {
+			log.Printf("dialSSH: ssh handshake failed hostID=%s addr=%s err=%v", hostID, addr, err)
+			lastErr = err
+			conn.Close()
+			continue
+		}
+		log.Printf("dialSSH: hostID=%s connected via %s", hostID, addr)
+		return ssh.NewClient(clientConn, chans, reqs), nil
+	}
+	if lastErr != nil {
+		return nil, fmt.Errorf("all ssh candidates failed for %s: last error: %w", hostID, lastErr)
+	}
+	return nil, fmt.Errorf("no ssh candidates available for %s", hostID)
+}
+
+func runSSHCommand(hostID, cmd string) (string, error) {
+	client, err := dialSSH(hostID)
+	if err != nil {
+		return "", err
+	}
+	defer client.Close()
+
+	session, err := client.NewSession()
+	if err != nil {
+		return "", err
+	}
+	defer session.Close()
+
+	var buf bytes.Buffer
+	session.Stdout = &buf
+	session.Stderr = &buf
+	if err := session.Run(cmd); err != nil {
+		return buf.String(), err
+	}
+	return buf.String(), nil
+}
 
 func getEnvOrDefault(key, defaultVal string) string {
 	if val := os.Getenv(key); val != "" {
 		return val
 	}
 	return defaultVal
+}
+
+// isAdminRequest returns true if the request is from localhost or contains a valid admin JWT.
+func isAdminRequest(c *fiber.Ctx) bool {
+	ip := c.IP()
+	if ip == "127.0.0.1" || ip == "::1" || strings.HasPrefix(ip, "::ffff:127.0.0.1") {
+		return true
+	}
+	// Check token
+	auth := c.Get("Authorization")
+	var tokenStr string
+	if auth != "" {
+		tokenStr = strings.TrimPrefix(auth, "Bearer ")
+	} else {
+		tokenStr = c.Query("token")
+	}
+	if tokenStr == "" {
+		return false
+	}
+	claims, err := validateToken(tokenStr)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(claims.Role, "admin")
+}
+
+// tailFileLines returns the last `n` lines from the specified file.
+func tailFileLines(path string, n int) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", fmt.Errorf("open log file: %w", err)
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	buf := make([]string, 0, n)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if len(buf) < n {
+			buf = append(buf, line)
+		} else {
+			// rotate
+			copy(buf[0:], buf[1:])
+			buf[n-1] = line
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return "", fmt.Errorf("read log file: %w", err)
+	}
+	return strings.Join(buf, "\n"), nil
 }
 
 func generateSecret() string {
@@ -299,6 +550,14 @@ type DiskInfo struct {
 	FreeBytes  uint64 `json:"freeBytes"`
 }
 
+type HostFileEntry struct {
+	Name    string `json:"name"`
+	Path    string `json:"path"`
+	Size    int64  `json:"size"`
+	ModTime int64  `json:"modTime"`
+	IsDir   bool   `json:"isDir"`
+}
+
 type HostStats struct {
 	ID             string     `json:"id"`
 	Name           string     `json:"name"`
@@ -309,6 +568,7 @@ type HostStats struct {
 	MemoryUsed     uint64     `json:"memoryUsed"`
 	MemoryTotal    uint64     `json:"memoryTotal"`
 	Online         bool       `json:"online"`
+	SSHHost        string     `json:"sshHost"`
 	Disks          []DiskInfo `json:"disks"`
 }
 
@@ -322,8 +582,8 @@ type Environment struct {
 	ID             string `json:"id"`
 	Name           string `json:"name"`
 	ConnectionType string `json:"connectionType"` // "socket" or "tcp"
-	Address        string `json:"address"`         // socket path or host:port
-	Protocol       string `json:"protocol"`        // "http" or "https"
+	Address        string `json:"address"`        // socket path or host:port
+	Protocol       string `json:"protocol"`       // "http" or "https"
 	IsLocal        bool   `json:"isLocal"`
 	Labels         string `json:"labels"`
 	Status         string `json:"status"` // "online", "offline", "unknown"
@@ -333,8 +593,8 @@ type Environment struct {
 	UpdateSchedule string `json:"updateSchedule"` // cron expression
 	ImagePrune     bool   `json:"imagePrune"`
 	// Feature flags
-	EventTracking  bool `json:"eventTracking"`
-	VulnScanning   bool `json:"vulnScanning"`
+	EventTracking bool `json:"eventTracking"`
+	VulnScanning  bool `json:"vulnScanning"`
 }
 
 // EnvironmentStore manages environment persistence
@@ -520,13 +780,14 @@ func NewUserStore() *UserStore {
 		Users:      make(map[string]*User),
 		resetCodes: make(map[string]*ResetCode),
 		Settings: AppSettings{
-			CPUThreshold:    80.0,
-			MemoryThreshold: 80.0,
-			AppriseURL:      appriseURL,
-			AppriseKey:      "dockerverse",
-			NotifyOnStop:    true,
-			NotifyOnHighCPU: true,
-			NotifyOnHighMem: true,
+			CPUThreshold:       80.0,
+			MemoryThreshold:    80.0,
+			AppriseURL:         appriseURL,
+			AppriseKey:         "dockerverse",
+			NotifyOnStop:       true,
+			NotifyOnHighCPU:    false,
+			NotifyOnHighMem:    false,
+			AlertsBootstrapped: true,
 		},
 	}
 	store.load()
@@ -572,6 +833,12 @@ func (s *UserStore) load() {
 		return
 	}
 	json.Unmarshal(data, s)
+	if !s.Settings.AlertsBootstrapped {
+		s.Settings.NotifyOnHighCPU = false
+		s.Settings.NotifyOnHighMem = false
+		s.Settings.AlertsBootstrapped = true
+		s.save()
+	}
 }
 
 func (s *UserStore) save() {
@@ -584,7 +851,15 @@ func (s *UserStore) save() {
 func (s *UserStore) GetUser(username string) *User {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.Users[username]
+
+	// Case-insensitive username lookup
+	usernameLower := strings.ToLower(username)
+	for _, u := range s.Users {
+		if strings.ToLower(u.Username) == usernameLower {
+			return u
+		}
+	}
+	return nil
 }
 
 // SafeUser returns a copy without sensitive fields for API responses
@@ -776,8 +1051,17 @@ func (s *UserStore) ValidateLogin(username, password string) (*User, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	user, exists := s.Users[username]
-	if !exists {
+	// Case-insensitive username lookup: find user by comparing lowercase
+	var user *User
+	usernameLower := strings.ToLower(username)
+	for _, u := range s.Users {
+		if strings.ToLower(u.Username) == usernameLower {
+			user = u
+			break
+		}
+	}
+
+	if user == nil {
 		return nil, fmt.Errorf("invalid credentials")
 	}
 
@@ -1935,7 +2219,7 @@ var (
 	diskCacheAt = make(map[string]time.Time)
 )
 
-func getDiskInfo(ctx context.Context, cli *client.Client, hostID string) []DiskInfo {
+func getDiskInfo(ctx context.Context, hostID string) []DiskInfo {
 	// Check cache
 	diskCacheMu.RLock()
 	if cached, ok := diskCache[hostID]; ok {
@@ -1946,62 +2230,27 @@ func getDiskInfo(ctx context.Context, cli *client.Client, hostID string) []DiskI
 	}
 	diskCacheMu.RUnlock()
 
-	// Run df inside a busybox container with host root mounted read-only
-	dfCtx, dfCancel := context.WithTimeout(ctx, 15*time.Second)
-	defer dfCancel()
-
-	resp, err := cli.ContainerCreate(dfCtx, &container.Config{
-		Image: "busybox",
-		Cmd:   []string{"df", "-B1", "/hostfs"},
-	}, &container.HostConfig{
-		Binds:      []string{"/:/hostfs:ro"},
-		AutoRemove: true,
-	}, nil, nil, "")
+	output, err := runSSHCommand(hostID, "df -B1 / /mnt /media /run/media 2>/dev/null")
+	// Some systems return a non-zero exit code for `df` when some mountpoints
+	// do not exist or other non-fatal conditions occur. The SSH session will
+	// return an error in that case but may still produce valid output. Treat
+	// the output as usable if it's non-empty; only fail when there is no
+	// output to parse.
 	if err != nil {
-		log.Printf("getDiskInfo(%s): create failed: %v", hostID, err)
-		return nil
-	}
-
-	if err := cli.ContainerStart(dfCtx, resp.ID, container.StartOptions{}); err != nil {
-		log.Printf("getDiskInfo(%s): start failed: %v", hostID, err)
-		return nil
-	}
-
-	// Wait for container to finish
-	statusCh, errCh := cli.ContainerWait(dfCtx, resp.ID, container.WaitConditionNotRunning)
-	select {
-	case <-statusCh:
-	case err := <-errCh:
-		if err != nil {
-			log.Printf("getDiskInfo(%s): wait failed: %v", hostID, err)
+		if strings.TrimSpace(output) == "" {
+			log.Printf("getDiskInfo(%s): ssh df failed and produced no output: %v", hostID, err)
 			return nil
 		}
-	case <-dfCtx.Done():
-		log.Printf("getDiskInfo(%s): timed out", hostID)
-		return nil
+		log.Printf("getDiskInfo(%s): ssh df returned error (non-fatal), will parse output: %v", hostID, err)
 	}
-
-	// Read logs
-	logReader, err := cli.ContainerLogs(dfCtx, resp.ID, container.LogsOptions{ShowStdout: true})
-	if err != nil {
-		log.Printf("getDiskInfo(%s): logs failed: %v", hostID, err)
-		return nil
-	}
-	defer logReader.Close()
-
-	var logBuf bytes.Buffer
-	io.Copy(&logBuf, logReader)
 
 	// Parse df output
 	var disks []DiskInfo
-	scanner := bufio.NewScanner(&logBuf)
+	seen := make(map[string]bool)
+	scanner := bufio.NewScanner(strings.NewReader(output))
 	first := true
 	for scanner.Scan() {
 		line := scanner.Text()
-		// Strip docker log header bytes (8-byte prefix)
-		if len(line) > 8 {
-			line = line[8:]
-		}
 		if first {
 			first = false
 			continue // skip header
@@ -2022,21 +2271,21 @@ func getDiskInfo(ctx context.Context, cli *client.Client, hostID string) []DiskI
 		used, _ := strconv.ParseUint(fields[2], 10, 64)
 		free, _ := strconv.ParseUint(fields[3], 10, 64)
 		mountPoint := fields[5]
-		// Map /hostfs -> /
-		if mountPoint == "/hostfs" {
-			mountPoint = "/"
-		} else if strings.HasPrefix(mountPoint, "/hostfs/") {
-			mountPoint = mountPoint[7:] // "/hostfs/mnt/nvme" -> "/mnt/nvme"
+		if total == 0 {
+			continue
 		}
-		if total > 0 {
-			disks = append(disks, DiskInfo{
-				MountPoint: mountPoint,
-				Device:     device,
-				TotalBytes: total,
-				UsedBytes:  used,
-				FreeBytes:  free,
-			})
+		key := device + "|" + mountPoint
+		if seen[key] {
+			continue
 		}
+		seen[key] = true
+		disks = append(disks, DiskInfo{
+			MountPoint: mountPoint,
+			Device:     device,
+			TotalBytes: total,
+			UsedBytes:  used,
+			FreeBytes:  free,
+		})
 	}
 
 	// Cache result
@@ -2066,9 +2315,10 @@ func (dm *DockerManager) GetHostStats(ctx context.Context) []HostStats {
 			defer wg.Done()
 
 			hs := HostStats{
-				ID:     h.ID,
-				Name:   h.Name,
-				Online: false,
+				ID:      h.ID,
+				Name:    h.Name,
+				Online:  false,
+				SSHHost: deriveSSHHost(h),
 			}
 
 			// Skip hosts in backoff period
@@ -2107,7 +2357,7 @@ func (dm *DockerManager) GetHostStats(ctx context.Context) []HostStats {
 			}
 
 			// Get disk info (cached, 30s TTL)
-			hs.Disks = getDiskInfo(ctx, cli, h.ID)
+			hs.Disks = getDiskInfo(ctx, h.ID)
 
 			// Get containers
 			containers, err := cli.ContainerList(ctx, container.ListOptions{All: true})
@@ -2115,6 +2365,7 @@ func (dm *DockerManager) GetHostStats(ctx context.Context) []HostStats {
 				hs.ContainerCount = len(containers)
 				var totalCPU float64
 				var totalMemUsage uint64
+				var maxMemLimit uint64
 				var runningCount int
 				var statsWg sync.WaitGroup
 				var statsMu sync.Mutex
@@ -2125,7 +2376,7 @@ func (dm *DockerManager) GetHostStats(ctx context.Context) []HostStats {
 						statsWg.Add(1)
 						go func(containerID string) {
 							defer statsWg.Done()
-							statsCtx, statsCancel := context.WithTimeout(ctx, 2*time.Second)
+							statsCtx, statsCancel := context.WithTimeout(ctx, 4*time.Second)
 							defer statsCancel()
 							statsResp, err := cli.ContainerStats(statsCtx, containerID, false)
 							if err != nil {
@@ -2152,6 +2403,9 @@ func (dm *DockerManager) GetHostStats(ctx context.Context) []HostStats {
 								statsMu.Lock()
 								totalCPU += cpu
 								totalMemUsage += stats.MemoryStats.Usage
+								if stats.MemoryStats.Limit > maxMemLimit {
+									maxMemLimit = stats.MemoryStats.Limit
+								}
 								statsMu.Unlock()
 							}
 							statsResp.Body.Close()
@@ -2166,6 +2420,9 @@ func (dm *DockerManager) GetHostStats(ctx context.Context) []HostStats {
 				}
 				hs.CPUPercent = totalCPU
 				hs.MemoryUsed = totalMemUsage
+				if memTotal == 0 && maxMemLimit > 0 {
+					memTotal = maxMemLimit
+				}
 				hs.MemoryTotal = memTotal
 				if memTotal > 0 {
 					hs.MemoryPercent = float64(totalMemUsage) / float64(memTotal) * 100.0
@@ -2182,26 +2439,73 @@ func (dm *DockerManager) GetHostStats(ctx context.Context) []HostStats {
 
 func (dm *DockerManager) ContainerAction(ctx context.Context, hostID, containerID, action string) error {
 	cli, err := dm.GetClient(hostID)
-	if err != nil {
-		return err
+	if err == nil {
+		// Try Docker API first
+		switch action {
+		case "start":
+			if err := cli.ContainerStart(ctx, containerID, container.StartOptions{}); err == nil {
+				return nil
+			} else {
+				log.Printf("ContainerAction: docker API start failed for %s on %s: %v", containerID, hostID, err)
+			}
+		case "stop":
+			timeout := 10
+			if err := cli.ContainerStop(ctx, containerID, container.StopOptions{Timeout: &timeout}); err == nil {
+				return nil
+			} else {
+				log.Printf("ContainerAction: docker API stop failed for %s on %s: %v", containerID, hostID, err)
+			}
+		case "restart":
+			timeout := 10
+			if err := cli.ContainerRestart(ctx, containerID, container.StopOptions{Timeout: &timeout}); err == nil {
+				return nil
+			} else {
+				log.Printf("ContainerAction: docker API restart failed for %s on %s: %v", containerID, hostID, err)
+			}
+		case "pause":
+			if err := cli.ContainerPause(ctx, containerID); err == nil {
+				return nil
+			} else {
+				log.Printf("ContainerAction: docker API pause failed for %s on %s: %v", containerID, hostID, err)
+			}
+		case "unpause":
+			if err := cli.ContainerUnpause(ctx, containerID); err == nil {
+				return nil
+			} else {
+				log.Printf("ContainerAction: docker API unpause failed for %s on %s: %v", containerID, hostID, err)
+			}
+		default:
+			return fmt.Errorf("unknown action: %s", action)
+		}
+	} else {
+		log.Printf("ContainerAction: docker client unavailable for host %s: %v", hostID, err)
 	}
 
+	// Fallback: try to perform action over SSH by running the docker CLI remotely.
+	// This helps when the Docker remote API is not exposed but SSH access is available.
+	var sshCmd string
 	switch action {
 	case "start":
-		return cli.ContainerStart(ctx, containerID, container.StartOptions{})
+		sshCmd = fmt.Sprintf("docker start %s", containerID)
 	case "stop":
-		timeout := 10
-		return cli.ContainerStop(ctx, containerID, container.StopOptions{Timeout: &timeout})
+		sshCmd = fmt.Sprintf("docker stop %s", containerID)
 	case "restart":
-		timeout := 10
-		return cli.ContainerRestart(ctx, containerID, container.StopOptions{Timeout: &timeout})
+		sshCmd = fmt.Sprintf("docker restart %s", containerID)
 	case "pause":
-		return cli.ContainerPause(ctx, containerID)
+		sshCmd = fmt.Sprintf("docker pause %s", containerID)
 	case "unpause":
-		return cli.ContainerUnpause(ctx, containerID)
+		sshCmd = fmt.Sprintf("docker unpause %s", containerID)
 	default:
 		return fmt.Errorf("unknown action: %s", action)
 	}
+
+	out, err := runSSHCommand(hostID, sshCmd)
+	if err != nil {
+		log.Printf("ContainerAction: ssh fallback failed for host=%s cmd=%q out=%q err=%v", hostID, sshCmd, out, err)
+		return fmt.Errorf("action failed: %v (ssh fallback output: %s)", err, out)
+	}
+	log.Printf("ContainerAction: ssh fallback succeeded for host=%s cmd=%q output=%s", hostID, sshCmd, out)
+	return nil
 }
 
 func (dm *DockerManager) GetContainerLogs(ctx context.Context, hostID, containerID string, tail int, follow bool) (io.ReadCloser, error) {
@@ -2220,6 +2524,192 @@ func (dm *DockerManager) GetContainerLogs(ctx context.Context, hostID, container
 	}
 
 	return cli.ContainerLogs(ctx, containerID, options)
+}
+
+// updateContainerImage updates a container using health check validation approach.
+// This implements a safe update strategy with minimal downtime:
+// 1. Pull new image
+// 2. Create temporary container (no ports) to validate image
+// 3. Health check validation (10-30s timeout)
+// 4. If healthy: remove temp → stop old → create new → start
+// 5. If unhealthy: remove temp → keep old running
+func (dm *DockerManager) updateContainerImage(ctx context.Context, hostID, containerID string) error {
+	cli, err := dm.GetClient(hostID)
+	if err != nil {
+		return fmt.Errorf("get docker client: %w", err)
+	}
+
+	// Step 1: Inspect current container to get configuration
+	log.Printf("[Update] Step 1: Inspecting container %s on host %s", containerID, hostID)
+	inspect, err := cli.ContainerInspect(ctx, containerID)
+	if err != nil {
+		return fmt.Errorf("inspect container: %w", err)
+	}
+
+	imageName := inspect.Config.Image
+	oldContainerName := strings.TrimPrefix(inspect.Name, "/")
+	log.Printf("[Update] Container: %s, Image: %s", oldContainerName, imageName)
+
+	// Step 2: Pull latest image
+	log.Printf("[Update] Step 2: Pulling image %s", imageName)
+	pullCtx, pullCancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer pullCancel()
+
+	pullResp, err := cli.ImagePull(pullCtx, imageName, image.PullOptions{})
+	if err != nil {
+		return fmt.Errorf("pull image: %w", err)
+	}
+	// Must read the pull response to ensure completion
+	_, _ = io.Copy(io.Discard, pullResp)
+	pullResp.Close()
+	log.Printf("[Update] Image pulled successfully")
+
+	// Step 3: Create temporary validation container (no ports, no name conflicts)
+	log.Printf("[Update] Step 3: Creating temporary validation container")
+	tempName := fmt.Sprintf("%s-validate-%d", oldContainerName, time.Now().Unix())
+
+	// Create config for temp container (similar to original but no ports)
+	tempConfig := &container.Config{
+		Image:        imageName,
+		Env:          inspect.Config.Env,
+		Cmd:          inspect.Config.Cmd,
+		Entrypoint:   inspect.Config.Entrypoint,
+		WorkingDir:   inspect.Config.WorkingDir,
+		User:         inspect.Config.User,
+		Labels:       inspect.Config.Labels,
+		Healthcheck:  inspect.Config.Healthcheck,
+	}
+
+	// Host config without port mappings
+	tempHostConfig := &container.HostConfig{
+		Binds:       inspect.HostConfig.Binds,
+		RestartPolicy: container.RestartPolicy{Name: "no"}, // No restart for temp
+		// Explicitly NO port bindings for temp container
+	}
+
+	tempCreateResp, err := cli.ContainerCreate(ctx, tempConfig, tempHostConfig, nil, nil, tempName)
+	if err != nil {
+		return fmt.Errorf("create temp container: %w", err)
+	}
+	tempID := tempCreateResp.ID
+	log.Printf("[Update] Temp container created: %s", tempID[:12])
+
+	// Cleanup function for temp container
+	cleanupTemp := func() {
+		cleanCtx, cleanCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cleanCancel()
+		cli.ContainerRemove(cleanCtx, tempID, container.RemoveOptions{Force: true})
+		log.Printf("[Update] Temp container removed: %s", tempID[:12])
+	}
+
+	// Step 4: Start temp container
+	log.Printf("[Update] Step 4: Starting temp container for validation")
+	if err := cli.ContainerStart(ctx, tempID, container.StartOptions{}); err != nil {
+		cleanupTemp()
+		return fmt.Errorf("start temp container: %w", err)
+	}
+
+	// Step 5: Health check validation (wait for healthy status or timeout)
+	log.Printf("[Update] Step 5: Validating image health (30s timeout)")
+	healthy := false
+	healthTimeout := time.After(30 * time.Second)
+	healthTicker := time.NewTicker(1 * time.Second)
+	defer healthTicker.Stop()
+
+healthCheck:
+	for {
+		select {
+		case <-healthTimeout:
+			log.Printf("[Update] Health check timeout - image validation failed")
+			break healthCheck
+		case <-healthTicker.C:
+			tempInspect, err := cli.ContainerInspect(ctx, tempID)
+			if err != nil {
+				log.Printf("[Update] Failed to inspect temp container: %v", err)
+				break healthCheck
+			}
+
+			// Check if container exited
+			if !tempInspect.State.Running {
+				if tempInspect.State.ExitCode == 0 {
+					// Container ran and exited successfully (some containers do this)
+					log.Printf("[Update] Container exited successfully (exit code 0)")
+					healthy = true
+					break healthCheck
+				}
+				log.Printf("[Update] Container exited with error (exit code %d)", tempInspect.State.ExitCode)
+				break healthCheck
+			}
+
+			// If container has health check defined, wait for it
+			if tempInspect.State.Health != nil {
+				status := tempInspect.State.Health.Status
+				log.Printf("[Update] Health status: %s", status)
+				if status == "healthy" {
+					healthy = true
+					break healthCheck
+				}
+				if status == "unhealthy" {
+					break healthCheck
+				}
+			} else {
+				// No health check defined, if running for 5s assume healthy
+				startedAt, err := time.Parse(time.RFC3339Nano, tempInspect.State.StartedAt)
+				if err == nil && time.Since(startedAt) > 5*time.Second {
+					log.Printf("[Update] No healthcheck defined, container running for 5s - assuming healthy")
+					healthy = true
+					break healthCheck
+				}
+			}
+		}
+	}
+
+	// Step 6: Decision based on health check
+	if !healthy {
+		cleanupTemp()
+		return fmt.Errorf("image validation failed: container unhealthy or crashed")
+	}
+
+	log.Printf("[Update] ✅ Image validated successfully")
+	cleanupTemp()
+
+	// Step 7: Stop old container
+	log.Printf("[Update] Step 7: Stopping old container %s", containerID[:12])
+	stopTimeout := 10
+	if err := cli.ContainerStop(ctx, containerID, container.StopOptions{Timeout: &stopTimeout}); err != nil {
+		return fmt.Errorf("stop old container: %w", err)
+	}
+
+	// Step 8: Remove old container
+	log.Printf("[Update] Step 8: Removing old container")
+	if err := cli.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true}); err != nil {
+		return fmt.Errorf("remove old container: %w", err)
+	}
+
+	// Step 9: Create new container with original configuration
+	log.Printf("[Update] Step 9: Creating new container with updated image")
+	newCreateResp, err := cli.ContainerCreate(
+		ctx,
+		inspect.Config,              // Original config
+		inspect.HostConfig,          // Original host config (with ports!)
+		nil,                         // Network config (will use default from HostConfig)
+		nil,                         // Platform
+		oldContainerName,            // Same name as before
+	)
+	if err != nil {
+		return fmt.Errorf("create new container: %w", err)
+	}
+	newID := newCreateResp.ID
+	log.Printf("[Update] New container created: %s", newID[:12])
+
+	// Step 10: Start new container
+	log.Printf("[Update] Step 10: Starting new container")
+	if err := cli.ContainerStart(ctx, newID, container.StartOptions{}); err != nil {
+		return fmt.Errorf("start new container: %w", err)
+	}
+
+	log.Printf("[Update] ✅ Container updated successfully: %s → %s", containerID[:12], newID[:12])
+	return nil
 }
 
 // =============================================================================
@@ -2305,7 +2795,17 @@ func (h *WSHub) Broadcast(msgType string, data interface{}) {
 // =============================================================================
 
 func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc *NotificationService, hub *WSHub, emailSvc *EmailService, envStore *EnvironmentStore) {
+	// Health check endpoint
+	app.Get("/health", func(c *fiber.Ctx) error {
+		return c.JSON(fiber.Map{"status": "ok"})
+	})
+
 	api := app.Group("/api")
+
+	// Debug endpoint to inspect parsed hosts (temporary)
+	api.Get("/debug/hosts", func(c *fiber.Ctx) error {
+		return c.JSON(hosts)
+	})
 
 	// =========================
 	// Auth routes (no auth required)
@@ -2342,8 +2842,8 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 				// Use wider time window (±2 periods = ±60s) for RPi clock drift
 				valid, validErr := totp.ValidateCustom(req.TOTPCode, user.TOTPSecret, time.Now(), totp.ValidateOpts{
 					Period:    30,
-					Skew:     2,
-					Digits:   otp.DigitsSix,
+					Skew:      2,
+					Digits:    otp.DigitsSix,
 					Algorithm: otp.AlgorithmSHA1,
 				})
 				log.Printf("2FA attempt for %s: valid=%v err=%v", user.Username, valid, validErr)
@@ -2958,6 +3458,161 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 		return c.JSON(stats)
 	})
 
+	protected.Get("/hosts/:hostId/files", func(c *fiber.Ctx) error {
+		hostID := c.Params("hostId")
+		dir := c.Query("path", "/")
+		if !strings.HasPrefix(dir, "/") {
+			return c.Status(400).JSON(fiber.Map{"error": "path must be absolute"})
+		}
+		sshClient, err := dialSSH(hostID)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+		defer sshClient.Close()
+		sftpClient, err := sftp.NewClient(sshClient)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+		defer sftpClient.Close()
+		entries, err := sftpClient.ReadDir(dir)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+		results := make([]HostFileEntry, 0, len(entries))
+		for _, entry := range entries {
+			name := entry.Name()
+			results = append(results, HostFileEntry{
+				Name:    name,
+				Path:    path.Join(dir, name),
+				Size:    entry.Size(),
+				ModTime: entry.ModTime().Unix(),
+				IsDir:   entry.IsDir(),
+			})
+		}
+		return c.JSON(results)
+	})
+
+	protected.Get("/hosts/:hostId/files/download", func(c *fiber.Ctx) error {
+		hostID := c.Params("hostId")
+		filePath := c.Query("path", "")
+		if filePath == "" || !strings.HasPrefix(filePath, "/") {
+			return c.Status(400).JSON(fiber.Map{"error": "path must be absolute"})
+		}
+		sshClient, err := dialSSH(hostID)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+		defer sshClient.Close()
+		sftpClient, err := sftp.NewClient(sshClient)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+		defer sftpClient.Close()
+		file, err := sftpClient.Open(filePath)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+		defer file.Close()
+		c.Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", path.Base(filePath)))
+		return c.SendStream(file)
+	})
+
+	protected.Post("/hosts/:hostId/files/upload", func(c *fiber.Ctx) error {
+		hostID := c.Params("hostId")
+		dir := c.FormValue("path", "/")
+		if !strings.HasPrefix(dir, "/") {
+			return c.Status(400).JSON(fiber.Map{"error": "path must be absolute"})
+		}
+		fileHeader, err := c.FormFile("file")
+		if err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "missing file"})
+		}
+		src, err := fileHeader.Open()
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+		defer src.Close()
+		sshClient, err := dialSSH(hostID)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+		defer sshClient.Close()
+		sftpClient, err := sftp.NewClient(sshClient)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+		defer sftpClient.Close()
+		target := path.Join(dir, fileHeader.Filename)
+		dst, err := sftpClient.Create(target)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+		defer dst.Close()
+		if _, err := io.Copy(dst, src); err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+		return c.JSON(fiber.Map{"success": true, "path": target})
+	})
+
+	protected.Post("/hosts/:hostId/files/mkdir", func(c *fiber.Ctx) error {
+		hostID := c.Params("hostId")
+		var req struct {
+			Path string `json:"path"`
+		}
+		if err := c.BodyParser(&req); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid request"})
+		}
+		if req.Path == "" || !strings.HasPrefix(req.Path, "/") {
+			return c.Status(400).JSON(fiber.Map{"error": "path must be absolute"})
+		}
+		sshClient, err := dialSSH(hostID)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+		defer sshClient.Close()
+		sftpClient, err := sftp.NewClient(sshClient)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+		defer sftpClient.Close()
+		if err := sftpClient.MkdirAll(req.Path); err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+		return c.JSON(fiber.Map{"success": true})
+	})
+
+	protected.Delete("/hosts/:hostId/files", func(c *fiber.Ctx) error {
+		hostID := c.Params("hostId")
+		filePath := c.Query("path", "")
+		if filePath == "" || !strings.HasPrefix(filePath, "/") {
+			return c.Status(400).JSON(fiber.Map{"error": "path must be absolute"})
+		}
+		sshClient, err := dialSSH(hostID)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+		defer sshClient.Close()
+		sftpClient, err := sftp.NewClient(sshClient)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+		defer sftpClient.Close()
+		stat, err := sftpClient.Stat(filePath)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+		if stat.IsDir() {
+			if err := sftpClient.RemoveDirectory(filePath); err != nil {
+				return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+			}
+		} else {
+			if err := sftpClient.Remove(filePath); err != nil {
+				return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+			}
+		}
+		return c.JSON(fiber.Map{"success": true})
+	})
+
 	// Containers - with timeout
 	protected.Get("/containers", func(c *fiber.Ctx) error {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -3006,6 +3661,34 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 	})
 
 	// Container actions
+	// Trigger Watchtower update for a specific container
+	// IMPORTANT: This must come BEFORE the generic /:action route to avoid conflicts
+	protected.Post("/containers/:hostId/:containerId/update", func(c *fiber.Ctx) error {
+		hostID := c.Params("hostId")
+		containerID := c.Params("containerId")
+
+		// Create context with 10-minute timeout for the entire update process
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
+
+		// Execute the update using the new health-check based update logic
+		if err := dm.updateContainerImage(ctx, hostID, containerID); err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+
+		// Clear update cache for this container
+		updateCacheMu.Lock()
+		delete(updateCache, containerID)
+		updateCacheMu.Unlock()
+
+		return c.JSON(fiber.Map{
+			"success": true,
+			"message": "Container updated successfully with health validation",
+		})
+	})
+
+	// Generic container actions (start, stop, restart, pause, unpause)
+	// Note: 'update' is NOT handled here - use the specific /update endpoint above
 	protected.Post("/containers/:hostId/:containerId/:action", func(c *fiber.Ctx) error {
 		hostID := c.Params("hostId")
 		containerID := c.Params("containerId")
@@ -3024,71 +3707,6 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 		}()
 
 		return c.JSON(fiber.Map{"success": true})
-	})
-
-	// Trigger Watchtower update for a specific container
-	protected.Post("/containers/:hostId/:containerId/update", func(c *fiber.Ctx) error {
-		hostID := c.Params("hostId")
-		containerID := c.Params("containerId")
-
-		if watchtowerToken == "" {
-			return c.Status(400).JSON(fiber.Map{"error": "Watchtower not configured (WATCHTOWER_TOKEN not set)"})
-		}
-
-		wtURL, ok := watchtowerURLs[hostID]
-		if !ok {
-			return c.Status(400).JSON(fiber.Map{"error": "No Watchtower URL configured for host: " + hostID})
-		}
-
-		// Get the container's image name
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-
-		cli, err := dm.GetClient(hostID)
-		if err != nil {
-			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
-		}
-
-		inspect, err := cli.ContainerInspect(ctx, containerID)
-		if err != nil {
-			return c.Status(500).JSON(fiber.Map{"error": "Failed to inspect container: " + err.Error()})
-		}
-
-		imageName := inspect.Config.Image
-
-		// Call Watchtower HTTP API
-		wtReq, err := http.NewRequestWithContext(ctx, "POST", wtURL+"/v1/update", nil)
-		if err != nil {
-			return c.Status(500).JSON(fiber.Map{"error": "Failed to create request: " + err.Error()})
-		}
-		wtReq.Header.Set("Authorization", "Bearer "+watchtowerToken)
-
-		httpClient := &http.Client{Timeout: 30 * time.Second}
-		resp, err := httpClient.Do(wtReq)
-		if err != nil {
-			return c.Status(502).JSON(fiber.Map{"error": "Watchtower API unreachable: " + err.Error()})
-		}
-		defer resp.Body.Close()
-
-		body, _ := io.ReadAll(resp.Body)
-
-		if resp.StatusCode != http.StatusOK {
-			return c.Status(502).JSON(fiber.Map{
-				"error":   "Watchtower returned error",
-				"status":  resp.StatusCode,
-				"details": string(body),
-			})
-		}
-
-		// Clear update cache for this container
-		updateCacheMu.Lock()
-		delete(updateCache, containerID)
-		updateCacheMu.Unlock()
-
-		return c.JSON(fiber.Map{
-			"success": true,
-			"message": "Update triggered for " + imageName,
-		})
 	})
 
 	// Logs endpoint
@@ -3235,14 +3853,115 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 	}))
 
 	// WebSocket for terminal
+	// Helper function: SSH fallback for container terminal when Docker API exec is blocked
+	handleContainerTerminalSSH := func(c *websocket.Conn, hostID, containerID string) {
+		client, err := dialSSH(hostID)
+		if err != nil {
+			errMsg, _ := json.Marshal(map[string]string{"type": "error", "data": "SSH connection failed: " + err.Error()})
+			c.WriteMessage(websocket.TextMessage, errMsg)
+			return
+		}
+		defer client.Close()
+
+		session, err := client.NewSession()
+		if err != nil {
+			errMsg, _ := json.Marshal(map[string]string{"type": "error", "data": "SSH session failed: " + err.Error()})
+			c.WriteMessage(websocket.TextMessage, errMsg)
+			return
+		}
+		defer session.Close()
+
+		modes := ssh.TerminalModes{
+			ssh.ECHO:          1,
+			ssh.TTY_OP_ISPEED: 14400,
+			ssh.TTY_OP_OSPEED: 14400,
+		}
+		if err := session.RequestPty("xterm-256color", 40, 120, modes); err != nil {
+			errMsg, _ := json.Marshal(map[string]string{"type": "error", "data": "PTY request failed: " + err.Error()})
+			c.WriteMessage(websocket.TextMessage, errMsg)
+			return
+		}
+
+		stdout, err := session.StdoutPipe()
+		if err != nil {
+			errMsg, _ := json.Marshal(map[string]string{"type": "error", "data": err.Error()})
+			c.WriteMessage(websocket.TextMessage, errMsg)
+			return
+		}
+		stderr, err := session.StderrPipe()
+		if err != nil {
+			errMsg, _ := json.Marshal(map[string]string{"type": "error", "data": err.Error()})
+			c.WriteMessage(websocket.TextMessage, errMsg)
+			return
+		}
+		stdin, err := session.StdinPipe()
+		if err != nil {
+			errMsg, _ := json.Marshal(map[string]string{"type": "error", "data": err.Error()})
+			c.WriteMessage(websocket.TextMessage, errMsg)
+			return
+		}
+
+		// Execute docker exec via SSH
+		// Try bash first, fallback to sh
+		cmd := fmt.Sprintf("docker exec -it %s sh -c 'command -v bash >/dev/null && exec bash || exec sh'", containerID)
+		if err := session.Start(cmd); err != nil {
+			errMsg, _ := json.Marshal(map[string]string{"type": "error", "data": "Failed to start docker exec: " + err.Error()})
+			c.WriteMessage(websocket.TextMessage, errMsg)
+			return
+		}
+
+		// Send connection success message
+		connMsg, _ := json.Marshal(map[string]string{"type": "info", "data": "Connected via SSH fallback"})
+		c.WriteMessage(websocket.TextMessage, connMsg)
+
+		output := func(reader io.Reader) {
+			buf := make([]byte, 4096)
+			for {
+				n, err := reader.Read(buf)
+				if err != nil {
+					return
+				}
+				if n > 0 {
+					msg, _ := json.Marshal(map[string]string{"type": "output", "data": string(buf[:n])})
+					c.WriteMessage(websocket.TextMessage, msg)
+				}
+			}
+		}
+		go output(stdout)
+		go output(stderr)
+
+		for {
+			_, msg, err := c.ReadMessage()
+			if err != nil {
+				return
+			}
+			var wsMsg struct {
+				Type string `json:"type"`
+				Data string `json:"data"`
+				Cols int    `json:"cols"`
+				Rows int    `json:"rows"`
+			}
+			if json.Unmarshal(msg, &wsMsg) == nil {
+				if wsMsg.Type == "input" {
+					stdin.Write([]byte(wsMsg.Data))
+				} else if wsMsg.Type == "resize" {
+					if wsMsg.Cols > 0 && wsMsg.Rows > 0 {
+						session.WindowChange(wsMsg.Rows, wsMsg.Cols)
+					}
+				}
+			}
+		}
+	}
+
 	app.Get("/ws/terminal/:hostId/:containerId", websocket.New(func(c *websocket.Conn) {
 		hostID := c.Params("hostId")
 		containerID := c.Params("containerId")
 
 		cli, err := dm.GetClient(hostID)
 		if err != nil {
-			errMsg, _ := json.Marshal(map[string]string{"type": "error", "data": err.Error()})
-			c.WriteMessage(websocket.TextMessage, errMsg)
+			// No Docker client available, try SSH fallback directly
+			log.Printf("Terminal: no docker client for host=%s, attempting SSH fallback", hostID)
+			handleContainerTerminalSSH(c, hostID, containerID)
 			return
 		}
 
@@ -3259,6 +3978,14 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 
 		execIDResp, err := cli.ContainerExecCreate(ctx, containerID, execConfig)
 		if err != nil {
+			// Check if it's a 403 or other Docker API error - try SSH fallback
+			errStr := err.Error()
+			if strings.Contains(errStr, "403") || strings.Contains(errStr, "Forbidden") {
+				log.Printf("Terminal: docker exec blocked (403) for container=%s on host=%s, attempting SSH fallback", containerID, hostID)
+				handleContainerTerminalSSH(c, hostID, containerID)
+				return
+			}
+			// Other errors, report and exit
 			errMsg, _ := json.Marshal(map[string]string{"type": "error", "data": "Error creating exec: " + err.Error()})
 			c.WriteMessage(websocket.TextMessage, errMsg)
 			return
@@ -3309,6 +4036,101 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 						Height: uint(wsMsg.Rows),
 						Width:  uint(wsMsg.Cols),
 					})
+				}
+			}
+		}
+	}))
+
+	// WebSocket for SSH host terminal
+	app.Get("/ws/ssh/:hostId", websocket.New(func(c *websocket.Conn) {
+		hostID := c.Params("hostId")
+
+		client, err := dialSSH(hostID)
+		if err != nil {
+			errMsg, _ := json.Marshal(map[string]string{"type": "error", "data": err.Error()})
+			c.WriteMessage(websocket.TextMessage, errMsg)
+			return
+		}
+		defer client.Close()
+
+		session, err := client.NewSession()
+		if err != nil {
+			errMsg, _ := json.Marshal(map[string]string{"type": "error", "data": err.Error()})
+			c.WriteMessage(websocket.TextMessage, errMsg)
+			return
+		}
+		defer session.Close()
+
+		modes := ssh.TerminalModes{
+			ssh.ECHO:          1,
+			ssh.TTY_OP_ISPEED: 14400,
+			ssh.TTY_OP_OSPEED: 14400,
+		}
+		if err := session.RequestPty("xterm-256color", 24, 80, modes); err != nil {
+			errMsg, _ := json.Marshal(map[string]string{"type": "error", "data": err.Error()})
+			c.WriteMessage(websocket.TextMessage, errMsg)
+			return
+		}
+
+		stdout, err := session.StdoutPipe()
+		if err != nil {
+			errMsg, _ := json.Marshal(map[string]string{"type": "error", "data": err.Error()})
+			c.WriteMessage(websocket.TextMessage, errMsg)
+			return
+		}
+		stderr, err := session.StderrPipe()
+		if err != nil {
+			errMsg, _ := json.Marshal(map[string]string{"type": "error", "data": err.Error()})
+			c.WriteMessage(websocket.TextMessage, errMsg)
+			return
+		}
+		stdin, err := session.StdinPipe()
+		if err != nil {
+			errMsg, _ := json.Marshal(map[string]string{"type": "error", "data": err.Error()})
+			c.WriteMessage(websocket.TextMessage, errMsg)
+			return
+		}
+
+		if err := session.Shell(); err != nil {
+			errMsg, _ := json.Marshal(map[string]string{"type": "error", "data": err.Error()})
+			c.WriteMessage(websocket.TextMessage, errMsg)
+			return
+		}
+
+		output := func(reader io.Reader) {
+			buf := make([]byte, 4096)
+			for {
+				n, err := reader.Read(buf)
+				if err != nil {
+					return
+				}
+				if n > 0 {
+					msg, _ := json.Marshal(map[string]string{"type": "output", "data": string(buf[:n])})
+					c.WriteMessage(websocket.TextMessage, msg)
+				}
+			}
+		}
+		go output(stdout)
+		go output(stderr)
+
+		for {
+			_, msg, err := c.ReadMessage()
+			if err != nil {
+				return
+			}
+			var wsMsg struct {
+				Type string `json:"type"`
+				Data string `json:"data"`
+				Cols int    `json:"cols"`
+				Rows int    `json:"rows"`
+			}
+			if json.Unmarshal(msg, &wsMsg) == nil {
+				if wsMsg.Type == "input" {
+					stdin.Write([]byte(wsMsg.Data))
+				} else if wsMsg.Type == "resize" {
+					if wsMsg.Cols > 0 && wsMsg.Rows > 0 {
+						session.WindowChange(wsMsg.Rows, wsMsg.Cols)
+					}
 				}
 			}
 		}
@@ -3772,6 +4594,21 @@ func main() {
 	startBroadcaster(dm, hub)
 	startUpdateChecker(dm)
 
+	// Initialize logging to both stdout and a file under `DATA_DIR/logs/backend.log`.
+	// This makes it easier to fetch logs from the container filesystem.
+	logDir := filepath.Join(dataDir, "logs")
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		log.Printf("warning: could not create log dir %s: %v", logDir, err)
+	}
+	logPath := filepath.Join(logDir, "backend.log")
+	lf, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		log.Printf("warning: could not open log file %s: %v", logPath, err)
+	} else {
+		mw := io.MultiWriter(os.Stdout, lf)
+		log.SetOutput(mw)
+	}
+
 	app := fiber.New(fiber.Config{
 		AppName:      "DockerVerse API",
 		ReadTimeout:  30 * time.Second,
@@ -3779,6 +4616,7 @@ func main() {
 	})
 
 	// Middleware
+	app.Use(fbRecover.New(fbRecover.Config{EnableStackTrace: true}))
 	app.Use(logger.New())
 
 	// Enable compression (gzip, brotli, deflate)
@@ -3796,6 +4634,26 @@ func main() {
 
 	// Setup API routes
 	setupRoutes(app, dm, userStore, notifySvc, hub, emailSvc, envStore)
+
+	// Debug: expose recent backend logs for easier collection from the container.
+	// Query params: ?lines=200 (default 200)
+	app.Get("/api/debug/logs", func(c *fiber.Ctx) error {
+		if !isAdminRequest(c) {
+			return c.Status(401).SendString("unauthorized")
+		}
+		lines := 200
+		if s := c.Query("lines"); s != "" {
+			if v, err := strconv.Atoi(s); err == nil && v > 0 && v <= 5000 {
+				lines = v
+			}
+		}
+		logPath := filepath.Join(dataDir, "logs", "backend.log")
+		out, err := tailFileLines(logPath, lines)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+		return c.SendString(out)
+	})
 
 	// Get port from env or default
 	port := os.Getenv("PORT")

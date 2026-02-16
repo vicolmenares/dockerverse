@@ -102,7 +102,7 @@
       label: $language === "es" ? "Entornos" : "Environments",
       href: "/settings/environments",
     },
-    ...($currentUser?.role === "admin"
+    ...($currentUser?.roles?.includes("admin")
       ? [
           {
             id: "users",

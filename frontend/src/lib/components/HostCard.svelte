@@ -6,15 +6,29 @@
     Database,
     ChevronDown,
     ChevronUp,
+    Terminal as TerminalIcon,
+    FolderOpen,
   } from "lucide-svelte";
   import type { Host } from "$lib/api/docker";
   import { selectedHost, language, translations } from "$lib/stores/docker";
-  import ResourceChart from "./ResourceChart.svelte";
 
-  let { host, onclick }: { host: Host; onclick?: () => void } = $props();
+  let {
+    host,
+    onclick,
+    resourcesOpen = false,
+    onToggleResources,
+    onOpenHostTerminal,
+    onOpenHostFiles,
+  }: {
+    host: Host;
+    onclick?: () => void;
+    resourcesOpen?: boolean;
+    onToggleResources?: (hostId: string) => void;
+    onOpenHostTerminal?: (host: Host) => void;
+    onOpenHostFiles?: (host: Host) => void;
+  } = $props();
 
   let isSelected = $derived($selectedHost === host.id);
-  let showResources = $state(false);
   let t = $derived(translations[$language]);
 
   function handleClick() {
@@ -56,18 +70,24 @@
   let diskTotalUsed = $derived(
     (host.disks || []).reduce((sum, d) => sum + d.usedBytes, 0),
   );
+  let diskTotalFree = $derived(
+    (host.disks || []).reduce((sum, d) => sum + d.freeBytes, 0),
+  );
   let diskTotalSize = $derived(
     (host.disks || []).reduce((sum, d) => sum + d.totalBytes, 0),
   );
   let diskPercent = $derived(
     diskTotalSize > 0 ? (diskTotalUsed / diskTotalSize) * 100 : 0,
   );
+  let diskPercentText = $derived(
+    diskTotalSize > 0 ? `${diskPercent.toFixed(1)}%` : "—",
+  );
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
-  class="card card-hover p-5 cursor-pointer transition-all {isSelected
+  class="card card-hover p-5 cursor-pointer transition-all bg-gradient-to-br from-background-secondary/70 via-background-secondary/40 to-background-tertiary/10 {isSelected
     ? 'ring-2 ring-primary'
     : ''}"
   onclick={handleClick}
@@ -82,10 +102,34 @@
         <p class="text-sm text-foreground-muted">{host.id}</p>
       </div>
     </div>
-    <span class="flex items-center gap-2 text-sm">
-      <span class="w-2 h-2 rounded-full {getStatusColor(host.online)}"></span>
-      {host.online ? t.online : t.offline}
-    </span>
+    <div class="flex items-center gap-2 text-sm">
+      {#if host.sshHost}
+        <button
+          class="inline-flex items-center gap-1.5 px-2.5 py-1 bg-background-tertiary/70 text-foreground-muted rounded-lg hover:text-foreground hover:bg-background-tertiary transition-colors"
+          onclick={(e) => {
+            e.stopPropagation();
+            onOpenHostTerminal?.(host);
+          }}
+        >
+          <TerminalIcon class="w-3.5 h-3.5" />
+          <span class="text-xs font-medium">Console</span>
+        </button>
+        <button
+          class="inline-flex items-center gap-1.5 px-2.5 py-1 bg-background-tertiary/70 text-foreground-muted rounded-lg hover:text-foreground hover:bg-background-tertiary transition-colors"
+          onclick={(e) => {
+            e.stopPropagation();
+            onOpenHostFiles?.(host);
+          }}
+        >
+          <FolderOpen class="w-3.5 h-3.5" />
+          <span class="text-xs font-medium">Files</span>
+        </button>
+      {/if}
+      <span class="flex items-center gap-2 text-sm">
+        <span class="w-2 h-2 rounded-full {getStatusColor(host.online)}"></span>
+        {host.online ? t.online : t.offline}
+      </span>
+    </div>
   </div>
 
   <div class="grid grid-cols-4 gap-3">
@@ -127,14 +171,14 @@
     <!-- Disk -->
     <div class="text-center">
       <p class="metric-value tabular-nums {getDiskColor(diskPercent)}">
-        {diskPercent.toFixed(1)}%
+        {diskPercentText}
       </p>
       <p class="metric-label flex items-center justify-center gap-1">
         <Database class="w-3 h-3" /> Disk
       </p>
       {#if diskTotalSize > 0}
         <p class="text-[10px] text-foreground-muted">
-          {formatSize(diskTotalUsed)} / {formatSize(diskTotalSize)}
+          {formatSize(diskTotalFree)} {$language === "es" ? "libre" : "free"} / {formatSize(diskTotalSize)}
         </p>
       {/if}
     </div>
@@ -188,7 +232,7 @@
                 style="width: {Math.min(pct, 100)}%"
               ></div>
             </div>
-            <span class="tabular-nums">{formatSize(disk.usedBytes)}/{formatSize(disk.totalBytes)}</span>
+            <span class="tabular-nums">{formatSize(disk.freeBytes)}/{formatSize(disk.totalBytes)}</span>
           </div>
         {/each}
       </div>
@@ -201,10 +245,11 @@
       class="mt-3 w-full flex items-center justify-center gap-1 py-1.5 text-xs text-foreground-muted hover:text-foreground hover:bg-background-tertiary/50 rounded-lg transition-colors"
       onclick={(e) => {
         e.stopPropagation();
-        showResources = !showResources;
+        onToggleResources?.(host.id);
       }}
+      aria-pressed={resourcesOpen}
     >
-      {#if showResources}
+      {#if resourcesOpen}
         <ChevronUp class="w-4 h-4" />
         <span>{t.hideResources || "Hide resources"}</span>
       {:else}
@@ -212,10 +257,5 @@
         <span>{t.showResources || "Show resources"}</span>
       {/if}
     </button>
-  {/if}
-
-  <!-- Resource Charts -->
-  {#if showResources && host.online}
-    <ResourceChart {host} />
   {/if}
 </div>

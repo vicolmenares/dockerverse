@@ -33,25 +33,23 @@
   let st = $derived(settingsText[$language]);
   let activeTab = $state("general");
 
+  const emptyForm: EnvironmentData = {
+    id: "",
+    name: "",
+    connectionType: "socket",
+    address: "/var/run/docker.sock",
+    protocol: "http",
+    isLocal: true,
+    labels: "",
+    autoUpdate: false,
+    updateSchedule: "0 3 * * *",
+    imagePrune: false,
+    eventTracking: true,
+    vulnScanning: false,
+  };
+
   // Form state
-  let form = $state<EnvironmentData>(
-    environment
-      ? { ...environment }
-      : {
-          id: "",
-          name: "",
-          connectionType: "socket",
-          address: "/var/run/docker.sock",
-          protocol: "http",
-          isLocal: true,
-          labels: "",
-          autoUpdate: false,
-          updateSchedule: "0 3 * * *",
-          imagePrune: false,
-          eventTracking: true,
-          vulnScanning: false,
-        },
-  );
+  let form = $state<EnvironmentData>({ ...emptyForm });
 
   function handleConnectionTypeChange(type: string) {
     form.connectionType = type;
@@ -70,6 +68,10 @@
   }
 
   let isEditing = $derived(environment !== null);
+
+  $effect(() => {
+    form = environment ? { ...environment } : { ...emptyForm };
+  });
 
   const tabs = $derived([
     { id: "general", label: st.general, icon: Server },
@@ -123,8 +125,9 @@
       {#if activeTab === "general"}
         <!-- ID -->
         <div>
-          <label class="block text-sm font-medium text-foreground mb-1">ID</label>
+          <label class="block text-sm font-medium text-foreground mb-1" for="env-id">ID</label>
           <input
+            id="env-id"
             type="text"
             bind:value={form.id}
             disabled={isEditing}
@@ -135,8 +138,9 @@
 
         <!-- Name -->
         <div>
-          <label class="block text-sm font-medium text-foreground mb-1">{st.firstName || "Name"}</label>
+          <label class="block text-sm font-medium text-foreground mb-1" for="env-name">{st.firstName || "Name"}</label>
           <input
+            id="env-name"
             type="text"
             bind:value={form.name}
             placeholder="Raspberry Pi Main"
@@ -146,8 +150,9 @@
 
         <!-- Labels -->
         <div>
-          <label class="block text-sm font-medium text-foreground mb-1">Labels</label>
+          <label class="block text-sm font-medium text-foreground mb-1" for="env-labels">Labels</label>
           <input
+            id="env-labels"
             type="text"
             bind:value={form.labels}
             placeholder="production, arm64"
@@ -157,7 +162,7 @@
 
         <!-- Connection Type -->
         <div>
-          <label class="block text-sm font-medium text-foreground mb-2">{st.connectionType}</label>
+          <p class="block text-sm font-medium text-foreground mb-2">{st.connectionType}</p>
           <div class="flex gap-3">
             <button
               class="flex-1 flex items-center gap-2 p-3 rounded-lg border-2 transition-all {form.connectionType === 'socket' ? 'border-primary bg-primary/10' : 'border-border hover:border-foreground-muted'}"
@@ -184,10 +189,11 @@
 
         <!-- Address -->
         <div>
-          <label class="block text-sm font-medium text-foreground mb-1">
+          <label class="block text-sm font-medium text-foreground mb-1" for="env-address">
             {form.connectionType === "socket" ? st.socketPath : st.hostPort}
           </label>
           <input
+            id="env-address"
             type="text"
             bind:value={form.address}
             placeholder={form.connectionType === "socket" ? "/var/run/docker.sock" : "http://192.168.1.100:2375"}
@@ -198,7 +204,7 @@
         {#if form.connectionType === "tcp"}
           <!-- Protocol -->
           <div>
-            <label class="block text-sm font-medium text-foreground mb-1">Protocol</label>
+            <p class="block text-sm font-medium text-foreground mb-1">Protocol</p>
             <div class="flex gap-2">
               {#each ["http", "https"] as proto}
                 <button
@@ -222,6 +228,8 @@
           <button
             class="relative w-11 h-6 rounded-full transition-colors {form.autoUpdate ? 'bg-primary' : 'bg-background-tertiary'}"
             onclick={() => (form.autoUpdate = !form.autoUpdate)}
+            aria-label={form.autoUpdate ? "Disable auto update" : "Enable auto update"}
+            title={form.autoUpdate ? "Disable auto update" : "Enable auto update"}
           >
             <span class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform shadow-sm {form.autoUpdate ? 'translate-x-5' : ''}"></span>
           </button>
@@ -230,8 +238,9 @@
         {#if form.autoUpdate}
           <!-- Schedule -->
           <div>
-            <label class="block text-sm font-medium text-foreground mb-1">{st.updateSchedule}</label>
+            <label class="block text-sm font-medium text-foreground mb-1" for="env-update-schedule">{st.updateSchedule}</label>
             <input
+              id="env-update-schedule"
               type="text"
               bind:value={form.updateSchedule}
               placeholder="0 3 * * *"
@@ -250,6 +259,8 @@
           <button
             class="relative w-11 h-6 rounded-full transition-colors {form.imagePrune ? 'bg-primary' : 'bg-background-tertiary'}"
             onclick={() => (form.imagePrune = !form.imagePrune)}
+            aria-label={form.imagePrune ? "Disable image prune" : "Enable image prune"}
+            title={form.imagePrune ? "Disable image prune" : "Enable image prune"}
           >
             <span class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform shadow-sm {form.imagePrune ? 'translate-x-5' : ''}"></span>
           </button>
@@ -265,6 +276,8 @@
           <button
             class="relative w-11 h-6 rounded-full transition-colors {form.eventTracking ? 'bg-primary' : 'bg-background-tertiary'}"
             onclick={() => (form.eventTracking = !form.eventTracking)}
+            aria-label={form.eventTracking ? "Disable event tracking" : "Enable event tracking"}
+            title={form.eventTracking ? "Disable event tracking" : "Enable event tracking"}
           >
             <span class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform shadow-sm {form.eventTracking ? 'translate-x-5' : ''}"></span>
           </button>
@@ -280,6 +293,8 @@
           <button
             class="relative w-11 h-6 rounded-full transition-colors {form.vulnScanning ? 'bg-primary' : 'bg-background-tertiary'}"
             onclick={() => (form.vulnScanning = !form.vulnScanning)}
+            aria-label={form.vulnScanning ? "Disable vulnerability scanning" : "Enable vulnerability scanning"}
+            title={form.vulnScanning ? "Disable vulnerability scanning" : "Enable vulnerability scanning"}
           >
             <span class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform shadow-sm {form.vulnScanning ? 'translate-x-5' : ''}"></span>
           </button>
