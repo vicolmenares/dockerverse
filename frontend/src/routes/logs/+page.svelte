@@ -15,6 +15,7 @@
     WrapText,
     Wifi,
     WifiOff,
+    ChevronRight,
   } from "lucide-svelte";
   import { containers } from "$lib/stores/docker";
   import { language } from "$lib/stores/docker";
@@ -74,6 +75,7 @@
   let selectedHost = $state<string | 'all'>('all');
   let expandedStacks = $state<Set<string>>(new Set());
   let stacks = $state<DockerStack[]>([]);
+  let hosts = $state<Host[]>([]);
 
   // Preferences state (Dockhand-inspired)
   let preferences = $state<LogPreferences>({
@@ -118,9 +120,15 @@
     return containerColors.get(key)!;
   }
 
-  // Filter containers by search
+  // Filter containers by host first, then by search
+  let filteredByHost = $derived(
+    selectedHost === 'all'
+      ? $containers
+      : $containers.filter(c => c.hostId === selectedHost)
+  );
+
   let filteredContainers = $derived(
-    $containers.filter(
+    filteredByHost.filter(
       (c) =>
         c.name.toLowerCase().includes(searchFilter.toLowerCase()) ||
         c.image.toLowerCase().includes(searchFilter.toLowerCase()),
@@ -302,6 +310,18 @@
     for (const [key] of activeStreams) stopStream(key);
   });
 
+  // Fetch hosts on mount
+  onMount(async () => {
+    try {
+      const hostsRes = await fetch(`${API_BASE}/api/hosts`);
+      if (hostsRes.ok) {
+        hosts = await hostsRes.json();
+      }
+    } catch (err) {
+      console.error('Failed to fetch hosts:', err);
+    }
+  });
+
   let t = $derived({
     title: $language === "es" ? "Logs" : "Logs",
     single: $language === "es" ? "Individual" : "Single",
@@ -359,6 +379,27 @@
   <div class="flex gap-4 flex-1 min-h-0">
     <!-- Left Sidebar: Container Selection -->
     <div class="w-64 flex-shrink-0 flex flex-col bg-background-secondary border border-border rounded-xl overflow-hidden">
+      <!-- Host selector breadcrumb -->
+      <div class="flex items-center gap-2 px-4 py-3 border-b border-border bg-background-tertiary">
+        <span class="text-sm text-foreground-muted font-medium">Hosts</span>
+        <ChevronRight class="w-4 h-4 text-foreground-muted" />
+
+        <div class="relative flex-1">
+          <select
+            bind:value={selectedHost}
+            class="w-full text-sm font-medium bg-transparent border border-border rounded px-3 py-1.5 focus:ring-2 focus:ring-primary focus:outline-none cursor-pointer"
+            aria-label="Select Docker host"
+          >
+            <option value="all">All Hosts ({$containers.length} containers)</option>
+            {#each hosts as host}
+              <option value={host.id}>
+                {host.name} ({$containers.filter(c => c.hostId === host.id).length} containers)
+              </option>
+            {/each}
+          </select>
+        </div>
+      </div>
+
       <!-- Search -->
       <div class="p-3 border-b border-border">
         <div class="relative">
