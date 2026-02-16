@@ -60,6 +60,8 @@
   let selectedContainers = $state<Set<string>>(new Set());
   let searchFilter = $state("");
   let logSearch = $state("");
+  let regexEnabled = $state(false);
+  let regexError = $state<string | null>(null);
   let isPaused = $state(false);
   let autoScroll = $state(true);
   let wrapLines = $state(true);
@@ -204,27 +206,85 @@
     return groupContainersByStack(filtered);
   });
 
-  let filteredContainers = $derived(
-    filteredByHost.filter(
-      (c) =>
-        c.name.toLowerCase().includes(searchFilter.toLowerCase()) ||
-        c.image.toLowerCase().includes(searchFilter.toLowerCase()),
-    ),
-  );
+  let filteredContainers = $derived(() => {
+    if (!searchFilter) return filteredByHost;
 
-  // Filtered logs by search
-  let filteredLogs = $derived(
-    logSearch
-      ? allLogs.filter((l) =>
-          l.line.toLowerCase().includes(logSearch.toLowerCase()),
-        )
-      : allLogs,
-  );
+    return filteredByHost
+      .map(c => {
+        const nameMatch = fuzzyMatch(searchFilter, c.name);
+        const imageMatch = fuzzyMatch(searchFilter, c.image);
+        const bestMatch = nameMatch.score > imageMatch.score ? nameMatch : imageMatch;
+        return { ...c, match: bestMatch.match, score: bestMatch.score };
+      })
+      .filter(c => c.match)
+      .sort((a, b) => b.score - a.score);
+  });
+
+  // Compile regex pattern for log search
+  let searchPattern = $derived(() => {
+    if (!logSearch) return null;
+
+    if (regexEnabled) {
+      try {
+        regexError = null;
+        return new RegExp(logSearch, 'gi');
+      } catch (e) {
+        regexError = e instanceof Error ? e.message : 'Invalid regex';
+        return null;
+      }
+    }
+
+    // Simple string search - escape special chars
+    const escaped = logSearch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(escaped, 'gi');
+  });
+
+  // Filtered logs by search with regex support
+  let filteredLogs = $derived(() => {
+    if (!searchPattern) return allLogs;
+
+    return allLogs.filter(l => searchPattern.test(l.line));
+  });
 
   let logAreaEl = $state<HTMLDivElement | null>(null);
 
   function containerKey(c: Container): string {
     return `${c.id}@${c.hostId}`;
+  }
+
+  // Fuzzy matching for container search
+  function fuzzyMatch(query: string, text: string): { match: boolean; score: number } {
+    if (!query) return { match: true, score: 100 };
+
+    const q = query.toLowerCase();
+    const t = text.toLowerCase();
+
+    // Exact substring match - highest score
+    if (t.includes(q)) {
+      return { match: true, score: 100 };
+    }
+
+    // Acronym match (e.g., "ngx" matches "nginx-proxy")
+    const words = t.split(/[-_\s]/);
+    const acronym = words.map(w => w[0]).join('');
+    if (acronym.includes(q)) {
+      return { match: true, score: 80 };
+    }
+
+    // Character sequence match
+    let qIndex = 0;
+    let score = 0;
+    for (let i = 0; i < t.length && qIndex < q.length; i++) {
+      if (t[i] === q[qIndex]) {
+        qIndex++;
+        score += 50 / q.length;
+      }
+    }
+
+    return {
+      match: qIndex === q.length,
+      score: Math.round(score)
+    };
   }
 
   function formatTimestamp(ts: number): string {
@@ -234,6 +294,15 @@
     const seconds = String(date.getSeconds()).padStart(2, '0');
     const ms = String(date.getMilliseconds()).padStart(3, '0');
     return `${hours}:${minutes}:${seconds}.${ms}`;
+  }
+
+  // Highlight regex matches in log line
+  function highlightMatches(line: string): string {
+    if (!logSearch || !searchPattern) return line;
+
+    return line.replace(searchPattern, (match) =>
+      `<mark class="bg-primary/30 text-foreground rounded px-0.5">${match}</mark>`
+    );
   }
 
   function toggleContainer(c: Container) {
@@ -699,15 +768,31 @@
 
         <div class="flex-1"></div>
 
-        <!-- Search logs -->
-        <div class="relative">
-          <Search class="absolute left-2 top-1.5 w-3.5 h-3.5 text-foreground-muted" />
-          <input
-            type="text"
-            bind:value={logSearch}
-            placeholder={t.searchLogs}
-            class="pl-7 pr-3 py-1 text-xs bg-background border border-border rounded-md text-foreground placeholder:text-foreground-muted focus:border-primary focus:outline-none w-40"
-          />
+        <!-- Search logs with regex toggle -->
+        <div class="flex items-center gap-1">
+          <div class="relative">
+            <Search class="absolute left-2 top-1.5 w-3.5 h-3.5 text-foreground-muted" />
+            <input
+              type="text"
+              bind:value={logSearch}
+              placeholder={regexEnabled ? "Regex pattern..." : t.searchLogs}
+              class="pl-7 pr-3 py-1 text-xs bg-background border {regexError ? 'border-destructive' : 'border-border'} rounded-md text-foreground placeholder:text-foreground-muted focus:border-primary focus:outline-none w-40"
+            />
+            {#if regexError}
+              <div class="absolute top-full left-0 mt-1 text-xs text-destructive bg-background border border-destructive rounded px-2 py-1 whitespace-nowrap z-10">
+                {regexError}
+              </div>
+            {/if}
+          </div>
+          <button
+            class="btn-icon hover:bg-background-tertiary {regexEnabled ? 'text-primary bg-primary/15' : 'text-foreground-muted'}"
+            onclick={() => (regexEnabled = !regexEnabled)}
+            title={regexEnabled ? "Disable regex" : "Enable regex"}
+          >
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+            </svg>
+          </button>
         </div>
 
         <!-- Copy -->
@@ -757,7 +842,7 @@
                     {#if preferences.showTimestamps}
                       <span class="text-foreground-muted/50 select-none">{formatTimestamp(entry.ts)} </span>
                     {/if}
-                    {entry.line}
+                    {@html highlightMatches(entry.line)}
                   </div>
                 {/each}
               </div>
@@ -779,7 +864,7 @@
               {#if mode === "multi"}
                 <span class="{entry.color} font-semibold">[{entry.name}]</span>{" "}
               {/if}
-              <span class="text-foreground-muted">{entry.line}</span>
+              <span class="text-foreground-muted">{@html highlightMatches(entry.line)}</span>
             </div>
           {/each}
         </div>
