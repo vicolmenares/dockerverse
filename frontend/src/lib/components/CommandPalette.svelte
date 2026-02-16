@@ -75,6 +75,7 @@
   class="fixed inset-0 z-50 flex items-start justify-center pt-[15vh] bg-black/60 backdrop-blur-sm"
   role="dialog"
   aria-modal="true"
+  tabindex="0"
   onclick={(e) => e.target === e.currentTarget && onclose()}
   onkeydown={handleKeydown}
 >
@@ -97,6 +98,8 @@
         <button
           onclick={() => (query = "")}
           class="text-foreground-muted hover:text-foreground"
+          aria-label="Clear search"
+          title="Clear search"
         >
           <X class="w-4 h-4" />
         </button>
