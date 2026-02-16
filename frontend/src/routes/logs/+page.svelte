@@ -23,6 +23,43 @@
 
   type LogMode = "single" | "multi" | "grouped";
 
+  // Stack grouping types (Dozzle-inspired)
+  interface DockerStack {
+    name: string;
+    containers: Container[];
+    isCompose: boolean; // true for Docker Compose stacks, false for standalone group
+    isExpanded?: boolean;
+  }
+
+  // Enhanced Container interface
+  interface Container {
+    id: string;
+    name: string;
+    hostId: string;
+    state: 'running' | 'exited' | 'paused' | 'restarting';
+    stack?: string; // com.docker.compose.project
+    service?: string; // com.docker.compose.service
+    labels?: Record<string, string>;
+  }
+
+  // Host interface
+  interface Host {
+    id: string;
+    name: string;
+    address: string;
+    type: 'local' | 'remote';
+  }
+
+  // Log display preferences (Dockhand-inspired)
+  interface LogPreferences {
+    fontSize: number; // pixels (10-24)
+    lineWrap: boolean;
+    autoScroll: boolean;
+    showTimestamps: boolean;
+    timestampFormat: 'absolute' | 'relative' | 'none';
+    maxLines: number; // buffer limit
+  }
+
   // State
   let mode = $state<LogMode>("single");
   let selectedContainers = $state<Set<string>>(new Set());
@@ -32,6 +69,21 @@
   let autoScroll = $state(true);
   let wrapLines = $state(true);
   let isLive = $state(false);
+
+  // Navigation state (Dozzle-inspired)
+  let selectedHost = $state<string | 'all'>('all');
+  let expandedStacks = $state<Set<string>>(new Set());
+  let stacks = $state<DockerStack[]>([]);
+
+  // Preferences state (Dockhand-inspired)
+  let preferences = $state<LogPreferences>({
+    fontSize: 14,
+    lineWrap: true,
+    autoScroll: true,
+    showTimestamps: true,
+    timestampFormat: 'absolute',
+    maxLines: 1000
+  });
 
   // Log entries: { containerKey, containerName, line, color }
   type LogEntry = {
