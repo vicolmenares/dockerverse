@@ -269,7 +269,7 @@
   });
 </script>
 
-<div class="flex flex-col h-[calc(100vh-7rem)]">
+<div class="flex flex-col flex-1 min-h-0">
   <!-- Header Bar -->
   <div class="flex items-center justify-between mb-4">
     <div class="flex items-center gap-3">
@@ -304,9 +304,9 @@
   </div>
 
   <!-- Main Content -->
-  <div class="flex gap-4 flex-1 min-h-0">
+  <div class="flex flex-1 min-h-0 gap-4">
     <!-- Left Sidebar: Container Selection -->
-    <div class="w-64 flex-shrink-0 flex flex-col bg-background-secondary border border-border rounded-xl overflow-hidden">
+    <aside class="w-64 flex-shrink-0 flex flex-col min-h-0 bg-background-secondary border border-border rounded-xl overflow-hidden">
       <!-- Search -->
       <div class="p-3 border-b border-border">
         <div class="relative">
@@ -354,10 +354,10 @@
           </button>
         {/each}
       </div>
-    </div>
+    </aside>
 
     <!-- Log Area -->
-    <div class="flex-1 flex flex-col bg-background-secondary border border-border rounded-xl overflow-hidden">
+    <div class="flex-1 flex flex-col min-h-0 bg-background-secondary border border-border rounded-xl overflow-hidden">
       <!-- Toolbar -->
       <div class="flex items-center gap-2 px-3 py-2 border-b border-border bg-background-tertiary/30">
         <!-- Pause/Play -->
