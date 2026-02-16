@@ -851,7 +851,15 @@ func (s *UserStore) save() {
 func (s *UserStore) GetUser(username string) *User {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.Users[username]
+
+	// Case-insensitive username lookup
+	usernameLower := strings.ToLower(username)
+	for _, u := range s.Users {
+		if strings.ToLower(u.Username) == usernameLower {
+			return u
+		}
+	}
+	return nil
 }
 
 // SafeUser returns a copy without sensitive fields for API responses
@@ -1043,8 +1051,17 @@ func (s *UserStore) ValidateLogin(username, password string) (*User, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	user, exists := s.Users[username]
-	if !exists {
+	// Case-insensitive username lookup: find user by comparing lowercase
+	var user *User
+	usernameLower := strings.ToLower(username)
+	for _, u := range s.Users {
+		if strings.ToLower(u.Username) == usernameLower {
+			user = u
+			break
+		}
+	}
+
+	if user == nil {
 		return nil, fmt.Errorf("invalid credentials")
 	}
 
