@@ -35,6 +35,8 @@
     pendingUpdatesCount,
     imageUpdates,
     checkForUpdates,
+    connectWebSocket,
+    disconnectWebSocket,
   } from "$lib/stores/docker";
   import {
     isAuthenticated,
@@ -249,17 +251,20 @@
       auth.logout();
     });
 
-    // Start update check if already authenticated
+    // Start update check and WebSocket if already authenticated
     if ($isAuthenticated) {
       startUpdateCheck();
+      connectWebSocket();
     }
 
     // Watch for auth changes
     const unsubAuth = isAuthenticated.subscribe((authenticated) => {
       if (authenticated) {
         startUpdateCheck();
+        connectWebSocket();
       } else {
         stopUpdateCheck();
+        disconnectWebSocket();
       }
     });
 
@@ -273,6 +278,7 @@
   onDestroy(() => {
     cleanupActivityTracking();
     stopUpdateCheck();
+    disconnectWebSocket();
   });
 </script>
 
