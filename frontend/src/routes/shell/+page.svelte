@@ -179,11 +179,15 @@
     <div class="flex items-center bg-background-secondary border-b border-border overflow-x-auto flex-shrink-0 scrollbar-hide">
       {#each tabs as tab}
         {@const tabStatus = tabStatuses.get(tab.id) ?? "connecting"}
-        <button
-          class="flex items-center gap-2 px-4 py-2 text-sm border-b-2 whitespace-nowrap transition-colors {activeTabId === tab.id
+        <div
+          role="tab"
+          tabindex="0"
+          class="flex items-center gap-2 px-4 py-2 text-sm border-b-2 whitespace-nowrap transition-colors cursor-pointer {activeTabId === tab.id
             ? 'border-primary text-foreground bg-background'
             : 'border-transparent text-foreground-muted hover:text-foreground'}"
           onclick={() => (activeTabId = tab.id)}
+          onkeydown={(e) => e.key === "Enter" && (activeTabId = tab.id)}
+          aria-selected={activeTabId === tab.id}
         >
           {#if tab.type === "host"}
             <Server class="w-3.5 h-3.5 flex-shrink-0" />
@@ -200,7 +204,7 @@
           >
             <X class="w-3 h-3" />
           </button>
-        </button>
+        </div>
       {/each}
       <button
         class="flex items-center px-3 py-2 text-foreground-muted hover:text-foreground"
