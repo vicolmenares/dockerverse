@@ -24,6 +24,7 @@
     Users,
     ArrowUpCircle,
     ScrollText,
+    SquareTerminal,
     Server,
     ChevronsLeft,
     ChevronsRight,
@@ -112,6 +113,12 @@
       icon: ScrollText,
       label: "Logs",
       href: "/logs",
+    },
+    {
+      id: "shell",
+      icon: SquareTerminal,
+      label: "Shell",
+      href: "/shell",
     },
     {
       id: "environments",
