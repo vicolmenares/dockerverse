@@ -989,8 +989,9 @@
         <!-- Grouped mode: side by side -->
         <div class="flex-1 flex min-h-0 divide-x divide-border overflow-x-auto">
           {#each [...selectedContainers] as key}
-            {@const containerLogs = logsByContainer.get(key) || []}
-            {@const name = containerLogs[0]?.name || key.split("@")[0]}
+            {@const rawLogs = logsByContainer.get(key) || []}
+            {@const containerLogs = displayLimit ? rawLogs.slice(-displayLimit) : rawLogs}
+            {@const name = rawLogs[0]?.name || key.split("@")[0]}
             {@const color = getContainerColor(key)}
             <div class="flex-1 min-w-[300px] flex flex-col">
               <div class="px-3 py-1.5 border-b border-border bg-background-tertiary/20">
