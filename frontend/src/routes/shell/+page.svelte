@@ -18,6 +18,8 @@
   let activeTabId = $state<string | null>(null);
   let selectedHostId = $state<string>("");
   let selectedContainerId = $state<string>("");
+  let tabStatuses = $state<Map<string, "connecting" | "connected" | "disconnected" | "error">>(new Map());
+  let lastOpenedType = $state<"container" | "host">("container");
 
   let t = $derived($translations[$language] || $translations.en);
 
@@ -46,6 +48,10 @@
     return Math.random().toString(36).slice(2, 9);
   }
 
+  function setTabStatus(tabId: string, status: "connecting" | "connected" | "disconnected" | "error") {
+    tabStatuses = new Map(tabStatuses).set(tabId, status);
+  }
+
   function openContainerShell() {
     const container = $containers.find((c) => c.id === selectedContainerId);
     if (!container) return;
@@ -62,6 +68,7 @@
       },
     ];
     activeTabId = id;
+    lastOpenedType = "container";
   }
 
   function openHostSSH() {
@@ -79,6 +86,7 @@
       },
     ];
     activeTabId = id;
+    lastOpenedType = "host";
   }
 
   function closeTab(tabId: string) {
@@ -91,9 +99,16 @@
         activeTabId = null;
       }
     }
+    const newStatuses = new Map(tabStatuses);
+    newStatuses.delete(tabId);
+    tabStatuses = newStatuses;
   }
 
   function handleKeydown(e: KeyboardEvent) {
+    if (e.ctrlKey && e.key === "t") {
+      e.preventDefault();
+      openContainerShell();
+    }
     if (e.ctrlKey && e.key === "w" && activeTabId) {
       e.preventDefault();
       closeTab(activeTabId);
@@ -174,6 +189,8 @@
           {:else}
             <Box class="w-3.5 h-3.5 flex-shrink-0" />
           {/if}
+          {@const status = tabStatuses.get(tab.id) ?? "connecting"}
+          <span class="w-2 h-2 rounded-full flex-shrink-0 {status === 'connected' ? 'bg-running' : status === 'connecting' ? 'bg-primary animate-pulse' : 'bg-paused'}"></span>
           <span>{tab.label}</span>
           <span class="text-foreground-muted text-xs">@{tab.hostLabel}</span>
           <button
@@ -187,7 +204,7 @@
       {/each}
       <button
         class="flex items-center px-3 py-2 text-foreground-muted hover:text-foreground"
-        onclick={openContainerShell}
+        onclick={() => lastOpenedType === "host" ? openHostSSH() : openContainerShell()}
         title="New tab"
         aria-label="New terminal tab"
       >
@@ -225,6 +242,7 @@
               mode="container"
               terminalMode="embedded"
               active={activeTabId === tab.id}
+              onStatusChange={(s) => setTabStatus(tab.id, s)}
             />
           {:else}
             <Terminal
@@ -232,6 +250,7 @@
               mode="host"
               terminalMode="embedded"
               active={activeTabId === tab.id}
+              onStatusChange={(s) => setTabStatus(tab.id, s)}
             />
           {/if}
         </div>
