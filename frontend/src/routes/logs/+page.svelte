@@ -236,11 +236,23 @@
   let searchPattern = $derived(regexResult.pattern);
   let regexError = $derived(regexResult.error);
 
-  // Filtered logs by search with regex support
-  let filteredLogs = $derived.by(() => {
-    if (!searchPattern) return allLogs;
+  // How many of the last lines to display (null = all)
+  let displayLimit = $state<number | null>(null);
+  const displayLimitOptions = [
+    { label: 'All', value: null },
+    { label: 'Last 100', value: 100 },
+    { label: 'Last 500', value: 500 },
+    { label: 'Last 1000', value: 1000 },
+    { label: 'Last 2000', value: 2000 },
+  ];
 
-    return allLogs.filter(l => searchPattern.test(l.line));
+  // Filtered logs by search with regex support, then trimmed to displayLimit
+  let filteredLogs = $derived.by(() => {
+    const matched = searchPattern
+      ? allLogs.filter(l => searchPattern.test(l.line))
+      : allLogs;
+    if (displayLimit === null) return matched;
+    return matched.slice(-displayLimit);
   });
 
   let logAreaEl = $state<HTMLDivElement | null>(null);
@@ -813,6 +825,17 @@
         </button>
 
         <div class="flex-1"></div>
+
+        <!-- Last N lines selector -->
+        <select
+          bind:value={displayLimit}
+          class="text-xs bg-background border border-border rounded-md px-2 py-1 text-foreground focus:border-primary focus:outline-none"
+          title="Number of lines to display"
+        >
+          {#each displayLimitOptions as opt}
+            <option value={opt.value}>{opt.label}</option>
+          {/each}
+        </select>
 
         <!-- Search logs with regex toggle -->
         <div class="flex items-center gap-1">
