@@ -601,7 +601,7 @@
     if (level === 'warn')  return '<span class="text-amber-500 select-none mr-1.5 text-xs leading-none">●</span>';
     if (level === 'info')  return '<span class="text-green-500 select-none mr-1.5 text-xs leading-none">●</span>';
     if (level === 'debug') return '<span class="text-blue-400 select-none mr-1.5 text-xs leading-none">●</span>';
-    return '<span class="text-foreground-muted/25 select-none mr-1.5 text-xs leading-none">●</span>';
+    return '<span class="text-slate-600 select-none mr-1.5 text-xs leading-none">●</span>';
   }
 
   // Color log level keywords in Dozzle colors — bracket format AND plain keyword: format
@@ -1059,24 +1059,25 @@
                 <span class="text-xs font-medium {color}">{name}</span>
               </div>
               <div
-                class="flex-1 overflow-y-auto p-3 font-mono leading-relaxed {wrapLines ? 'whitespace-pre-wrap break-all' : 'whitespace-pre overflow-x-auto'}"
+                class="flex-1 overflow-y-auto p-3 log-font leading-relaxed {wrapLines ? 'whitespace-pre-wrap break-all' : 'whitespace-pre overflow-x-auto'}"
                 style="font-size: {preferences.fontSize}px"
               >
-                {#each buildBlocks(containerLogs) as block}
+                {#each buildBlocks(containerLogs) as block, i}
                   {@const bc = getBlockBorderClass(block.level)}
-                  <div class="-mx-1 rounded {bc}">
-                    <div class="hover:bg-background-tertiary/20 px-1">
+                  {@const zebraClass = (bc === '' && i % 2 === 1) ? 'bg-white/[0.03]' : ''}
+                  <div class="-mx-1 rounded {bc} {zebraClass}">
+                    <div class="hover:bg-white/[0.04] px-1">
                       {#if preferences.showTimestamps}
-                        <span class="text-sky-400/70 select-none tabular-nums">{formatTimestamp(block.primary.ts)} </span>
+                        <span class="text-sky-300 select-none tabular-nums">{formatTimestamp(block.primary.ts)} </span>
                       {/if}
-                      {@html getLevelDot(block.level)}<span class="{block.level === 'debug' ? 'text-foreground-muted/50' : block.level === 'default' ? 'text-foreground-muted' : 'text-foreground'}">{@html colorKeyword(highlightMatches(cleanLine(block.primary.line)), block.level)}</span>
+                      {@html getLevelDot(block.level)}<span class="{block.level === 'debug' ? 'text-slate-400' : block.level === 'default' ? 'text-gray-100' : 'text-foreground'}">{@html colorKeyword(highlightMatches(cleanLine(block.primary.line)), block.level)}</span>
                     </div>
                     {#each block.continuations as cont}
-                      <div class="hover:bg-background-tertiary/20 px-1">
+                      <div class="hover:bg-white/[0.04] px-1">
                         {#if preferences.showTimestamps}
-                          <span class="text-sky-400/40 select-none tabular-nums">{formatTimestamp(cont.ts)} </span>
+                          <span class="text-sky-300/50 select-none tabular-nums">{formatTimestamp(cont.ts)} </span>
                         {/if}
-                        <span class="text-foreground-muted/50">{@html highlightMatches(cleanLine(cont.line))}</span>
+                        <span class="text-slate-400">{@html highlightMatches(cleanLine(cont.line))}</span>
                       </div>
                     {/each}
                   </div>
@@ -1089,29 +1090,30 @@
         <!-- Single and Multi mode: unified log view -->
         <div
           bind:this={logAreaEl}
-          class="flex-1 overflow-y-auto p-3 font-mono leading-relaxed {wrapLines ? 'whitespace-pre-wrap break-all' : 'whitespace-pre overflow-x-auto'}"
+          class="flex-1 overflow-y-auto p-3 log-font leading-relaxed {wrapLines ? 'whitespace-pre-wrap break-all' : 'whitespace-pre overflow-x-auto'}"
           style="font-size: {preferences.fontSize}px"
         >
-          {#each filteredBlocks as block}
+          {#each filteredBlocks as block, i}
             {@const bc = getBlockBorderClass(block.level)}
-            <div class="-mx-1 rounded {bc}">
+            {@const zebraClass = (bc === '' && i % 2 === 1) ? 'bg-white/[0.03]' : ''}
+            <div class="-mx-1 rounded {bc} {zebraClass}">
               <!-- Primary line -->
-              <div class="hover:bg-background-tertiary/20 px-1">
+              <div class="hover:bg-white/[0.04] px-1">
                 {#if preferences.showTimestamps}
-                  <span class="text-sky-400/70 select-none tabular-nums">{formatTimestamp(block.primary.ts)} </span>
+                  <span class="text-sky-300 select-none tabular-nums">{formatTimestamp(block.primary.ts)} </span>
                 {/if}
                 {#if mode === "multi"}
                   <span class="{block.primary.color} font-semibold">[{block.primary.name}]</span>{" "}
                 {/if}
-                {@html getLevelDot(block.level)}<span class="{block.level === 'debug' ? 'text-foreground-muted/50' : block.level === 'default' ? 'text-foreground-muted' : 'text-foreground'}">{@html colorKeyword(highlightMatches(cleanLine(block.primary.line)), block.level)}</span>
+                {@html getLevelDot(block.level)}<span class="{block.level === 'debug' ? 'text-slate-400' : block.level === 'default' ? 'text-gray-100' : 'text-foreground'}">{@html colorKeyword(highlightMatches(cleanLine(block.primary.line)), block.level)}</span>
               </div>
               <!-- Continuation / stack trace lines share the same border block -->
               {#each block.continuations as cont}
-                <div class="hover:bg-background-tertiary/20 px-1">
+                <div class="hover:bg-white/[0.04] px-1">
                   {#if preferences.showTimestamps}
-                    <span class="text-sky-400/40 select-none tabular-nums">{formatTimestamp(cont.ts)} </span>
+                    <span class="text-sky-300/50 select-none tabular-nums">{formatTimestamp(cont.ts)} </span>
                   {/if}
-                  <span class="text-foreground-muted/50">{@html highlightMatches(cleanLine(cont.line))}</span>
+                  <span class="text-slate-400">{@html highlightMatches(cleanLine(cont.line))}</span>
                 </div>
               {/each}
             </div>
@@ -1123,6 +1125,10 @@
 </div>
 
 <style>
+  .log-font {
+    font-family: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', ui-monospace, 'SF Mono', monospace;
+  }
+
   @keyframes slide-in-from-top-2 {
     from {
       opacity: 0;
