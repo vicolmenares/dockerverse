@@ -178,6 +178,7 @@
   {#if tabs.length > 0}
     <div class="flex items-center bg-background-secondary border-b border-border overflow-x-auto flex-shrink-0 scrollbar-hide">
       {#each tabs as tab}
+        {@const tabStatus = tabStatuses.get(tab.id) ?? "connecting"}
         <button
           class="flex items-center gap-2 px-4 py-2 text-sm border-b-2 whitespace-nowrap transition-colors {activeTabId === tab.id
             ? 'border-primary text-foreground bg-background'
@@ -189,8 +190,7 @@
           {:else}
             <Box class="w-3.5 h-3.5 flex-shrink-0" />
           {/if}
-          {@const status = tabStatuses.get(tab.id) ?? "connecting"}
-          <span class="w-2 h-2 rounded-full flex-shrink-0 {status === 'connected' ? 'bg-running' : status === 'connecting' ? 'bg-primary animate-pulse' : status === 'error' ? 'bg-stopped' : 'bg-paused'}"></span>
+          <span class="w-2 h-2 rounded-full flex-shrink-0 {tabStatus === 'connected' ? 'bg-running' : tabStatus === 'connecting' ? 'bg-primary animate-pulse' : tabStatus === 'error' ? 'bg-stopped' : 'bg-paused'}"></span>
           <span>{tab.label}</span>
           <span class="text-foreground-muted text-xs">@{tab.hostLabel}</span>
           <button
