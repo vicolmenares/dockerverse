@@ -26,6 +26,7 @@
     terminalMode = "popup",
     active = true,
     onClose,
+    onStatusChange,
   }: {
     container?: Container;
     host?: Host;
@@ -33,6 +34,7 @@
     terminalMode?: "popup" | "embedded";
     active?: boolean;
     onClose?: () => void;
+    onStatusChange?: (status: "connecting" | "connected" | "disconnected" | "error") => void;
   } = $props();
 
   let isEmbedded = $derived(terminalMode === "embedded");
@@ -673,6 +675,11 @@
     if (active && fitAddon) {
       setTimeout(() => fitAddon?.fit(), 50);
     }
+  });
+
+  // Notify parent when connection status changes
+  $effect(() => {
+    onStatusChange?.(connectionStatus);
   });
 
   // Connection status color
