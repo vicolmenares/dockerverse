@@ -570,9 +570,10 @@
     return '<span class="text-foreground-muted/25 select-none mr-1.5 text-xs leading-none">●</span>';
   }
 
-  // Color bracket-format keywords [error], [warn], [info], [debug] in Dozzle colors
+  // Color log level keywords in Dozzle colors — bracket format AND plain keyword: format
   function colorKeyword(html: string, _level: LogLevel): string {
     return html
+      // Bracket format: [error], [warn], [info], [debug]
       .replace(/\[(error|err|fatal|panic|crit|critical)\]/gi,
         '<span class="text-red-400 font-semibold">[$1]</span>')
       .replace(/\[(warn|warning|deprecated)\]/gi,
@@ -580,7 +581,16 @@
       .replace(/\[(info|information)\]/gi,
         '<span class="text-green-400 font-semibold">[$1]</span>')
       .replace(/\[(debug|trace|verbose)\]/gi,
-        '<span class="text-blue-400 font-semibold">[$1]</span>');
+        '<span class="text-blue-400 font-semibold">[$1]</span>')
+      // Plain keyword with colon: error:, warn:, info:, debug:
+      .replace(/\b(error|fatal|panic|critical|exception|traceback):/gi,
+        '<span class="text-red-400 font-semibold">$1:</span>')
+      .replace(/\b(warn|warning|deprecated):/gi,
+        '<span class="text-amber-400 font-semibold">$1:</span>')
+      .replace(/\b(info):/gi,
+        '<span class="text-green-400 font-semibold">$1:</span>')
+      .replace(/\b(debug|verbose|trace):/gi,
+        '<span class="text-blue-400 font-semibold">$1:</span>');
   }
 
   function setMode(m: LogMode) {
