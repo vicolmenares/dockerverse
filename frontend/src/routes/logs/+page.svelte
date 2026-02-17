@@ -240,6 +240,38 @@
   let displayLimitText = $state<string>('');
   let displayLimit = $derived(displayLimitText.trim() === '' ? null : Math.max(1, parseInt(displayLimitText) || 0) || null);
 
+  // Resizable left panel
+  let sidebarPanelWidth = $state(240);
+  let isResizingPanel = $state(false);
+
+  function startPanelResize(e: MouseEvent) {
+    e.preventDefault();
+    isResizingPanel = true;
+    const startX = e.clientX;
+    const startWidth = sidebarPanelWidth;
+    const onMove = (ev: MouseEvent) => {
+      sidebarPanelWidth = Math.max(160, Math.min(480, startWidth + ev.clientX - startX));
+    };
+    const onUp = () => {
+      isResizingPanel = false;
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }
+
+  // Names of selected containers for toolbar display
+  let selectedContainerNames = $derived.by(() =>
+    [...selectedContainers].map(key => {
+      const logs = logsByContainer.get(key);
+      if (logs && logs.length > 0) return { name: logs[0].name, key };
+      const [id, hostId] = key.split('@');
+      const c = $containers.find(c => c.id === id && c.hostId === hostId);
+      return { name: c?.name || key.split('@')[0], key };
+    })
+  );
+
   // Filtered logs by search with regex support, then trimmed to displayLimit
   let filteredLogs = $derived.by(() => {
     const matched = searchPattern
@@ -301,13 +333,15 @@
       if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
       return `${Math.floor(diff / 3600000)}h ago`;
     }
-    // absolute
+    // absolute: DD/MM/YYYY HH:MM:SS
     const date = new Date(ts);
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const year = date.getFullYear();
     const hours = String(date.getHours()).padStart(2, '0');
     const minutes = String(date.getMinutes()).padStart(2, '0');
     const seconds = String(date.getSeconds()).padStart(2, '0');
-    const ms = String(date.getMilliseconds()).padStart(3, '0');
-    return `${hours}:${minutes}:${seconds}.${ms}`;
+    return `${day}/${month}/${year} ${hours}:${minutes}:${seconds}`;
   }
 
   function cycleTimestampFormat() {
@@ -688,9 +722,12 @@
   </div>
 
   <!-- Main Content -->
-  <div class="flex gap-3 flex-1 min-h-0 items-stretch px-4 sm:px-6 lg:px-8 pb-4">
-    <!-- Left Sidebar: Container Selection (fixed width, never resizes) -->
-    <div class="w-60 flex-none flex flex-col bg-background-secondary border border-border rounded-xl overflow-hidden">
+  <div class="flex flex-1 min-h-0 items-stretch px-4 sm:px-6 lg:px-8 pb-4 {isResizingPanel ? 'select-none cursor-col-resize' : ''}">
+    <!-- Left Sidebar: Container Selection (resizable) -->
+    <div
+      class="flex-none flex flex-col bg-background-secondary border border-border rounded-xl overflow-hidden"
+      style="width: {sidebarPanelWidth}px; min-width: 160px; max-width: 480px"
+    >
       <!-- Host selector breadcrumb -->
       <div class="flex items-center gap-2 px-4 py-3 border-b border-border bg-background-tertiary">
         <span class="text-sm text-foreground-muted font-medium">Hosts</span>
@@ -795,7 +832,7 @@
                   {@const key = containerKey(container)}
                   {@const serviceLabel = container.labels?.['com.docker.compose.service']}
                   <label
-                    class="flex items-center gap-2 px-3 py-1.5 rounded hover:bg-background-tertiary cursor-pointer group transition-all {selectedContainers.has(key) ? 'bg-primary/10' : ''}"
+                    class="flex items-center gap-2 px-3 py-1.5 rounded cursor-pointer group transition-all {selectedContainers.has(key) ? 'bg-primary/15 text-primary hover:bg-primary/20' : 'hover:bg-background-tertiary'}"
                   >
                     <!-- Checkbox -->
                     <input
@@ -818,7 +855,7 @@
                     ></div>
 
                     <!-- Container name -->
-                    <span class="flex-1 text-sm group-hover:text-primary transition-colors truncate" title={container.name}>
+                    <span class="flex-1 text-sm {selectedContainers.has(key) ? 'text-primary font-medium' : 'group-hover:text-primary'} transition-colors truncate" title={container.name}>
                       {container.name}
                     </span>
 
@@ -848,6 +885,17 @@
           </div>
         {/if}
       </div>
+    </div>
+
+    <!-- Resize handle -->
+    <div
+      class="w-3 flex-none flex items-center justify-center cursor-col-resize group hover:bg-primary/5 rounded transition-colors"
+      onmousedown={startPanelResize}
+      title="Drag to resize"
+      role="separator"
+      aria-label="Resize panel"
+    >
+      <div class="w-0.5 h-10 bg-border group-hover:bg-primary/50 rounded-full transition-colors"></div>
     </div>
 
     <!-- Log Area (takes remaining space, min-w-0 prevents flex overflow) -->
@@ -913,8 +961,21 @@
           onclick={cycleTimestampFormat}
           title="Timestamp format: {preferences.timestampFormat} (click to cycle)"
         >
-          {preferences.timestampFormat === 'absolute' ? '12:34' : preferences.timestampFormat === 'relative' ? '~ago' : '···'}
+          {preferences.timestampFormat === 'absolute' ? '17/02' : preferences.timestampFormat === 'relative' ? '~ago' : '···'}
         </button>
+
+        <!-- Selected container name pills (single/multi mode) -->
+        {#if mode !== 'grouped' && selectedContainerNames.length > 0}
+          <div class="flex items-center gap-1 overflow-hidden max-w-[280px]">
+            {#each selectedContainerNames.slice(0, 3) as {name, key}}
+              {@const color = getContainerColor(key)}
+              <span class="text-xs {color} font-medium px-1.5 py-0.5 bg-background-tertiary rounded-md truncate max-w-[90px] border border-border/50" title={name}>{name}</span>
+            {/each}
+            {#if selectedContainerNames.length > 3}
+              <span class="text-xs text-foreground-muted">+{selectedContainerNames.length - 3}</span>
+            {/if}
+          </div>
+        {/if}
 
         <div class="flex-1"></div>
 
@@ -1006,14 +1067,14 @@
                   <div class="-mx-1 rounded {bc}">
                     <div class="hover:bg-background-tertiary/20 px-1">
                       {#if preferences.showTimestamps}
-                        <span class="text-foreground-muted/50 select-none">{formatTimestamp(block.primary.ts)} </span>
+                        <span class="text-sky-400/70 select-none tabular-nums">{formatTimestamp(block.primary.ts)} </span>
                       {/if}
                       {@html getLevelDot(block.level)}<span class="{block.level === 'debug' ? 'text-foreground-muted/50' : block.level === 'default' ? 'text-foreground-muted' : 'text-foreground'}">{@html colorKeyword(highlightMatches(cleanLine(block.primary.line)), block.level)}</span>
                     </div>
                     {#each block.continuations as cont}
                       <div class="hover:bg-background-tertiary/20 px-1">
                         {#if preferences.showTimestamps}
-                          <span class="text-foreground-muted/30 select-none">{formatTimestamp(cont.ts)} </span>
+                          <span class="text-sky-400/40 select-none tabular-nums">{formatTimestamp(cont.ts)} </span>
                         {/if}
                         <span class="text-foreground-muted/50">{@html highlightMatches(cleanLine(cont.line))}</span>
                       </div>
@@ -1037,7 +1098,7 @@
               <!-- Primary line -->
               <div class="hover:bg-background-tertiary/20 px-1">
                 {#if preferences.showTimestamps}
-                  <span class="text-foreground-muted/50 select-none">{formatTimestamp(block.primary.ts)} </span>
+                  <span class="text-sky-400/70 select-none tabular-nums">{formatTimestamp(block.primary.ts)} </span>
                 {/if}
                 {#if mode === "multi"}
                   <span class="{block.primary.color} font-semibold">[{block.primary.name}]</span>{" "}
@@ -1048,7 +1109,7 @@
               {#each block.continuations as cont}
                 <div class="hover:bg-background-tertiary/20 px-1">
                   {#if preferences.showTimestamps}
-                    <span class="text-foreground-muted/30 select-none">{formatTimestamp(cont.ts)} </span>
+                    <span class="text-sky-400/40 select-none tabular-nums">{formatTimestamp(cont.ts)} </span>
                   {/if}
                   <span class="text-foreground-muted/50">{@html highlightMatches(cleanLine(cont.line))}</span>
                 </div>
