@@ -516,11 +516,11 @@
   }
 
   onMount(() => {
-    let active = true;
+    let isMounted = true;
 
     void (async () => {
       await initTerminal();
-      if (!active) return;
+      if (!isMounted) return;
       connectWebSocket();
     })();
 
@@ -531,7 +531,7 @@
     resizeObserver.observe(terminalElement);
 
     return () => {
-      active = false;
+      isMounted = false;
       resizeObserver.disconnect();
     };
   });
@@ -910,9 +910,11 @@
               <RefreshCw class="w-4 h-4 mr-1" />
               {t.reconnect}
             </button>
+            {#if onClose}
             <button class="btn btn-ghost text-sm" onclick={onClose}>
               {t.close}
             </button>
+            {/if}
           </div>
         </div>
       </div>
