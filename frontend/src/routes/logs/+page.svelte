@@ -237,14 +237,8 @@
   let regexError = $derived(regexResult.error);
 
   // How many of the last lines to display (null = all)
-  let displayLimit = $state<number | null>(null);
-  const displayLimitOptions = [
-    { label: 'All', value: null },
-    { label: 'Last 100', value: 100 },
-    { label: 'Last 500', value: 500 },
-    { label: 'Last 1000', value: 1000 },
-    { label: 'Last 2000', value: 2000 },
-  ];
+  let displayLimitText = $state<string>('');
+  let displayLimit = $derived(displayLimitText.trim() === '' ? null : Math.max(1, parseInt(displayLimitText) || 0) || null);
 
   // Filtered logs by search with regex support, then trimmed to displayLimit
   let filteredLogs = $derived.by(() => {
@@ -560,9 +554,9 @@
 
 <svelte:window onkeydown={handleKeydown} />
 
-<div class="-mx-4 sm:-mx-6 lg:-mx-8 -mt-6 -mb-6 flex flex-col h-[calc(100vh-4rem)] overflow-hidden">
+<div class="fixed top-16 left-0 lg:left-64 right-0 bottom-0 flex flex-col overflow-hidden bg-background z-10">
   <!-- Header Bar -->
-  <div class="flex items-center justify-between px-4 sm:px-6 lg:px-8 pt-4 pb-3 flex-none">
+  <div class="flex items-center justify-between px-4 sm:px-6 lg:px-8 pt-4 pb-3 flex-none border-b border-border/50">
     <div class="flex items-center gap-3">
       <ScrollText class="w-6 h-6 text-primary" />
       <h2 class="text-xl font-bold text-foreground">{t.title}</h2>
@@ -833,17 +827,16 @@
 
         <div class="flex-1"></div>
 
-        <!-- Last N lines selector -->
-        <select
-          bind:value={displayLimit}
-          class="text-xs bg-background text-foreground border border-border rounded-md px-2 py-1 focus:border-primary focus:outline-none cursor-pointer"
-          title="Lines to display"
+        <!-- Last N lines input -->
+        <input
+          type="text"
+          bind:value={displayLimitText}
+          placeholder="All lines"
+          class="text-xs bg-background text-foreground border border-border rounded-md px-2 py-1 w-20 focus:border-primary focus:outline-none"
+          title="Type number to show last N lines, leave empty for all"
           aria-label="Lines to display"
-        >
-          {#each displayLimitOptions as opt}
-            <option value={opt.value} class="bg-background text-foreground">{opt.label}</option>
-          {/each}
-        </select>
+          inputmode="numeric"
+        />
 
         <!-- Search logs with regex toggle -->
         <div class="flex items-center gap-1">
