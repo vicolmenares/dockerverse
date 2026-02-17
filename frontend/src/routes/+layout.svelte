@@ -74,6 +74,7 @@
   let activeSidebarItem = $derived(() => {
     const pathname = $page.url.pathname;
     if (pathname.startsWith('/logs')) return 'logs';
+    if (pathname.startsWith('/shell')) return 'shell';
     if (pathname.startsWith('/settings/users')) return 'users';
     if (pathname.startsWith('/settings/notifications')) return 'notifications';
     if (pathname.startsWith('/settings/appearance')) return 'appearance';
