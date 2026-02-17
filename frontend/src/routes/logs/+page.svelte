@@ -502,6 +502,30 @@
     URL.revokeObjectURL(url);
   }
 
+  // Log level detection for color-coded highlighting (Dozzle-style)
+  type LogLevel = 'error' | 'warn' | 'debug' | 'default';
+
+  function getLogLevel(line: string): LogLevel {
+    const lower = line.toLowerCase();
+    if (/\b(error|err|fatal|panic|crit|critical|exception|traceback|failed)\b/.test(lower)) return 'error';
+    if (/\b(warn|warning|deprecated)\b/.test(lower)) return 'warn';
+    if (/\b(debug|trace|verbose)\b/.test(lower)) return 'debug';
+    return 'default';
+  }
+
+  function getLogLevelClasses(line: string): { row: string; text: string; ts: string } {
+    switch (getLogLevel(line)) {
+      case 'error':
+        return { row: 'border-l-2 border-red-500 bg-red-500/5 pl-2', text: 'text-red-400', ts: 'text-red-400/50' };
+      case 'warn':
+        return { row: 'border-l-2 border-amber-500 bg-amber-500/5 pl-2', text: 'text-amber-400', ts: 'text-amber-400/50' };
+      case 'debug':
+        return { row: '', text: 'text-foreground-muted/50', ts: 'text-foreground-muted/30' };
+      default:
+        return { row: '', text: 'text-foreground-muted', ts: 'text-foreground-muted/50' };
+    }
+  }
+
   function setMode(m: LogMode) {
     mode = m;
     if (m === "single" && selectedContainers.size > 1) {
@@ -910,11 +934,12 @@
                 style="font-size: {preferences.fontSize}px"
               >
                 {#each containerLogs as entry}
-                  <div class="text-foreground-muted hover:text-foreground hover:bg-background-tertiary/30 px-1 -mx-1 rounded">
+                  {@const lc = getLogLevelClasses(entry.line)}
+                  <div class="hover:bg-background-tertiary/30 px-1 -mx-1 rounded {lc.row}">
                     {#if preferences.showTimestamps}
-                      <span class="text-foreground-muted/50 select-none">{formatTimestamp(entry.ts)} </span>
+                      <span class="{lc.ts} select-none">{formatTimestamp(entry.ts)} </span>
                     {/if}
-                    {@html highlightMatches(entry.line)}
+                    <span class="{lc.text}">{@html highlightMatches(entry.line)}</span>
                   </div>
                 {/each}
               </div>
@@ -929,14 +954,15 @@
           style="font-size: {preferences.fontSize}px"
         >
           {#each filteredLogs as entry}
-            <div class="hover:bg-background-tertiary/30 px-1 -mx-1 rounded">
+            {@const lc = getLogLevelClasses(entry.line)}
+            <div class="hover:bg-background-tertiary/30 px-1 -mx-1 rounded {lc.row}">
               {#if preferences.showTimestamps}
-                <span class="text-foreground-muted/50 select-none">{formatTimestamp(entry.ts)} </span>
+                <span class="{lc.ts} select-none">{formatTimestamp(entry.ts)} </span>
               {/if}
               {#if mode === "multi"}
                 <span class="{entry.color} font-semibold">[{entry.name}]</span>{" "}
               {/if}
-              <span class="text-foreground-muted">{@html highlightMatches(entry.line)}</span>
+              <span class="{lc.text}">{@html highlightMatches(entry.line)}</span>
             </div>
           {/each}
         </div>
