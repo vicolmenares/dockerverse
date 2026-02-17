@@ -25,6 +25,8 @@
     ArrowUpCircle,
     ScrollText,
     Server,
+    ChevronsLeft,
+    ChevronsRight,
   } from "lucide-svelte";
   import CommandPalette from "$lib/components/CommandPalette.svelte";
   import Login from "$lib/components/Login.svelte";
@@ -53,6 +55,12 @@
   let showSidebar = $state(false);
   let isRefreshing = $state(false);
   let showUpdatesDropdown = $state(false);
+  let navCollapsed = $state(browser ? localStorage.getItem('dockerverse-nav-collapsed') === 'true' : false);
+
+  function toggleNav() {
+    navCollapsed = !navCollapsed;
+    if (browser) localStorage.setItem('dockerverse-nav-collapsed', String(navCollapsed));
+  }
 
   // Derive active sidebar item from current URL path
   let activeSidebarItem = $derived(() => {
@@ -298,77 +306,106 @@
 
     <!-- Sidebar -->
     <aside
-      class="fixed lg:sticky top-0 left-0 z-50 h-screen w-64 bg-background-secondary border-r border-border transform transition-transform duration-300 lg:translate-x-0 {showSidebar
+      class="fixed lg:sticky top-0 left-0 z-50 h-screen bg-background-secondary border-r border-border transform transition-all duration-300 lg:translate-x-0 {showSidebar
         ? 'translate-x-0'
         : '-translate-x-full lg:translate-x-0'}"
+      style="width: {navCollapsed ? '3.5rem' : '16rem'}"
     >
       <div class="flex flex-col h-full">
         <!-- Logo -->
-        <div class="p-4 border-b border-border">
+        <div class="px-3 py-4 border-b border-border flex items-center {navCollapsed ? 'justify-center' : 'justify-between'} gap-2">
           <a
             href="/"
-            class="flex items-center gap-3 hover:opacity-80 transition-opacity"
+            class="flex items-center gap-2 hover:opacity-80 transition-opacity overflow-hidden"
             onclick={() => (showSidebar = false)}
+            title={navCollapsed ? 'DockerVerse' : undefined}
           >
-            <span class="text-3xl">🐳</span>
-            <div>
-              <h1 class="text-xl font-bold text-foreground">DockerVerse</h1>
-              <p class="text-xs text-foreground-muted">Multi-Host Management</p>
-            </div>
+            <span class="text-2xl flex-shrink-0">🐳</span>
+            {#if !navCollapsed}
+              <div class="overflow-hidden">
+                <h1 class="text-lg font-bold text-foreground leading-tight">DockerVerse</h1>
+                <p class="text-xs text-foreground-muted">Multi-Host Management</p>
+              </div>
+            {/if}
           </a>
+          <!-- Collapse toggle (desktop only) -->
+          <button
+            class="hidden lg:flex flex-shrink-0 items-center justify-center w-6 h-6 rounded hover:bg-background-tertiary transition-colors text-foreground-muted hover:text-foreground"
+            onclick={toggleNav}
+            title={navCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          >
+            {#if navCollapsed}
+              <ChevronsRight class="w-3.5 h-3.5" />
+            {:else}
+              <ChevronsLeft class="w-3.5 h-3.5" />
+            {/if}
+          </button>
         </div>
 
         <!-- Navigation -->
-        <nav class="flex-1 p-4 space-y-1 overflow-y-auto">
+        <nav class="flex-1 px-2 py-3 space-y-0.5 overflow-y-auto">
           {#each sidebarItems as item}
             {@const Icon = item.icon}
             {@const isActive = activeSidebarItem() === item.id}
             <a
               href={item.href}
-              class="flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors {isActive
+              class="flex items-center {navCollapsed ? 'justify-center px-2 py-2.5' : 'gap-3 px-3 py-2.5'} rounded-lg transition-colors {isActive
                 ? 'bg-primary/15 text-primary border-l-2 border-primary'
                 : 'text-foreground-muted hover:text-foreground hover:bg-background-tertiary'}"
-              onclick={() => {
-                showSidebar = false;
-              }}
+              onclick={() => { showSidebar = false; }}
+              title={navCollapsed ? item.label : undefined}
             >
-              <Icon class="w-5 h-5" />
-              <span class="text-sm font-medium">{item.label}</span>
+              <Icon class="w-5 h-5 flex-shrink-0" />
+              {#if !navCollapsed}
+                <span class="text-sm font-medium">{item.label}</span>
+              {/if}
             </a>
           {/each}
         </nav>
 
         <!-- User section at bottom -->
-        <div class="p-4 border-t border-border">
-          <div class="flex items-center gap-3 mb-3">
-            <div
-              class="w-10 h-10 bg-primary/20 rounded-full flex items-center justify-center"
-            >
-              {#if $currentUser?.avatar}
-                <img
-                  src={$currentUser.avatar}
-                  alt="Avatar"
-                  class="w-10 h-10 rounded-full object-cover"
-                />
-              {:else}
-                <User class="w-5 h-5 text-primary" />
-              {/if}
+        <div class="px-2 py-3 border-t border-border">
+          {#if !navCollapsed}
+            <div class="flex items-center gap-3 mb-2 px-2">
+              <div class="w-8 h-8 bg-primary/20 rounded-full flex items-center justify-center flex-shrink-0">
+                {#if $currentUser?.avatar}
+                  <img src={$currentUser.avatar} alt="Avatar" class="w-8 h-8 rounded-full object-cover" />
+                {:else}
+                  <User class="w-4 h-4 text-primary" />
+                {/if}
+              </div>
+              <div class="flex-1 min-w-0">
+                <p class="text-sm font-medium text-foreground truncate">
+                  {$currentUser?.firstName || $currentUser?.username}
+                </p>
+                <p class="text-xs text-foreground-muted truncate">
+                  {$currentUser?.email}
+                </p>
+              </div>
             </div>
-            <div class="flex-1 min-w-0">
-              <p class="text-sm font-medium text-foreground truncate">
-                {$currentUser?.firstName || $currentUser?.username}
-              </p>
-              <p class="text-xs text-foreground-muted truncate">
-                {$currentUser?.email}
-              </p>
+          {:else}
+            <div class="flex justify-center mb-2">
+              <div
+                class="w-8 h-8 bg-primary/20 rounded-full flex items-center justify-center"
+                title={$currentUser?.firstName || $currentUser?.username}
+              >
+                {#if $currentUser?.avatar}
+                  <img src={$currentUser.avatar} alt="Avatar" class="w-8 h-8 rounded-full object-cover" />
+                {:else}
+                  <User class="w-4 h-4 text-primary" />
+                {/if}
+              </div>
             </div>
-          </div>
+          {/if}
           <button
-            class="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"
+            class="w-full flex items-center {navCollapsed ? 'justify-center px-2' : 'gap-2 px-3'} py-2 text-sm text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"
             onclick={handleLogout}
+            title={navCollapsed ? userMenuText.logout : undefined}
           >
             <LogOut class="w-4 h-4" />
-            {userMenuText.logout}
+            {#if !navCollapsed}
+              {userMenuText.logout}
+            {/if}
           </button>
         </div>
       </div>
