@@ -560,9 +560,9 @@
 
 <svelte:window onkeydown={handleKeydown} />
 
-<div class="flex flex-col h-[calc(100vh-8rem)]">
+<div class="-mx-4 sm:-mx-6 lg:-mx-8 -mt-6 -mb-6 flex flex-col h-[calc(100vh-4rem)] overflow-hidden">
   <!-- Header Bar -->
-  <div class="flex items-center justify-between mb-4">
+  <div class="flex items-center justify-between px-4 sm:px-6 lg:px-8 pt-4 pb-3 flex-none">
     <div class="flex items-center gap-3">
       <ScrollText class="w-6 h-6 text-primary" />
       <h2 class="text-xl font-bold text-foreground">{t.title}</h2>
@@ -603,7 +603,7 @@
   </div>
 
   <!-- Main Content -->
-  <div class="flex gap-3 flex-1 min-h-0 items-stretch">
+  <div class="flex gap-3 flex-1 min-h-0 items-stretch px-4 sm:px-6 lg:px-8 pb-4">
     <!-- Left Sidebar: Container Selection (fixed width, never resizes) -->
     <div class="w-60 flex-none flex flex-col bg-background-secondary border border-border rounded-xl overflow-hidden">
       <!-- Host selector breadcrumb -->
