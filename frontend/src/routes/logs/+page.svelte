@@ -512,7 +512,7 @@
   }
 
   // Dozzle-style log level detection and block-based rendering
-  type LogLevel = 'error' | 'warn' | 'debug' | 'default';
+  type LogLevel = 'error' | 'warn' | 'info' | 'debug' | 'default';
 
   type LogBlock = {
     primary: LogEntry;
@@ -522,9 +522,16 @@
 
   function getLogLevel(line: string): LogLevel {
     const lower = line.toLowerCase();
-    if (/\b(error|err|fatal|panic|crit|critical|exception|traceback|failed)\b/.test(lower)) return 'error';
-    if (/\b(warn|warning|deprecated)\b/.test(lower)) return 'warn';
-    if (/\b(debug|trace|verbose)\b/.test(lower)) return 'debug';
+    // Bracket format takes precedence: [error], [warn], [info], [debug]
+    if (/\[(?:error|err|fatal|panic|crit|critical)\]/i.test(line)) return 'error';
+    if (/\[(?:warn|warning|deprecated)\]/i.test(line)) return 'warn';
+    if (/\[(?:info|information)\]/i.test(line)) return 'info';
+    if (/\[(?:debug|trace|verbose)\]/i.test(line)) return 'debug';
+    // Plain keyword fallback
+    if (/\b(?:error|err|fatal|panic|crit|critical|exception|traceback|failed)\b/.test(lower)) return 'error';
+    if (/\b(?:warn|warning|deprecated)\b/.test(lower)) return 'warn';
+    if (/\b(?:info|information)\b/.test(lower)) return 'info';
+    if (/\b(?:debug|trace|verbose)\b/.test(lower)) return 'debug';
     return 'default';
   }
 
@@ -554,17 +561,26 @@
     return '';
   }
 
-  // Color only the keyword, not the entire line text
-  function colorKeyword(html: string, level: LogLevel): string {
-    if (level === 'error') {
-      return html.replace(/\b(error|err|fatal|panic|crit|critical|exception|traceback|failed)\b/gi,
-        '<span class="text-red-400 font-semibold">$1</span>');
-    }
-    if (level === 'warn') {
-      return html.replace(/\b(warn|warning|deprecated)\b/gi,
-        '<span class="text-amber-400 font-semibold">$1</span>');
-    }
-    return html;
+  // Colored dot indicator (Dozzle-style) — placed before each log line
+  function getLevelDot(level: LogLevel): string {
+    if (level === 'error') return '<span class="text-red-500 select-none mr-1.5 text-xs leading-none">●</span>';
+    if (level === 'warn')  return '<span class="text-amber-500 select-none mr-1.5 text-xs leading-none">●</span>';
+    if (level === 'info')  return '<span class="text-green-500 select-none mr-1.5 text-xs leading-none">●</span>';
+    if (level === 'debug') return '<span class="text-blue-400 select-none mr-1.5 text-xs leading-none">●</span>';
+    return '<span class="text-foreground-muted/25 select-none mr-1.5 text-xs leading-none">●</span>';
+  }
+
+  // Color bracket-format keywords [error], [warn], [info], [debug] in Dozzle colors
+  function colorKeyword(html: string, _level: LogLevel): string {
+    return html
+      .replace(/\[(error|err|fatal|panic|crit|critical)\]/gi,
+        '<span class="text-red-400 font-semibold">[$1]</span>')
+      .replace(/\[(warn|warning|deprecated)\]/gi,
+        '<span class="text-amber-400 font-semibold">[$1]</span>')
+      .replace(/\[(info|information)\]/gi,
+        '<span class="text-green-400 font-semibold">[$1]</span>')
+      .replace(/\[(debug|trace|verbose)\]/gi,
+        '<span class="text-blue-400 font-semibold">[$1]</span>');
   }
 
   function setMode(m: LogMode) {
@@ -981,7 +997,7 @@
                       {#if preferences.showTimestamps}
                         <span class="text-foreground-muted/50 select-none">{formatTimestamp(block.primary.ts)} </span>
                       {/if}
-                      <span class="{block.level === 'debug' ? 'text-foreground-muted/50' : block.level === 'default' ? 'text-foreground-muted' : 'text-foreground'}">{@html colorKeyword(highlightMatches(cleanLine(block.primary.line)), block.level)}</span>
+                      {@html getLevelDot(block.level)}<span class="{block.level === 'debug' ? 'text-foreground-muted/50' : block.level === 'default' ? 'text-foreground-muted' : 'text-foreground'}">{@html colorKeyword(highlightMatches(cleanLine(block.primary.line)), block.level)}</span>
                     </div>
                     {#each block.continuations as cont}
                       <div class="hover:bg-background-tertiary/20 px-1">
@@ -1015,7 +1031,7 @@
                 {#if mode === "multi"}
                   <span class="{block.primary.color} font-semibold">[{block.primary.name}]</span>{" "}
                 {/if}
-                <span class="{block.level === 'debug' ? 'text-foreground-muted/50' : block.level === 'default' ? 'text-foreground-muted' : 'text-foreground'}">{@html colorKeyword(highlightMatches(cleanLine(block.primary.line)), block.level)}</span>
+                {@html getLevelDot(block.level)}<span class="{block.level === 'debug' ? 'text-foreground-muted/50' : block.level === 'default' ? 'text-foreground-muted' : 'text-foreground'}">{@html colorKeyword(highlightMatches(cleanLine(block.primary.line)), block.level)}</span>
               </div>
               <!-- Continuation / stack trace lines share the same border block -->
               {#each block.continuations as cont}
