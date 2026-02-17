@@ -23,14 +23,19 @@
     container,
     host,
     mode = "container",
+    terminalMode = "popup",
+    active = true,
     onClose,
   }: {
     container?: Container;
     host?: Host;
     mode?: "container" | "host";
-    onClose: () => void;
+    terminalMode?: "popup" | "embedded";
+    active?: boolean;
+    onClose?: () => void;
   } = $props();
 
+  let isEmbedded = $derived(terminalMode === "embedded");
   let isHostMode = $derived(mode === "host");
   const targetName = $derived(
     isHostMode ? host?.name || "Host" : container?.name || "Container",
@@ -663,6 +668,13 @@
     document.removeEventListener("mouseup", stopDrag);
   }
 
+  // Re-fit terminal when tab becomes active (embedded mode)
+  $effect(() => {
+    if (active && fitAddon) {
+      setTimeout(() => fitAddon?.fit(), 50);
+    }
+  });
+
   // Connection status color
   let statusColor = $derived(
     connectionStatus === "connected"
@@ -677,13 +689,18 @@
 
 <div
   bind:this={windowElement}
-  class="fixed z-50 bg-background-secondary border border-border rounded-lg shadow-2xl flex flex-col overflow-hidden"
-  class:inset-4={isFullscreen}
-  class:w-[800px]={!isFullscreen}
-  class:h-[500px]={!isFullscreen}
-  style={!isFullscreen && (position.x !== 0 || position.y !== 0)
+  class:fixed={!isEmbedded}
+  class:z-50={!isEmbedded}
+  class:rounded-lg={!isEmbedded}
+  class:shadow-2xl={!isEmbedded}
+  class:h-full={isEmbedded}
+  class="bg-background-secondary border border-border flex flex-col overflow-hidden"
+  class:inset-4={!isEmbedded && isFullscreen}
+  class:w-[800px]={!isEmbedded && !isFullscreen}
+  class:h-[500px]={!isEmbedded && !isFullscreen}
+  style={!isEmbedded && !isFullscreen && (position.x !== 0 || position.y !== 0)
     ? `left: ${position.x}px; top: ${position.y}px;`
-    : !isFullscreen
+    : !isEmbedded && !isFullscreen
       ? "bottom: 1rem; right: 1rem;"
       : ""}
 >
@@ -692,12 +709,12 @@
     role="toolbar"
     tabindex="0"
     class="flex items-center justify-between px-4 py-2 bg-background-tertiary border-b border-border select-none"
-    class:cursor-grab={!isFullscreen && !isDragging}
-    class:cursor-grabbing={isDragging}
-    onmousedown={startDrag}
+    class:cursor-grab={!isEmbedded && !isFullscreen && !isDragging}
+    class:cursor-grabbing={!isEmbedded && isDragging}
+    onmousedown={isEmbedded ? undefined : startDrag}
   >
     <div class="flex items-center gap-3">
-      {#if !isFullscreen}
+      {#if !isFullscreen && !isEmbedded}
         <GripHorizontal class="w-4 h-4 text-foreground-muted" />
       {/if}
       <div class="flex gap-1.5">
@@ -801,7 +818,8 @@
         </button>
       {/if}
 
-      <!-- Fullscreen -->
+      <!-- Fullscreen (popup mode only) -->
+      {#if !isEmbedded}
       <button
         class="btn-icon"
         onclick={toggleFullscreen}
@@ -813,6 +831,8 @@
           <Maximize2 class="w-4 h-4" />
         {/if}
       </button>
+      {/if}
+      {#if !isEmbedded && onClose}
       <button
         class="btn-icon hover:text-accent-red"
         onclick={onClose}
@@ -820,6 +840,7 @@
       >
         <X class="w-4 h-4" />
       </button>
+      {/if}
     </div>
   </div>
 
