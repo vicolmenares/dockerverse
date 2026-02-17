@@ -386,6 +386,20 @@
 
     fitAddon.fit();
 
+    // Send input to WebSocket (registered once here, not on every reconnect)
+    terminal.onData((data: string) => {
+      if (ws?.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "input", data }));
+      }
+    });
+
+    // Handle resize (registered once here, not on every reconnect)
+    terminal.onResize(({ cols, rows }: { cols: number; rows: number }) => {
+      if (ws?.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "resize", cols, rows }));
+      }
+    });
+
     // Keyboard shortcuts
     terminal.attachCustomKeyEventHandler((e: KeyboardEvent) => {
       // Ctrl+F for search
@@ -497,19 +511,6 @@
         }
       };
 
-      // Send input to WebSocket
-      terminal.onData((data: string) => {
-        if (ws?.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: "input", data }));
-        }
-      });
-
-      // Handle resize
-      terminal.onResize(({ cols, rows }: { cols: number; rows: number }) => {
-        if (ws?.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: "resize", cols, rows }));
-        }
-      });
     } catch (e) {
       error = "Failed to connect";
       connectionStatus = "error";
