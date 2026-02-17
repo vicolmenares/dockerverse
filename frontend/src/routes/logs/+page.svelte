@@ -352,6 +352,13 @@
     }
   }
 
+  // Strip Docker timestamp prefix and ANSI escape codes (match Dozzle display format)
+  function cleanLine(line: string): string {
+    return line
+      .replace(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z\s*/, '')   // Docker-prepended timestamp
+      .replace(/\x1B\[[0-9;]*[mGKHFJABCDsuhl]/g, '');                   // ANSI escape codes
+  }
+
   // Highlight regex matches in log line
   function highlightMatches(line: string): string {
     if (!logSearch || !searchPattern) return line;
@@ -974,14 +981,14 @@
                       {#if preferences.showTimestamps}
                         <span class="text-foreground-muted/50 select-none">{formatTimestamp(block.primary.ts)} </span>
                       {/if}
-                      <span class="{block.level === 'debug' ? 'text-foreground-muted/50' : block.level === 'default' ? 'text-foreground-muted' : 'text-foreground'}">{@html colorKeyword(highlightMatches(block.primary.line), block.level)}</span>
+                      <span class="{block.level === 'debug' ? 'text-foreground-muted/50' : block.level === 'default' ? 'text-foreground-muted' : 'text-foreground'}">{@html colorKeyword(highlightMatches(cleanLine(block.primary.line)), block.level)}</span>
                     </div>
                     {#each block.continuations as cont}
                       <div class="hover:bg-background-tertiary/20 px-1">
                         {#if preferences.showTimestamps}
                           <span class="text-foreground-muted/30 select-none">{formatTimestamp(cont.ts)} </span>
                         {/if}
-                        <span class="text-foreground-muted/50">{@html highlightMatches(cont.line)}</span>
+                        <span class="text-foreground-muted/50">{@html highlightMatches(cleanLine(cont.line))}</span>
                       </div>
                     {/each}
                   </div>
@@ -1008,7 +1015,7 @@
                 {#if mode === "multi"}
                   <span class="{block.primary.color} font-semibold">[{block.primary.name}]</span>{" "}
                 {/if}
-                <span class="{block.level === 'debug' ? 'text-foreground-muted/50' : block.level === 'default' ? 'text-foreground-muted' : 'text-foreground'}">{@html colorKeyword(highlightMatches(block.primary.line), block.level)}</span>
+                <span class="{block.level === 'debug' ? 'text-foreground-muted/50' : block.level === 'default' ? 'text-foreground-muted' : 'text-foreground'}">{@html colorKeyword(highlightMatches(cleanLine(block.primary.line)), block.level)}</span>
               </div>
               <!-- Continuation / stack trace lines share the same border block -->
               {#each block.continuations as cont}
@@ -1016,7 +1023,7 @@
                   {#if preferences.showTimestamps}
                     <span class="text-foreground-muted/30 select-none">{formatTimestamp(cont.ts)} </span>
                   {/if}
-                  <span class="text-foreground-muted/50">{@html highlightMatches(cont.line)}</span>
+                  <span class="text-foreground-muted/50">{@html highlightMatches(cleanLine(cont.line))}</span>
                 </div>
               {/each}
             </div>
