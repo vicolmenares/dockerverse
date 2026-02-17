@@ -679,7 +679,7 @@
 
 <svelte:window onkeydown={handleKeydown} />
 
-<div class="fixed top-16 left-0 lg:left-64 right-0 bottom-0 flex flex-col overflow-hidden bg-background z-10">
+<div class="fixed top-16 left-0 right-0 bottom-0 flex flex-col overflow-hidden bg-background z-10 log-page-root">
   <!-- Header Bar -->
   <div class="flex items-center justify-between px-4 sm:px-6 lg:px-8 pt-4 pb-3 flex-none border-b border-border/50">
     <div class="flex items-center gap-3">
@@ -1127,6 +1127,14 @@
 <style>
   .log-font {
     font-family: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', ui-monospace, 'SF Mono', monospace;
+  }
+
+  /* Offset the logs area by the sidebar width on desktop (sidebar is fixed-position on mobile) */
+  @media (min-width: 1024px) {
+    .log-page-root {
+      left: var(--sidebar-w, 16rem);
+      transition: left 300ms ease;
+    }
   }
 
   @keyframes slide-in-from-top-2 {

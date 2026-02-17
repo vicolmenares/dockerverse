@@ -62,6 +62,13 @@
     if (browser) localStorage.setItem('dockerverse-nav-collapsed', String(navCollapsed));
   }
 
+  // Keep CSS variable in sync so fixed-position pages (e.g. logs) can offset correctly
+  $effect(() => {
+    if (browser) {
+      document.documentElement.style.setProperty('--sidebar-w', navCollapsed ? '3.5rem' : '16rem');
+    }
+  });
+
   // Derive active sidebar item from current URL path
   let activeSidebarItem = $derived(() => {
     const pathname = $page.url.pathname;
