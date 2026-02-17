@@ -83,10 +83,6 @@
     localStorage.setItem("dockerverse_filterState", filterState);
   });
 
-  function toggleFilter(state: "all" | "running" | "stopped" | "updates") {
-    filterState = filterState === state ? "all" : state;
-  }
-
   // Get current translations
   let t = $derived(translations[$language]);
 
