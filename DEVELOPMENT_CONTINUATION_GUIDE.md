@@ -33,8 +33,8 @@ Added logging to `backend/main.go` in `dialSSH()` to surface the resolved host a
 
 > **Documento de transferencia de conocimiento para continuar el desarrollo desde macOS**
 > 
-> Última actualización: 14 de febrero de 2026
-> Versión actual: v2.4.0
+> Última actualización: 17 de febrero de 2026
+> Versión actual: v2.4.1
 
 ---
 
@@ -109,7 +109,7 @@ Added logging to `backend/main.go` in `dialSSH()` to surface the resolved host a
 - ✅ SSH fallback para container actions cuando Docker API falla (v2.4.0)
 - ✅ Multiple SSH candidates con deriveSSHCandidates() (v2.4.0)
 - ✅ Environments CRUD page en settings (v2.4.0)
-- ✅ Logs page dedicada con modos single/multi/agrupado (v2.4.0)
+- ✅ Logs page dedicada con modos single/multi/agrupado, regex, keyboard shortcuts (v2.4.1)
 - ✅ Socket-proxy integration para acceso seguro al Docker daemon (v2.4.0)
 - ✅ Docker version fallback via ServerVersion API (v2.4.0)
 - ✅ Health endpoint /health para container healthcheck (v2.4.0)
@@ -518,7 +518,7 @@ dockerverse/
 | SSH Fallback Actions | Container start/stop/restart via SSH | main.go |
 | SSH Candidates | deriveSSHCandidates() multiples IPs | main.go |
 | Environments CRUD | Página de gestión de environments | environments/+page.svelte, EnvironmentModal.svelte |
-| Logs Page | Visor de logs dedicado multi-modo | logs/+page.svelte |
+| Logs Page | Visor de logs con streaming SSE, 3 modos, fuzzy filter, regex, keyboard shortcuts, display limit | logs/+page.svelte |
 | Toggle Filters | Deseleccionar filtros en cards resumen | +page.svelte |
 | Host Rename | Display name configurable via DOCKER_HOSTS | main.go, .env |
 | Socket-proxy | Acceso seguro al Docker daemon (23750) | docker-compose.unified.yml |
@@ -1018,6 +1018,27 @@ docker exec dockerverse sh -c 'echo "[NUEVO_JSON]" > /data/users.json'
 - [x] openssh-client incluido en container image
 - [x] Internal ports reorganizados (backend: 3002, frontend: 3003)
 - [x] `@types/node` y `@playwright/test` agregados al frontend
+
+### v2.4.1 (Completado - 17 Feb 2026)
+
+**Logs Page Improvements** — Rediseño completo de `frontend/src/routes/logs/+page.svelte`
+
+- [x] Modo **single container** con SSE stream en tiempo real por contenedor
+- [x] Modo **multi container** (todos los contenedores seleccionados en un solo feed)
+- [x] Modo **agrupado** (un panel por stack/contenedor)
+- [x] Filtro de búsqueda de contenedores con **fuzzy matching** (acronim, substring, secuencia)
+- [x] Filtro de búsqueda de **logs en tiempo real** con highlight `<mark>` en líneas coincidentes
+- [x] Soporte **regex** en filtro de logs con indicador de error para regex inválidos
+- [x] **Selector "Last N lines"** para limitar logs mostrados (All / Last 100/500/1000/2000)
+- [x] **Pausar/reanudar** stream de logs (Ctrl+P o Space)
+- [x] Toggle **wrap lines** para líneas largas (Ctrl+W)
+- [x] **Timestamp cycling**: formato absoluto (HH:MM:SS.mmm) → relativo (~ago) → oculto
+- [x] **Keyboard shortcuts**: Ctrl+1/2/3 (modos), Ctrl+P (pause), Ctrl+W (wrap), / (focus search), Escape (limpiar)
+- [x] **Descarga** de logs como archivo de texto
+- [x] **Select all / deselect all** contenedores por stack
+- [x] Arquitectura: containers groupados por stack, filtrado reactivo con `$derived.by()`
+- [x] Fix: `groupedContainers` ahora deriva de `filteredContainers` (no de `$containers` raw)
+- [x] Fix: `state_unsafe_mutation` — `regexResult` como objeto combinado `{pattern, error}`
 
 ### v2.5.0 (Planificado)
 
