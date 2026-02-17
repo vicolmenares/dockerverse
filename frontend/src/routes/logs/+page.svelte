@@ -249,6 +249,8 @@
     return matched.slice(-displayLimit);
   });
 
+  let filteredBlocks = $derived(buildBlocks(filteredLogs));
+
   let logAreaEl = $state<HTMLDivElement | null>(null);
   let logSearchInputEl = $state<HTMLInputElement | null>(null);
 
@@ -502,8 +504,14 @@
     URL.revokeObjectURL(url);
   }
 
-  // Log level detection for color-coded highlighting (Dozzle-style)
+  // Dozzle-style log level detection and block-based rendering
   type LogLevel = 'error' | 'warn' | 'debug' | 'default';
+
+  type LogBlock = {
+    primary: LogEntry;
+    continuations: LogEntry[];
+    level: LogLevel;
+  };
 
   function getLogLevel(line: string): LogLevel {
     const lower = line.toLowerCase();
@@ -513,17 +521,43 @@
     return 'default';
   }
 
-  function getLogLevelClasses(line: string): { row: string; text: string; ts: string } {
-    switch (getLogLevel(line)) {
-      case 'error':
-        return { row: 'border-l-2 border-red-500 bg-red-500/5 pl-2', text: 'text-red-400', ts: 'text-red-400/50' };
-      case 'warn':
-        return { row: 'border-l-2 border-amber-500 bg-amber-500/5 pl-2', text: 'text-amber-400', ts: 'text-amber-400/50' };
-      case 'debug':
-        return { row: '', text: 'text-foreground-muted/50', ts: 'text-foreground-muted/30' };
-      default:
-        return { row: '', text: 'text-foreground-muted', ts: 'text-foreground-muted/50' };
+  // Stack trace / continuation lines are grouped into the preceding error block
+  function isContinuationLine(line: string): boolean {
+    return /^\s+(at\s|caused by\s)/.test(line) || /^caused by\s/i.test(line);
+  }
+
+  // Group flat log entries into blocks (primary line + continuation lines)
+  function buildBlocks(logs: LogEntry[]): LogBlock[] {
+    const blocks: LogBlock[] = [];
+    for (const entry of logs) {
+      const last = blocks.length > 0 ? blocks[blocks.length - 1] : null;
+      if (last && last.level === 'error' && isContinuationLine(entry.line)) {
+        last.continuations.push(entry);
+      } else {
+        blocks.push({ primary: entry, continuations: [], level: getLogLevel(entry.line) });
+      }
     }
+    return blocks;
+  }
+
+  // Border + background for the block wrapper (spans ALL lines in the block)
+  function getBlockBorderClass(level: LogLevel): string {
+    if (level === 'error') return 'border-l-2 border-red-500 bg-red-500/5 pl-2';
+    if (level === 'warn') return 'border-l-2 border-amber-500 bg-amber-500/5 pl-2';
+    return '';
+  }
+
+  // Color only the keyword, not the entire line text
+  function colorKeyword(html: string, level: LogLevel): string {
+    if (level === 'error') {
+      return html.replace(/\b(error|err|fatal|panic|crit|critical|exception|traceback|failed)\b/gi,
+        '<span class="text-red-400 font-semibold">$1</span>');
+    }
+    if (level === 'warn') {
+      return html.replace(/\b(warn|warning|deprecated)\b/gi,
+        '<span class="text-amber-400 font-semibold">$1</span>');
+    }
+    return html;
   }
 
   function setMode(m: LogMode) {
@@ -933,13 +967,23 @@
                 class="flex-1 overflow-y-auto p-3 font-mono leading-relaxed {wrapLines ? 'whitespace-pre-wrap break-all' : 'whitespace-pre overflow-x-auto'}"
                 style="font-size: {preferences.fontSize}px"
               >
-                {#each containerLogs as entry}
-                  {@const lc = getLogLevelClasses(entry.line)}
-                  <div class="hover:bg-background-tertiary/30 px-1 -mx-1 rounded {lc.row}">
-                    {#if preferences.showTimestamps}
-                      <span class="{lc.ts} select-none">{formatTimestamp(entry.ts)} </span>
-                    {/if}
-                    <span class="{lc.text}">{@html highlightMatches(entry.line)}</span>
+                {#each buildBlocks(containerLogs) as block}
+                  {@const bc = getBlockBorderClass(block.level)}
+                  <div class="-mx-1 rounded {bc}">
+                    <div class="hover:bg-background-tertiary/20 px-1">
+                      {#if preferences.showTimestamps}
+                        <span class="text-foreground-muted/50 select-none">{formatTimestamp(block.primary.ts)} </span>
+                      {/if}
+                      <span class="{block.level === 'debug' ? 'text-foreground-muted/50' : block.level === 'default' ? 'text-foreground-muted' : 'text-foreground'}">{@html colorKeyword(highlightMatches(block.primary.line), block.level)}</span>
+                    </div>
+                    {#each block.continuations as cont}
+                      <div class="hover:bg-background-tertiary/20 px-1">
+                        {#if preferences.showTimestamps}
+                          <span class="text-foreground-muted/30 select-none">{formatTimestamp(cont.ts)} </span>
+                        {/if}
+                        <span class="text-foreground-muted/50">{@html highlightMatches(cont.line)}</span>
+                      </div>
+                    {/each}
                   </div>
                 {/each}
               </div>
@@ -953,16 +997,28 @@
           class="flex-1 overflow-y-auto p-3 font-mono leading-relaxed {wrapLines ? 'whitespace-pre-wrap break-all' : 'whitespace-pre overflow-x-auto'}"
           style="font-size: {preferences.fontSize}px"
         >
-          {#each filteredLogs as entry}
-            {@const lc = getLogLevelClasses(entry.line)}
-            <div class="hover:bg-background-tertiary/30 px-1 -mx-1 rounded {lc.row}">
-              {#if preferences.showTimestamps}
-                <span class="{lc.ts} select-none">{formatTimestamp(entry.ts)} </span>
-              {/if}
-              {#if mode === "multi"}
-                <span class="{entry.color} font-semibold">[{entry.name}]</span>{" "}
-              {/if}
-              <span class="{lc.text}">{@html highlightMatches(entry.line)}</span>
+          {#each filteredBlocks as block}
+            {@const bc = getBlockBorderClass(block.level)}
+            <div class="-mx-1 rounded {bc}">
+              <!-- Primary line -->
+              <div class="hover:bg-background-tertiary/20 px-1">
+                {#if preferences.showTimestamps}
+                  <span class="text-foreground-muted/50 select-none">{formatTimestamp(block.primary.ts)} </span>
+                {/if}
+                {#if mode === "multi"}
+                  <span class="{block.primary.color} font-semibold">[{block.primary.name}]</span>{" "}
+                {/if}
+                <span class="{block.level === 'debug' ? 'text-foreground-muted/50' : block.level === 'default' ? 'text-foreground-muted' : 'text-foreground'}">{@html colorKeyword(highlightMatches(block.primary.line), block.level)}</span>
+              </div>
+              <!-- Continuation / stack trace lines share the same border block -->
+              {#each block.continuations as cont}
+                <div class="hover:bg-background-tertiary/20 px-1">
+                  {#if preferences.showTimestamps}
+                    <span class="text-foreground-muted/30 select-none">{formatTimestamp(cont.ts)} </span>
+                  {/if}
+                  <span class="text-foreground-muted/50">{@html highlightMatches(cont.line)}</span>
+                </div>
+              {/each}
             </div>
           {/each}
         </div>
