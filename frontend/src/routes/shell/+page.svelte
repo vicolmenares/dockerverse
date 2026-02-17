@@ -107,7 +107,7 @@
   function handleKeydown(e: KeyboardEvent) {
     if (e.ctrlKey && e.key === "t") {
       e.preventDefault();
-      openContainerShell();
+      lastOpenedType === "host" ? openHostSSH() : openContainerShell();
     }
     if (e.ctrlKey && e.key === "w" && activeTabId) {
       e.preventDefault();
@@ -190,7 +190,7 @@
             <Box class="w-3.5 h-3.5 flex-shrink-0" />
           {/if}
           {@const status = tabStatuses.get(tab.id) ?? "connecting"}
-          <span class="w-2 h-2 rounded-full flex-shrink-0 {status === 'connected' ? 'bg-running' : status === 'connecting' ? 'bg-primary animate-pulse' : 'bg-paused'}"></span>
+          <span class="w-2 h-2 rounded-full flex-shrink-0 {status === 'connected' ? 'bg-running' : status === 'connecting' ? 'bg-primary animate-pulse' : status === 'error' ? 'bg-stopped' : 'bg-paused'}"></span>
           <span>{tab.label}</span>
           <span class="text-foreground-muted text-xs">@{tab.hostLabel}</span>
           <button
