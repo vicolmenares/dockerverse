@@ -197,16 +197,8 @@
       : $containers.filter(c => c.hostId === selectedHost)
   );
 
-  // Derived: containers grouped by stack (host-filtered)
-  let groupedContainers = $derived.by(() => {
-    const filtered = selectedHost === 'all'
-      ? $containers
-      : $containers.filter(c => c.hostId === selectedHost);
-
-    return groupContainersByStack(filtered);
-  });
-
-  let filteredContainers = $derived(() => {
+  // Filter containers by search (fuzzy match on name + image)
+  let filteredContainers = $derived.by(() => {
     if (!searchFilter) return filteredByHost;
 
     return filteredByHost
@@ -220,8 +212,13 @@
       .sort((a, b) => b.score - a.score);
   });
 
+  // Derived: containers grouped by stack, respects search filter
+  let groupedContainers = $derived.by(() => {
+    return groupContainersByStack(filteredContainers);
+  });
+
   // Compile regex pattern for log search
-  let searchPattern = $derived(() => {
+  let searchPattern = $derived.by(() => {
     if (!logSearch) return null;
 
     if (regexEnabled) {
@@ -240,7 +237,7 @@
   });
 
   // Filtered logs by search with regex support
-  let filteredLogs = $derived(() => {
+  let filteredLogs = $derived.by(() => {
     if (!searchPattern) return allLogs;
 
     return allLogs.filter(l => searchPattern.test(l.line));
