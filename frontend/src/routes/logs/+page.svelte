@@ -61,7 +61,6 @@
   let searchFilter = $state("");
   let logSearch = $state("");
   let regexEnabled = $state(false);
-  let regexError = $state<string | null>(null);
   let isPaused = $state(false);
   let autoScroll = $state(true);
   let wrapLines = $state(true);
@@ -217,24 +216,25 @@
     return groupContainersByStack(filteredContainers);
   });
 
-  // Compile regex pattern for log search
-  let searchPattern = $derived.by(() => {
-    if (!logSearch) return null;
+  // Compile regex pattern and error together (no state mutations inside derived)
+  let regexResult = $derived.by(() => {
+    if (!logSearch) return { pattern: null, error: null };
 
     if (regexEnabled) {
       try {
-        regexError = null;
-        return new RegExp(logSearch, 'gi');
+        return { pattern: new RegExp(logSearch, 'gi'), error: null };
       } catch (e) {
-        regexError = e instanceof Error ? e.message : 'Invalid regex';
-        return null;
+        return { pattern: null, error: e instanceof Error ? e.message : 'Invalid regex' };
       }
     }
 
     // Simple string search - escape special chars
     const escaped = logSearch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    return new RegExp(escaped, 'gi');
+    return { pattern: new RegExp(escaped, 'gi'), error: null };
   });
+
+  let searchPattern = $derived(regexResult.pattern);
+  let regexError = $derived(regexResult.error);
 
   // Filtered logs by search with regex support
   let filteredLogs = $derived.by(() => {
