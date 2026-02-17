@@ -560,7 +560,7 @@
 
 <svelte:window onkeydown={handleKeydown} />
 
-<div class="flex flex-col h-[calc(100vh-7rem)]">
+<div class="flex flex-col h-[calc(100vh-8rem)]">
   <!-- Header Bar -->
   <div class="flex items-center justify-between mb-4">
     <div class="flex items-center gap-3">
@@ -583,22 +583,29 @@
       </div>
 
       <!-- Connection status -->
-      <span class="flex items-center gap-1.5 px-2 py-1 text-xs rounded-full {isLive ? 'bg-running/15 text-running' : 'bg-foreground-muted/15 text-foreground-muted'}">
-        {#if isLive}
+      {#if selectedContainers.size === 0}
+        <span class="flex items-center gap-1.5 px-2 py-1 text-xs rounded-full bg-foreground-muted/10 text-foreground-muted">
+          <ScrollText class="w-3 h-3" />
+          {$language === "es" ? "Sin selección" : "No stream"}
+        </span>
+      {:else if isLive}
+        <span class="flex items-center gap-1.5 px-2 py-1 text-xs rounded-full bg-running/15 text-running">
           <Wifi class="w-3 h-3" />
           {isPaused ? t.paused : t.live}
-        {:else}
+        </span>
+      {:else}
+        <span class="flex items-center gap-1.5 px-2 py-1 text-xs rounded-full bg-accent-orange/15 text-accent-orange">
           <WifiOff class="w-3 h-3" />
-          {$language === "es" ? "Desconectado" : "Disconnected"}
-        {/if}
-      </span>
+          {$language === "es" ? "Reconectando…" : "Reconnecting…"}
+        </span>
+      {/if}
     </div>
   </div>
 
   <!-- Main Content -->
-  <div class="flex gap-4 flex-1 min-h-0">
-    <!-- Left Sidebar: Container Selection -->
-    <div class="w-64 flex-shrink-0 flex flex-col bg-background-secondary border border-border rounded-xl overflow-hidden">
+  <div class="flex gap-3 flex-1 min-h-0 items-stretch">
+    <!-- Left Sidebar: Container Selection (fixed width, never resizes) -->
+    <div class="w-60 flex-none flex flex-col bg-background-secondary border border-border rounded-xl overflow-hidden">
       <!-- Host selector breadcrumb -->
       <div class="flex items-center gap-2 px-4 py-3 border-b border-border bg-background-tertiary">
         <span class="text-sm text-foreground-muted font-medium">Hosts</span>
@@ -607,7 +614,7 @@
         <div class="relative flex-1">
           <select
             bind:value={selectedHost}
-            class="w-full text-sm font-medium bg-transparent border border-border rounded px-3 py-1.5 focus:ring-2 focus:ring-primary focus:outline-none cursor-pointer"
+            class="w-full text-sm font-medium bg-background text-foreground border border-border rounded px-3 py-1.5 focus:ring-2 focus:ring-primary focus:outline-none cursor-pointer"
             aria-label="Select Docker host"
           >
             <option value="all">All Hosts ({$containers.length} containers)</option>
@@ -758,8 +765,8 @@
       </div>
     </div>
 
-    <!-- Log Area -->
-    <div class="flex-1 flex flex-col bg-background-secondary border border-border rounded-xl overflow-hidden">
+    <!-- Log Area (takes remaining space, min-w-0 prevents flex overflow) -->
+    <div class="flex-1 min-w-0 flex flex-col bg-background-secondary border border-border rounded-xl overflow-hidden">
       <!-- Toolbar -->
       <div class="flex items-center gap-2 px-3 py-2 border-b border-border bg-background-tertiary/30">
         <!-- Pause/Play -->
@@ -829,11 +836,12 @@
         <!-- Last N lines selector -->
         <select
           bind:value={displayLimit}
-          class="text-xs bg-background border border-border rounded-md px-2 py-1 text-foreground focus:border-primary focus:outline-none"
-          title="Number of lines to display"
+          class="text-xs bg-background text-foreground border border-border rounded-md px-2 py-1 focus:border-primary focus:outline-none cursor-pointer"
+          title="Lines to display"
+          aria-label="Lines to display"
         >
           {#each displayLimitOptions as opt}
-            <option value={opt.value}>{opt.label}</option>
+            <option value={opt.value} class="bg-background text-foreground">{opt.label}</option>
           {/each}
         </select>
 
