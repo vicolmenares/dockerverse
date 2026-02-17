@@ -244,6 +244,7 @@
   });
 
   let logAreaEl = $state<HTMLDivElement | null>(null);
+  let logSearchInputEl = $state<HTMLInputElement | null>(null);
 
   function containerKey(c: Container): string {
     return `${c.id}@${c.hostId}`;
@@ -285,12 +286,62 @@
   }
 
   function formatTimestamp(ts: number): string {
+    if (preferences.timestampFormat === 'none') return '';
+    if (preferences.timestampFormat === 'relative') {
+      const diff = Date.now() - ts;
+      if (diff < 60000) return `${Math.floor(diff / 1000)}s ago`;
+      if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+      return `${Math.floor(diff / 3600000)}h ago`;
+    }
+    // absolute
     const date = new Date(ts);
     const hours = String(date.getHours()).padStart(2, '0');
     const minutes = String(date.getMinutes()).padStart(2, '0');
     const seconds = String(date.getSeconds()).padStart(2, '0');
     const ms = String(date.getMilliseconds()).padStart(3, '0');
     return `${hours}:${minutes}:${seconds}.${ms}`;
+  }
+
+  function cycleTimestampFormat() {
+    const formats: Array<'absolute' | 'relative' | 'none'> = ['absolute', 'relative', 'none'];
+    const idx = formats.indexOf(preferences.timestampFormat);
+    preferences.timestampFormat = formats[(idx + 1) % formats.length];
+    preferences.showTimestamps = preferences.timestampFormat !== 'none';
+  }
+
+  function handleKeydown(e: KeyboardEvent) {
+    // Don't intercept when user is typing in an input/textarea
+    if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+      if (e.key === 'Escape') {
+        (e.target as HTMLInputElement).blur();
+        if (logSearch) logSearch = '';
+      }
+      return;
+    }
+    if (e.ctrlKey || e.metaKey) {
+      switch (e.key) {
+        case '1': e.preventDefault(); setMode('single'); break;
+        case '2': e.preventDefault(); setMode('multi'); break;
+        case '3': e.preventDefault(); setMode('grouped'); break;
+        case 'p': case 'P': e.preventDefault(); isPaused = !isPaused; break;
+        case 'w': case 'W': e.preventDefault(); wrapLines = !wrapLines; break;
+      }
+    } else {
+      switch (e.key) {
+        case '/':
+          e.preventDefault();
+          logSearchInputEl?.focus();
+          break;
+        case 'Escape':
+          if (logSearch) logSearch = '';
+          else if (searchFilter) searchFilter = '';
+          break;
+        case ' ':
+          e.preventDefault();
+          isPaused = !isPaused;
+          break;
+      }
+    }
   }
 
   // Highlight regex matches in log line
@@ -476,12 +527,6 @@
     }
   });
 
-  // Debug: verify stack grouping
-  $effect(() => {
-    console.log('Grouped stacks:', groupedContainers);
-    console.log('Expanded:', Array.from(expandedStacks));
-  });
-
   let t = $derived({
     title: $language === "es" ? "Logs" : "Logs",
     single: $language === "es" ? "Individual" : "Single",
@@ -501,6 +546,8 @@
   });
 </script>
 
+<svelte:window onkeydown={handleKeydown} />
+
 <div class="flex flex-col h-[calc(100vh-7rem)]">
   <!-- Header Bar -->
   <div class="flex items-center justify-between mb-4">
@@ -512,10 +559,11 @@
     <!-- Mode Switcher -->
     <div class="flex items-center gap-2">
       <div class="flex bg-background-tertiary/50 rounded-lg p-0.5">
-        {#each [{ id: "single", label: t.single }, { id: "multi", label: t.multi }, { id: "grouped", label: t.grouped }] as m}
+        {#each [{ id: "single", label: t.single, key: "⌘1" }, { id: "multi", label: t.multi, key: "⌘2" }, { id: "grouped", label: t.grouped, key: "⌘3" }] as m}
           <button
             class="px-3 py-1.5 text-xs font-medium rounded-md transition-colors {mode === m.id ? 'bg-primary text-white' : 'text-foreground-muted hover:text-foreground'}"
             onclick={() => setMode(m.id as LogMode)}
+            title="{m.label} ({m.key})"
           >
             {m.label}
           </button>
@@ -706,7 +754,7 @@
         <button
           class="btn-icon hover:bg-background-tertiary"
           onclick={() => (isPaused = !isPaused)}
-          title={isPaused ? "Resume" : "Pause"}
+          title={isPaused ? "Resume (⌘P or Space)" : "Pause (⌘P or Space)"}
         >
           {#if isPaused}
             <Play class="w-4 h-4 text-running" />
@@ -728,6 +776,7 @@
         <button
           class="flex items-center gap-1 px-2 py-1 text-xs rounded-md transition-colors {wrapLines ? 'bg-primary/15 text-primary' : 'text-foreground-muted hover:text-foreground'}"
           onclick={() => (wrapLines = !wrapLines)}
+          title="Toggle line wrap (⌘W)"
         >
           <WrapText class="w-3 h-3" />
           {t.wrap}
@@ -754,13 +803,13 @@
           </button>
         </div>
 
-        <!-- Timestamps -->
+        <!-- Timestamps (cycle: absolute → relative → none) -->
         <button
-          class="flex items-center gap-1 px-2 py-1 text-xs rounded-md transition-colors {preferences.showTimestamps ? 'bg-primary/15 text-primary' : 'text-foreground-muted hover:text-foreground'}"
-          onclick={() => (preferences.showTimestamps = !preferences.showTimestamps)}
-          title="Toggle timestamps"
+          class="flex items-center gap-1 px-2 py-1 text-xs rounded-md transition-colors {preferences.timestampFormat !== 'none' ? 'bg-primary/15 text-primary' : 'text-foreground-muted hover:text-foreground'}"
+          onclick={cycleTimestampFormat}
+          title="Timestamp format: {preferences.timestampFormat} (click to cycle)"
         >
-          {preferences.showTimestamps ? "12:34" : "···"}
+          {preferences.timestampFormat === 'absolute' ? '12:34' : preferences.timestampFormat === 'relative' ? '~ago' : '···'}
         </button>
 
         <div class="flex-1"></div>
@@ -771,8 +820,10 @@
             <Search class="absolute left-2 top-1.5 w-3.5 h-3.5 text-foreground-muted" />
             <input
               type="text"
+              bind:this={logSearchInputEl}
               bind:value={logSearch}
               placeholder={regexEnabled ? "Regex pattern..." : t.searchLogs}
+              title="Search logs (press / to focus)"
               class="pl-7 pr-3 py-1 text-xs bg-background border {regexError ? 'border-destructive' : 'border-border'} rounded-md text-foreground placeholder:text-foreground-muted focus:border-primary focus:outline-none w-40"
             />
             {#if regexError}
