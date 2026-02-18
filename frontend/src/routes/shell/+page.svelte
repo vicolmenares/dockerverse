@@ -38,8 +38,8 @@
   });
 
   // Auto-select first container when host changes
+  // runningContainers is derived from selectedHostId, so no need to track it explicitly
   $effect(() => {
-    selectedHostId;
     const first = runningContainers[0];
     selectedContainerId = first?.id ?? "";
   });
