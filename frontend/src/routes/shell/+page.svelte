@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { onMount, onDestroy } from "svelte";
-  import { SquareTerminal, Plus, X, Server, Box, ChevronDown } from "lucide-svelte";
+  import { onMount } from "svelte";
+  import { SquareTerminal, Plus, X, Server, Box, ChevronDown, Check } from "lucide-svelte";
   import Terminal from "$lib/components/Terminal.svelte";
   import { containers, hosts, language, translations } from "$lib/stores/docker";
   import type { Container, Host } from "$lib/api/docker";
@@ -21,6 +21,11 @@
   let tabStatuses = $state<Map<string, "connecting" | "connected" | "disconnected" | "error">>(new Map());
   let lastOpenedType = $state<"container" | "host">("container");
 
+  let hostOpen = $state(false);
+  let containerOpen = $state(false);
+  let hostDropdownEl: HTMLDivElement | null = $state(null);
+  let containerDropdownEl: HTMLDivElement | null = $state(null);
+
   let t = $derived($translations[$language] || $translations.en);
 
   let hostList = $derived($hosts);
@@ -28,6 +33,13 @@
     $containers.filter(
       (c) => c.state === "running" && (!selectedHostId || c.hostId === selectedHostId)
     )
+  );
+
+  let selectedHostName = $derived(
+    hostList.find((h) => h.id === selectedHostId)?.name ?? "Host"
+  );
+  let selectedContainerName = $derived(
+    runningContainers.find((c) => c.id === selectedContainerId)?.name ?? "Container"
   );
 
   // Auto-select first host
@@ -108,6 +120,7 @@
   }
 
   function handleKeydown(e: KeyboardEvent) {
+    if (e.key === "Escape") { hostOpen = false; containerOpen = false; }
     if (e.ctrlKey && e.key === "t") {
       e.preventDefault();
       lastOpenedType === "host" ? openHostSSH() : openContainerShell();
@@ -119,54 +132,102 @@
   }
 
   onMount(() => {
+    function handleOutside(e: MouseEvent) {
+      if (hostOpen && hostDropdownEl && !hostDropdownEl.contains(e.target as Node)) hostOpen = false;
+      if (containerOpen && containerDropdownEl && !containerDropdownEl.contains(e.target as Node)) containerOpen = false;
+    }
     document.addEventListener("keydown", handleKeydown);
-    return () => document.removeEventListener("keydown", handleKeydown);
+    document.addEventListener("mousedown", handleOutside);
+    return () => {
+      document.removeEventListener("keydown", handleKeydown);
+      document.removeEventListener("mousedown", handleOutside);
+    };
   });
 </script>
 
 <div class="fixed top-16 left-0 right-0 bottom-0 flex flex-col overflow-hidden bg-background z-10 shell-page-root">
   <!-- Toolbar -->
-  <div class="flex items-center gap-2 px-4 py-2 bg-background-secondary border-b border-border flex-shrink-0">
+  <div class="flex items-center gap-3 px-4 py-2 bg-background-secondary border-b border-border flex-shrink-0">
 
-    <!-- Primary group: host + container + open shell as one visual unit -->
-    <div class="flex items-center rounded-lg border border-border bg-background overflow-hidden">
-      <!-- Host selector -->
-      <div class="relative border-r border-border">
-        <Server class="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-foreground-muted pointer-events-none" />
-        <select
-          bind:value={selectedHostId}
-          class="appearance-none bg-transparent pl-8 pr-7 py-1.5 text-sm text-foreground focus:outline-none cursor-pointer"
-          style="appearance:none; -webkit-appearance:none; -moz-appearance:none;"
-        >
-          {#each hostList as host}
-            <option value={host.id}>{host.name}</option>
-          {/each}
-        </select>
-        <ChevronDown class="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-foreground-muted pointer-events-none" />
-      </div>
+    <!-- Fused command strip: host | container | open-shell -->
+    <div class="flex items-stretch divide-x divide-border rounded-lg border border-border bg-background overflow-hidden">
 
-      <!-- Container selector -->
-      <div class="relative border-r border-border">
-        <Box class="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-foreground-muted pointer-events-none" />
-        <select
-          bind:value={selectedContainerId}
-          class="appearance-none bg-transparent pl-8 pr-7 py-1.5 text-sm text-foreground focus:outline-none cursor-pointer min-w-[160px]"
-          style="appearance:none; -webkit-appearance:none; -moz-appearance:none;"
+      <!-- Host dropdown -->
+      <div class="relative" bind:this={hostDropdownEl}>
+        <button
+          class="flex items-center gap-2 pl-3 pr-2.5 py-1.5 text-sm text-foreground hover:bg-background-tertiary transition-colors duration-150 h-full"
+          onclick={() => { hostOpen = !hostOpen; containerOpen = false; }}
+          aria-expanded={hostOpen}
+          aria-haspopup="listbox"
         >
-          {#if runningContainers.length === 0}
-            <option value="">No containers</option>
-          {:else}
-            {#each runningContainers as c}
-              <option value={c.id}>{c.name}</option>
+          <Server class="w-3.5 h-3.5 text-foreground-muted flex-shrink-0" />
+          <span class="font-medium whitespace-nowrap">{selectedHostName}</span>
+          <ChevronDown class="w-3.5 h-3.5 text-foreground-muted transition-transform duration-200 {hostOpen ? 'rotate-180' : ''}" />
+        </button>
+        {#if hostOpen}
+          <ul
+            class="absolute top-full left-0 mt-1.5 bg-background-secondary border border-border rounded-lg shadow-xl shadow-black/50 z-50 min-w-[180px] py-1 overflow-hidden"
+            role="listbox"
+          >
+            {#each hostList as host}
+              <li role="option" aria-selected={selectedHostId === host.id}>
+                <button
+                  class="w-full flex items-center gap-2.5 px-3 py-1.5 text-sm hover:bg-background-tertiary transition-colors duration-100 text-left {selectedHostId === host.id ? 'text-primary font-medium' : 'text-foreground'}"
+                  onclick={() => { selectedHostId = host.id; hostOpen = false; }}
+                >
+                  <Server class="w-3.5 h-3.5 flex-shrink-0 {selectedHostId === host.id ? 'text-primary' : 'text-foreground-muted'}" />
+                  <span class="flex-1">{host.name}</span>
+                  {#if selectedHostId === host.id}
+                    <Check class="w-3.5 h-3.5 text-primary flex-shrink-0" />
+                  {/if}
+                </button>
+              </li>
             {/each}
-          {/if}
-        </select>
-        <ChevronDown class="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-foreground-muted pointer-events-none" />
+          </ul>
+        {/if}
       </div>
 
-      <!-- Open Shell button — flush inside the group -->
+      <!-- Container dropdown -->
+      <div class="relative" bind:this={containerDropdownEl}>
+        <button
+          class="flex items-center gap-2 pl-3 pr-2.5 py-1.5 text-sm text-foreground hover:bg-background-tertiary transition-colors duration-150 h-full min-w-[170px] disabled:opacity-50 disabled:cursor-not-allowed"
+          onclick={() => { containerOpen = !containerOpen; hostOpen = false; }}
+          disabled={runningContainers.length === 0}
+          aria-expanded={containerOpen}
+          aria-haspopup="listbox"
+        >
+          <Box class="w-3.5 h-3.5 text-foreground-muted flex-shrink-0" />
+          <span class="font-mono text-xs flex-1 text-left truncate">
+            {runningContainers.length === 0 ? 'no containers' : selectedContainerName}
+          </span>
+          <ChevronDown class="w-3.5 h-3.5 text-foreground-muted transition-transform duration-200 {containerOpen ? 'rotate-180' : ''}" />
+        </button>
+        {#if containerOpen && runningContainers.length > 0}
+          <ul
+            class="absolute top-full left-0 mt-1.5 bg-background-secondary border border-border rounded-lg shadow-xl shadow-black/50 z-50 min-w-[240px] py-1 overflow-hidden max-h-72 overflow-y-auto"
+            role="listbox"
+          >
+            {#each runningContainers as c}
+              <li role="option" aria-selected={selectedContainerId === c.id}>
+                <button
+                  class="w-full flex items-center gap-2.5 px-3 py-1.5 text-sm hover:bg-background-tertiary transition-colors duration-100 text-left {selectedContainerId === c.id ? 'text-primary' : 'text-foreground'}"
+                  onclick={() => { selectedContainerId = c.id; containerOpen = false; }}
+                >
+                  <Box class="w-3 h-3 flex-shrink-0 {selectedContainerId === c.id ? 'text-primary' : 'text-foreground-muted'}" />
+                  <span class="font-mono text-xs flex-1 truncate">{c.name}</span>
+                  {#if selectedContainerId === c.id}
+                    <Check class="w-3.5 h-3.5 text-primary flex-shrink-0" />
+                  {/if}
+                </button>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+      </div>
+
+      <!-- Open Shell — fused end of group -->
       <button
-        class="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-primary hover:bg-primary hover:text-primary-content transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+        class="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-primary hover:bg-primary/10 transition-colors duration-150 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
         onclick={openContainerShell}
         disabled={!selectedContainerId}
       >
@@ -175,17 +236,15 @@
       </button>
     </div>
 
-    <!-- Secondary action: SSH Host, separated visually -->
-    <div class="ml-auto">
-      <button
-        class="btn btn-ghost btn-sm flex items-center gap-1.5 text-foreground-muted hover:text-foreground"
-        onclick={openHostSSH}
-        disabled={!selectedHostId}
-      >
-        <Server class="w-4 h-4" />
-        SSH Host
-      </button>
-    </div>
+    <!-- SSH Host — secondary, far right -->
+    <button
+      class="ml-auto flex items-center gap-1.5 px-3 py-1.5 text-sm text-foreground-muted hover:text-foreground border border-border hover:border-primary/50 rounded-lg transition-colors duration-150 disabled:opacity-40 disabled:cursor-not-allowed"
+      onclick={openHostSSH}
+      disabled={!selectedHostId}
+    >
+      <Server class="w-4 h-4" />
+      SSH Host
+    </button>
   </div>
 
   <!-- Tab bar -->
