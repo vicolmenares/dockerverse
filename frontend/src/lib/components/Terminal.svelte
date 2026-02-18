@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy } from "svelte";
+  import { onMount, onDestroy, untrack } from "svelte";
   import {
     X,
     Maximize2,
@@ -679,8 +679,12 @@
   });
 
   // Notify parent when connection status changes
+  // Use untrack() to avoid tracking onStatusChange as a reactive dependency.
+  // Without this, inline arrow functions passed as onStatusChange create a new
+  // reference each render → effect re-runs → parent re-renders → infinite loop.
   $effect(() => {
-    onStatusChange?.(connectionStatus);
+    const status = connectionStatus;
+    untrack(() => onStatusChange?.(status));
   });
 
   // Connection status color
