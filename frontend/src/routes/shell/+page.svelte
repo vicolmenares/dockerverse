@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { SquareTerminal, Plus, X, Server, Box, ChevronDown, Check } from "lucide-svelte";
+  import { SquareTerminal, Plus, X, Server, Box, ChevronDown, Check, HardDrive, Info } from "lucide-svelte";
   import Terminal from "$lib/components/Terminal.svelte";
   import { containers, hosts, language, translations } from "$lib/stores/docker";
   import type { Container, Host } from "$lib/api/docker";
@@ -25,6 +25,9 @@
   let containerOpen = $state(false);
   let hostDropdownEl: HTMLDivElement | null = $state(null);
   let containerDropdownEl: HTMLDivElement | null = $state(null);
+  let stripHighlight = $state(false);
+  let stripEl: HTMLDivElement | null = $state(null);
+  let sftpToast = $state(false);
 
   let t = $derived($translations[$language] || $translations.en);
 
@@ -58,6 +61,11 @@
       selectedContainerId = runningContainers[0]?.id ?? "";
     }
   });
+
+  function flashStrip() {
+    stripHighlight = true;
+    setTimeout(() => (stripHighlight = false), 600);
+  }
 
   function generateId(): string {
     return Math.random().toString(36).slice(2, 9);
@@ -150,12 +158,15 @@
   <div class="flex items-center gap-3 px-4 py-2 bg-background-secondary border-b border-border flex-shrink-0">
 
     <!-- Fused command strip: host | container | open-shell -->
-    <div class="flex items-stretch divide-x divide-border rounded-lg border border-border bg-background overflow-hidden">
+    <div
+      bind:this={stripEl}
+      class="flex items-stretch divide-x divide-border rounded-lg border border-border bg-background transition-shadow duration-150 {stripHighlight ? 'ring-2 ring-primary/50' : ''}"
+    >
 
       <!-- Host dropdown -->
       <div class="relative" bind:this={hostDropdownEl}>
         <button
-          class="flex items-center gap-2 pl-3 pr-2.5 py-1.5 text-sm text-foreground hover:bg-background-tertiary transition-colors duration-150 h-full"
+          class="flex items-center gap-2 pl-3 pr-2.5 py-1.5 text-sm text-foreground hover:bg-background-tertiary transition-colors duration-150 h-full rounded-l-lg"
           onclick={() => { hostOpen = !hostOpen; containerOpen = false; }}
           aria-expanded={hostOpen}
           aria-haspopup="listbox"
@@ -227,7 +238,7 @@
 
       <!-- Open Shell — fused end of group -->
       <button
-        class="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-primary hover:bg-primary/10 transition-colors duration-150 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
+        class="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-primary hover:bg-primary/10 transition-colors duration-150 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap rounded-r-lg"
         onclick={openContainerShell}
         disabled={!selectedContainerId}
       >
@@ -236,16 +247,33 @@
       </button>
     </div>
 
-    <!-- SSH Host — secondary, far right -->
-    <button
-      class="ml-auto flex items-center gap-1.5 px-3 py-1.5 text-sm text-foreground-muted hover:text-foreground border border-border hover:border-primary/50 rounded-lg transition-colors duration-150 disabled:opacity-40 disabled:cursor-not-allowed"
-      onclick={openHostSSH}
-      disabled={!selectedHostId}
-    >
-      <Server class="w-4 h-4" />
-      SSH Host
-    </button>
+    <!-- SSH Host + SFTP — secondary, far right -->
+    <div class="ml-auto flex items-center gap-2">
+      <button
+        class="flex items-center gap-1.5 px-3 py-1.5 text-sm text-foreground-muted hover:text-foreground border border-border hover:border-primary/50 rounded-lg transition-colors duration-150 disabled:opacity-40 disabled:cursor-not-allowed"
+        onclick={openHostSSH}
+        disabled={!selectedHostId}
+      >
+        <Server class="w-4 h-4" />
+        SSH Host
+      </button>
+      <button
+        class="flex items-center gap-1.5 px-3 py-1.5 text-sm text-foreground-muted hover:text-foreground border border-border hover:border-primary/50 rounded-lg transition-colors duration-150 disabled:opacity-40 disabled:cursor-not-allowed"
+        onclick={() => { sftpToast = true; setTimeout(() => sftpToast = false, 3000); }}
+        title="SFTP File Browser"
+      >
+        <HardDrive class="w-4 h-4" />
+        SFTP
+      </button>
+    </div>
   </div>
+
+  {#if sftpToast}
+    <div class="fixed bottom-4 right-4 bg-background-secondary border border-border rounded-lg px-4 py-2 text-sm text-foreground shadow-lg z-50 flex items-center gap-2">
+      <Info class="w-4 h-4 text-primary" />
+      SFTP support coming soon
+    </div>
+  {/if}
 
   <!-- Tab bar -->
   {#if tabs.length > 0}
@@ -281,8 +309,8 @@
       {/each}
       <button
         class="flex items-center px-3 py-2 text-foreground-muted hover:text-foreground"
-        onclick={() => lastOpenedType === "host" ? openHostSSH() : openContainerShell()}
-        title="New tab"
+        onclick={() => { hostOpen = false; containerOpen = false; flashStrip(); }}
+        title="New tab — pick a connection in the toolbar above"
         aria-label="New terminal tab"
       >
         <Plus class="w-4 h-4" />
