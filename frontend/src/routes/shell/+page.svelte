@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { SquareTerminal, Plus, X, Server, Box, ChevronDown, Check, HardDrive, Info } from "lucide-svelte";
-  import Terminal from "$lib/components/Terminal.svelte";
-  import { containers, hosts, language, translations } from "$lib/stores/docker";
+  import SplitPane, { type SplitNode, type SplitTab } from "$lib/components/SplitPane.svelte";
+  import { containers, hosts } from "$lib/stores/docker";
   import type { Container, Host } from "$lib/api/docker";
 
   interface Tab {
@@ -14,6 +14,7 @@
     hostLabel: string;
   }
 
+  // ─── Tab bar state ─────────────────────────────────────────────────────────
   let tabs = $state<Tab[]>([]);
   let activeTabId = $state<string | null>(null);
   let selectedHostId = $state<string>("");
@@ -21,6 +22,7 @@
   let tabStatuses = $state<Map<string, "connecting" | "connected" | "disconnected" | "error">>(new Map());
   let lastOpenedType = $state<"container" | "host">("container");
 
+  // ─── Dropdown UI state ─────────────────────────────────────────────────────
   let hostOpen = $state(false);
   let containerOpen = $state(false);
   let hostDropdownEl: HTMLDivElement | null = $state(null);
@@ -29,15 +31,18 @@
   let stripEl: HTMLDivElement | null = $state(null);
   let sftpToast = $state(false);
 
-  let t = $derived($translations[$language] || $translations.en);
+  // ─── Split pane state ──────────────────────────────────────────────────────
+  let splitTree = $state<SplitNode | null>(null);
+  let activePaneId = $state<string>("");
+  let tabsMap = $state<Map<string, SplitTab>>(new Map());
 
+  // ─── Derived ───────────────────────────────────────────────────────────────
   let hostList = $derived($hosts);
   let runningContainers = $derived(
     $containers.filter(
       (c) => c.state === "running" && (!selectedHostId || c.hostId === selectedHostId)
     )
   );
-
   let selectedHostName = $derived(
     hostList.find((h) => h.id === selectedHostId)?.name ?? "Host"
   );
@@ -45,16 +50,14 @@
     runningContainers.find((c) => c.id === selectedContainerId)?.name ?? "Container"
   );
 
-  // Auto-select first host
+  // ─── Auto-select first host ────────────────────────────────────────────────
   $effect(() => {
     if (hostList.length > 0 && !selectedHostId) {
       selectedHostId = hostList[0].id;
     }
   });
 
-  // Auto-select first container when host changes OR when selected container disappears.
-  // Guard prevents SSE updates (which recompute runningContainers) from resetting the
-  // user's selection every 2 seconds.
+  // ─── Auto-select first container (guard against SSE reset) ────────────────
   $effect(() => {
     const ids = new Set(runningContainers.map((c) => c.id));
     if (!selectedContainerId || !ids.has(selectedContainerId)) {
@@ -62,71 +65,262 @@
     }
   });
 
+  // ─── Strip highlight flash ─────────────────────────────────────────────────
   function flashStrip() {
     stripHighlight = true;
     setTimeout(() => (stripHighlight = false), 600);
   }
 
+  // ─── ID generators ─────────────────────────────────────────────────────────
   function generateId(): string {
     return Math.random().toString(36).slice(2, 9);
   }
 
-  function setTabStatus(tabId: string, status: "connecting" | "connected" | "disconnected" | "error") {
-    tabStatuses = new Map(tabStatuses).set(tabId, status);
+  function generatePaneId(): string {
+    return "pane-" + Math.random().toString(36).slice(2, 9);
   }
 
+  // ─── Split tree helpers ────────────────────────────────────────────────────
+
+  function updateRatio(node: SplitNode, targetId: string, ratio: number): SplitNode {
+    if (node.kind === "leaf") return node;
+    if (node.paneId === targetId) return { ...node, ratio };
+    return {
+      ...node,
+      first: updateRatio(node.first, targetId, ratio),
+      second: updateRatio(node.second, targetId, ratio),
+    };
+  }
+
+  function splitLeafH(node: SplitNode, targetPaneId: string, newLeaf: SplitNode): SplitNode {
+    if (node.kind === "leaf") {
+      if (node.paneId !== targetPaneId) return node;
+      return { kind: "hsplit", paneId: generatePaneId(), first: node, second: newLeaf, ratio: 0.5 };
+    }
+    return {
+      ...node,
+      first: splitLeafH(node.first, targetPaneId, newLeaf),
+      second: splitLeafH(node.second, targetPaneId, newLeaf),
+    };
+  }
+
+  function splitLeafV(node: SplitNode, targetPaneId: string, newLeaf: SplitNode): SplitNode {
+    if (node.kind === "leaf") {
+      if (node.paneId !== targetPaneId) return node;
+      return { kind: "vsplit", paneId: generatePaneId(), first: node, second: newLeaf, ratio: 0.5 };
+    }
+    return {
+      ...node,
+      first: splitLeafV(node.first, targetPaneId, newLeaf),
+      second: splitLeafV(node.second, targetPaneId, newLeaf),
+    };
+  }
+
+  function assignTabToPane(node: SplitNode, targetPaneId: string, tabId: string): SplitNode {
+    if (node.kind === "leaf") return node.paneId === targetPaneId ? { ...node, tabId } : node;
+    return {
+      ...node,
+      first: assignTabToPane(node.first, targetPaneId, tabId),
+      second: assignTabToPane(node.second, targetPaneId, tabId),
+    };
+  }
+
+  function removePane(node: SplitNode, targetPaneId: string): SplitNode | null {
+    if (node.kind === "leaf") return node.paneId === targetPaneId ? null : node;
+    const newFirst = removePane(node.first, targetPaneId);
+    const newSecond = removePane(node.second, targetPaneId);
+    if (newFirst === null) return newSecond;
+    if (newSecond === null) return newFirst;
+    return { ...node, first: newFirst, second: newSecond };
+  }
+
+  function firstLeafPaneId(node: SplitNode): string {
+    if (node.kind === "leaf") return node.paneId;
+    return firstLeafPaneId(node.first);
+  }
+
+  /** Returns tabId for a paneId. `null` = empty pane, `undefined` = pane not found. */
+  function getTabIdForPane(node: SplitNode, targetPaneId: string): string | null | undefined {
+    if (node.kind === "leaf") return node.paneId === targetPaneId ? node.tabId : undefined;
+    const fromFirst = getTabIdForPane(node.first, targetPaneId);
+    if (fromFirst !== undefined) return fromFirst;
+    return getTabIdForPane(node.second, targetPaneId);
+  }
+
+  /** Returns the paneId holding a given tabId, or null. */
+  function findPaneForTab(node: SplitNode, tabId: string): string | null {
+    if (node.kind === "leaf") return node.tabId === tabId ? node.paneId : null;
+    return findPaneForTab(node.first, tabId) ?? findPaneForTab(node.second, tabId);
+  }
+
+  // ─── Add tab to split tree ─────────────────────────────────────────────────
+  function addTabToTree(tab: Tab) {
+    const newPaneId = generatePaneId();
+    const newLeaf: SplitNode = { kind: "leaf", paneId: newPaneId, tabId: tab.id };
+
+    if (!splitTree) {
+      splitTree = newLeaf;
+      activePaneId = newPaneId;
+    } else {
+      const currentTabId = activePaneId ? getTabIdForPane(splitTree, activePaneId) : undefined;
+      if (currentTabId === null) {
+        // Active pane is empty — assign this tab there
+        splitTree = assignTabToPane(splitTree, activePaneId, tab.id);
+      } else {
+        // Active pane is occupied — split it horizontally
+        splitTree = splitLeafH(splitTree, activePaneId, newLeaf);
+        activePaneId = newPaneId;
+      }
+    }
+  }
+
+  // ─── Open shells ───────────────────────────────────────────────────────────
   function openContainerShell() {
     const container = $containers.find((c) => c.id === selectedContainerId);
     if (!container) return;
     const host = $hosts.find((h) => h.id === container.hostId);
     const id = generateId();
-    tabs = [
-      ...tabs,
-      {
-        id,
-        type: "container",
-        container,
-        label: container.name,
-        hostLabel: host?.name ?? container.hostId,
-      },
-    ];
+    const tab: Tab = {
+      id,
+      type: "container",
+      container,
+      label: container.name,
+      hostLabel: host?.name ?? container.hostId,
+    };
+    tabs = [...tabs, tab];
     activeTabId = id;
     lastOpenedType = "container";
+    tabsMap = new Map(tabsMap).set(id, tab);
+    addTabToTree(tab);
   }
 
   function openHostSSH() {
     const host = $hosts.find((h) => h.id === selectedHostId);
     if (!host) return;
     const id = generateId();
-    tabs = [
-      ...tabs,
-      {
-        id,
-        type: "host",
-        host,
-        label: `${host.name} SSH`,
-        hostLabel: host.name,
-      },
-    ];
+    const tab: Tab = {
+      id,
+      type: "host",
+      host,
+      label: `${host.name} SSH`,
+      hostLabel: host.name,
+    };
+    tabs = [...tabs, tab];
     activeTabId = id;
     lastOpenedType = "host";
+    tabsMap = new Map(tabsMap).set(id, tab);
+    addTabToTree(tab);
   }
 
+  // ─── Close tab from tab bar X button ──────────────────────────────────────
   function closeTab(tabId: string) {
     const idx = tabs.findIndex((t) => t.id === tabId);
     tabs = tabs.filter((t) => t.id !== tabId);
     if (activeTabId === tabId) {
-      if (tabs.length > 0) {
-        activeTabId = tabs[Math.max(0, idx - 1)].id;
-      } else {
-        activeTabId = null;
-      }
+      activeTabId = tabs.length > 0 ? tabs[Math.max(0, idx - 1)].id : null;
     }
+
     const newStatuses = new Map(tabStatuses);
     newStatuses.delete(tabId);
     tabStatuses = newStatuses;
+
+    const newTabsMap = new Map(tabsMap);
+    newTabsMap.delete(tabId);
+    tabsMap = newTabsMap;
+
+    if (splitTree) {
+      const paneId = findPaneForTab(splitTree, tabId);
+      if (paneId) {
+        const wasActive = activePaneId === paneId;
+        splitTree = removePane(splitTree, paneId);
+        if (splitTree) {
+          if (wasActive) {
+            activePaneId = firstLeafPaneId(splitTree);
+            const newTabId = getTabIdForPane(splitTree, activePaneId);
+            if (newTabId) activeTabId = newTabId;
+          }
+        } else {
+          activePaneId = "";
+        }
+      }
+    }
   }
 
+  // ─── Activate tab from tab bar click ──────────────────────────────────────
+  function activateTab(tabId: string) {
+    activeTabId = tabId;
+    if (splitTree) {
+      const paneId = findPaneForTab(splitTree, tabId);
+      if (paneId) activePaneId = paneId;
+    }
+  }
+
+  // ─── SplitPane event handlers ──────────────────────────────────────────────
+  function handleRatioChange(splitNodeId: string, ratio: number) {
+    if (!splitTree) return;
+    splitTree = updateRatio(splitTree, splitNodeId, ratio);
+  }
+
+  function handleSplitH(paneId: string) {
+    if (!splitTree) return;
+    const newPaneId = generatePaneId();
+    splitTree = splitLeafH(splitTree, paneId, { kind: "leaf", paneId: newPaneId, tabId: null });
+    activePaneId = newPaneId;
+    flashStrip();
+  }
+
+  function handleSplitV(paneId: string) {
+    if (!splitTree) return;
+    const newPaneId = generatePaneId();
+    splitTree = splitLeafV(splitTree, paneId, { kind: "leaf", paneId: newPaneId, tabId: null });
+    activePaneId = newPaneId;
+    flashStrip();
+  }
+
+  function handlePaneFocus(paneId: string) {
+    activePaneId = paneId;
+    if (splitTree) {
+      const tabId = getTabIdForPane(splitTree, paneId);
+      if (tabId) activeTabId = tabId;
+    }
+  }
+
+  function handleClosePane(paneId: string) {
+    if (!splitTree) return;
+    const tabId = getTabIdForPane(splitTree, paneId);
+    const wasActive = activePaneId === paneId;
+    splitTree = removePane(splitTree, paneId);
+
+    if (tabId) {
+      const idx = tabs.findIndex((t) => t.id === tabId);
+      tabs = tabs.filter((t) => t.id !== tabId);
+      if (activeTabId === tabId) {
+        activeTabId = tabs.length > 0 ? tabs[Math.max(0, idx - 1)].id : null;
+      }
+      const newStatuses = new Map(tabStatuses);
+      newStatuses.delete(tabId);
+      tabStatuses = newStatuses;
+      const newTabsMap = new Map(tabsMap);
+      newTabsMap.delete(tabId);
+      tabsMap = newTabsMap;
+    }
+
+    if (splitTree) {
+      if (wasActive) {
+        activePaneId = firstLeafPaneId(splitTree);
+        const newTabId = getTabIdForPane(splitTree, activePaneId);
+        if (newTabId) activeTabId = newTabId;
+      }
+    } else {
+      activePaneId = "";
+    }
+  }
+
+  function handleStatusChange(tabId: string, status: "connecting" | "connected" | "disconnected" | "error") {
+    tabStatuses = new Map(tabStatuses).set(tabId, status);
+  }
+
+  // ─── Keyboard shortcuts ────────────────────────────────────────────────────
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === "Escape") { hostOpen = false; containerOpen = false; }
     if (e.ctrlKey && e.key === "t") {
@@ -286,8 +480,8 @@
           class="flex items-center gap-2 px-4 py-2 text-sm border-b-2 whitespace-nowrap transition-colors cursor-pointer {activeTabId === tab.id
             ? 'border-primary text-foreground bg-background'
             : 'border-transparent text-foreground-muted hover:text-foreground'}"
-          onclick={() => (activeTabId = tab.id)}
-          onkeydown={(e) => e.key === "Enter" && (activeTabId = tab.id)}
+          onclick={() => activateTab(tab.id)}
+          onkeydown={(e) => e.key === "Enter" && activateTab(tab.id)}
           aria-selected={activeTabId === tab.id}
         >
           {#if tab.type === "host"}
@@ -320,12 +514,13 @@
 
   <!-- Terminal area -->
   <div class="flex-1 overflow-hidden relative">
-    {#if tabs.length === 0}
+    {#if !splitTree}
       <!-- Empty state -->
       <div class="absolute inset-0 flex flex-col items-center justify-center gap-6 text-foreground-muted">
         <SquareTerminal class="w-16 h-16 opacity-20" />
         <div class="text-center">
           <p class="text-lg font-medium text-foreground-muted">Select a container or host above to open a shell</p>
+          <p class="text-sm mt-1 text-foreground-muted/60">Hover over an open pane to split it horizontally or vertically</p>
         </div>
         <div class="flex gap-3">
           <button class="btn btn-primary flex items-center gap-2" onclick={openContainerShell} disabled={!selectedContainerId}>
@@ -339,27 +534,20 @@
         </div>
       </div>
     {:else}
-      {#each tabs as tab}
-        <div class="absolute inset-0" style="display: {activeTabId === tab.id ? 'block' : 'none'};">
-          {#if tab.type === "container"}
-            <Terminal
-              container={tab.container}
-              mode="container"
-              terminalMode="embedded"
-              active={activeTabId === tab.id}
-              onStatusChange={(s) => setTabStatus(tab.id, s)}
-            />
-          {:else}
-            <Terminal
-              host={tab.host}
-              mode="host"
-              terminalMode="embedded"
-              active={activeTabId === tab.id}
-              onStatusChange={(s) => setTabStatus(tab.id, s)}
-            />
-          {/if}
-        </div>
-      {/each}
+      <div class="absolute inset-0">
+        <SplitPane
+          node={splitTree}
+          tabs={tabsMap}
+          {tabStatuses}
+          {activePaneId}
+          onPaneFocus={handlePaneFocus}
+          onRatioChange={handleRatioChange}
+          onSplitH={handleSplitH}
+          onSplitV={handleSplitV}
+          onClose={handleClosePane}
+          onStatusChange={handleStatusChange}
+        />
+      </div>
     {/if}
   </div>
 </div>
