@@ -37,11 +37,14 @@
     }
   });
 
-  // Auto-select first container when host changes
-  // runningContainers is derived from selectedHostId, so no need to track it explicitly
+  // Auto-select first container when host changes OR when selected container disappears.
+  // Guard prevents SSE updates (which recompute runningContainers) from resetting the
+  // user's selection every 2 seconds.
   $effect(() => {
-    const first = runningContainers[0];
-    selectedContainerId = first?.id ?? "";
+    const ids = new Set(runningContainers.map((c) => c.id));
+    if (!selectedContainerId || !ids.has(selectedContainerId)) {
+      selectedContainerId = runningContainers[0]?.id ?? "";
+    }
   });
 
   function generateId(): string {
@@ -123,53 +126,64 @@
 
 <div class="fixed top-16 left-0 right-0 bottom-0 flex flex-col overflow-hidden bg-background z-10 shell-page-root">
   <!-- Toolbar -->
-  <div class="flex items-center gap-3 px-4 py-2 bg-background-secondary border-b border-border flex-shrink-0">
-    <!-- Host selector -->
-    <div class="relative">
-      <select
-        bind:value={selectedHostId}
-        class="appearance-none bg-background border border-border rounded-lg pl-3 pr-8 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary cursor-pointer"
-      >
-        {#each hostList as host}
-          <option value={host.id}>{host.name}</option>
-        {/each}
-      </select>
-      <ChevronDown class="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-foreground-muted pointer-events-none" />
-    </div>
+  <div class="flex items-center gap-2 px-4 py-2 bg-background-secondary border-b border-border flex-shrink-0">
 
-    <!-- Container selector -->
-    <div class="relative">
-      <select
-        bind:value={selectedContainerId}
-        class="appearance-none bg-background border border-border rounded-lg pl-3 pr-8 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary cursor-pointer min-w-[160px]"
-      >
-        {#if runningContainers.length === 0}
-          <option value="">No containers</option>
-        {:else}
-          {#each runningContainers as c}
-            <option value={c.id}>{c.name}</option>
+    <!-- Primary group: host + container + open shell as one visual unit -->
+    <div class="flex items-center rounded-lg border border-border bg-background overflow-hidden">
+      <!-- Host selector -->
+      <div class="relative border-r border-border">
+        <Server class="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-foreground-muted pointer-events-none" />
+        <select
+          bind:value={selectedHostId}
+          class="appearance-none bg-transparent pl-8 pr-7 py-1.5 text-sm text-foreground focus:outline-none cursor-pointer"
+          style="appearance:none; -webkit-appearance:none; -moz-appearance:none;"
+        >
+          {#each hostList as host}
+            <option value={host.id}>{host.name}</option>
           {/each}
-        {/if}
-      </select>
-      <ChevronDown class="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-foreground-muted pointer-events-none" />
-    </div>
+        </select>
+        <ChevronDown class="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-foreground-muted pointer-events-none" />
+      </div>
 
-    <div class="flex items-center gap-2 ml-auto">
+      <!-- Container selector -->
+      <div class="relative border-r border-border">
+        <Box class="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-foreground-muted pointer-events-none" />
+        <select
+          bind:value={selectedContainerId}
+          class="appearance-none bg-transparent pl-8 pr-7 py-1.5 text-sm text-foreground focus:outline-none cursor-pointer min-w-[160px]"
+          style="appearance:none; -webkit-appearance:none; -moz-appearance:none;"
+        >
+          {#if runningContainers.length === 0}
+            <option value="">No containers</option>
+          {:else}
+            {#each runningContainers as c}
+              <option value={c.id}>{c.name}</option>
+            {/each}
+          {/if}
+        </select>
+        <ChevronDown class="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-foreground-muted pointer-events-none" />
+      </div>
+
+      <!-- Open Shell button — flush inside the group -->
       <button
-        class="btn btn-ghost text-sm flex items-center gap-1.5"
-        onclick={openHostSSH}
-        disabled={!selectedHostId}
-      >
-        <Server class="w-4 h-4" />
-        SSH Host
-      </button>
-      <button
-        class="btn btn-primary text-sm flex items-center gap-1.5"
+        class="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-primary hover:bg-primary hover:text-primary-content transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         onclick={openContainerShell}
         disabled={!selectedContainerId}
       >
         <SquareTerminal class="w-4 h-4" />
         Open Shell
+      </button>
+    </div>
+
+    <!-- Secondary action: SSH Host, separated visually -->
+    <div class="ml-auto">
+      <button
+        class="btn btn-ghost btn-sm flex items-center gap-1.5 text-foreground-muted hover:text-foreground"
+        onclick={openHostSSH}
+        disabled={!selectedHostId}
+      >
+        <Server class="w-4 h-4" />
+        SSH Host
       </button>
     </div>
   </div>
