@@ -280,9 +280,12 @@ var (
 	jwtSecret      = []byte(getEnvOrDefault("JWT_SECRET", generateSecret()))
 	dataDir        = getEnvOrDefault("DATA_DIR", "/data")
 	defaultAdmin   = getEnvOrDefault("ADMIN_USER", "admin")
-	defaultPass    = getEnvOrDefault("ADMIN_PASS", "admin123")
+	// Security (GO-CONFIG-001): no hardcoded password fallback.
+	// A random password is generated on first run if ADMIN_PASS is not set.
+	defaultPass    = getEnvOrDefault("ADMIN_PASS", generateSecret())
 	appriseURL     = getEnvOrDefault("APPRISE_URL", "https://apprise.nerdslabs.com")
-	smtp2goAPIKey  = getEnvOrDefault("SMTP2GO_API_KEY", "***SMTP2GO-KEY-REMOVED***")
+	// Security (GO-CONFIG-001): no hardcoded API key. Email is disabled if SMTP2GO_API_KEY is not set.
+	smtp2goAPIKey  = getEnvOrDefault("SMTP2GO_API_KEY", "")
 	smtpFrom       = getEnvOrDefault("SMTP_FROM", "docker-verse@nerdslabs.com")
 	smtpSenderName = getEnvOrDefault("SMTP_SENDER_NAME", "DockerVerse")
 	sshUser        = getEnvOrDefault("SSH_USER", "pi")
@@ -4717,6 +4720,12 @@ func main() {
 	}
 
 	log.Printf("🐳 DockerVerse starting on port %s", port)
+	if os.Getenv("ADMIN_PASS") == "" {
+		log.Printf("⚠️  ADMIN_PASS not set — a random password was generated for this session. Set ADMIN_PASS in .env for a persistent credential.")
+	}
+	if os.Getenv("SMTP2GO_API_KEY") == "" {
+		log.Printf("⚠️  SMTP2GO_API_KEY not set — email features are disabled.")
+	}
 	log.Printf("📊 Admin user: %s (change via env ADMIN_USER/ADMIN_PASS)", defaultAdmin)
 	log.Printf("🔌 Docker hosts configured: %d", len(hosts))
 	for _, h := range hosts {

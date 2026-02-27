@@ -44,10 +44,11 @@ services:
     environment:
       PORT: "3002"
       DOCKER_HOST: "unix:///var/run/docker.sock"
-      JWT_SECRET: "${JWT_SECRET:-***JWT-SECRET-REMOVED***}"
+      # Security (GO-CONFIG-001): JWT_SECRET must be set in .env — no hardcoded fallback.
+      JWT_SECRET: "${JWT_SECRET}"
       # Docker hosts configuration (pipe-separated)
       # Format: id:name:address:local/remote
-      DOCKER_HOSTS: "raspi1:Raspberry Main:unix:///var/run/docker.sock:local|raspi2:Raspberry Secondary:tcp://192.168.1.146:2376:remote"
+      DOCKER_HOSTS: "${DOCKER_HOSTS}"
       # Watchtower integration
       WATCHTOWER_TOKEN: "${WATCHTOWER_TOKEN:-}"
       WATCHTOWER_URLS: "${WATCHTOWER_URLS:-}"

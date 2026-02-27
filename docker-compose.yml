@@ -41,11 +41,12 @@ services:
     environment:
       - PORT=3001
       - DOCKER_HOST=unix:///var/run/docker.sock
-      - DOCKER_HOSTS=${DOCKER_HOSTS:-raspi1:Raspi Main:unix:///var/run/docker.sock:local|raspi2:Raspi 2:http://192.168.1.146:2375:remote}
+      - DOCKER_HOSTS=${DOCKER_HOSTS}
       - WATCHTOWER_TOKEN=${WATCHTOWER_TOKEN:-}
       - WATCHTOWER_URLS=${WATCHTOWER_URLS:-}
       - APPRISE_URL=http://apprise:8000
-      - JWT_SECRET=***JWT-SECRET-REMOVED***
+      # Security (GO-CONFIG-001): JWT_SECRET must be set in .env — no hardcoded fallback.
+      - JWT_SECRET=${JWT_SECRET}
     networks:
       - dockerverse-net
       - container_network_ipv4
