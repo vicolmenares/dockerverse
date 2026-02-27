@@ -53,3 +53,10 @@ docker-compose.override.yml
 # Coverage
 coverage/
 .nyc_output/
+
+# Playwright / MCP
+.playwright-mcp/
+
+# Development screenshots and output artifacts
+output/
+*.png
