@@ -40,6 +40,8 @@ import (
 	"github.com/pquerna/otp/totp"
 	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/crypto/ssh"
+
+	"dockerverse/models"
 )
 
 // =============================================================================
@@ -301,6 +303,8 @@ var (
 	sshAuthMethod ssh.AuthMethod
 	sshAuthErr    error
 )
+
+var scanStore *models.ScanStore
 
 func getSSHAuthMethod() (ssh.AuthMethod, error) {
 	sshAuthOnce.Do(func() {
@@ -4723,6 +4727,12 @@ func main() {
 	envStore := NewEnvironmentStore("data/environments.json")
 	dm := NewDockerManager(notifySvc)
 	hub := NewWSHub()
+
+	var err error
+	scanStore, err = models.NewScanStore(dataDir)
+	if err != nil {
+		log.Fatalf("Failed to initialize scan store: %v", err)
+	}
 
 	go hub.Run()
 	startBroadcaster(dm, hub)
