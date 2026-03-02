@@ -774,7 +774,7 @@ type ImageUpdate struct {
 
 // Update check cache
 var (
-	updateCache   = make(map[string]*ImageUpdate) // containerID -> update info
+	updateCache   = make(map[string]*ImageUpdate) // key: "image:hostID" (stable across container recreates)
 	updateCacheMu sync.RWMutex
 )
 
@@ -1961,6 +1961,7 @@ type DockerManager struct {
 	lastStates map[string]string
 	stateMu    sync.RWMutex
 	notifySvc  *NotificationService
+	hostArches map[string]string // hostID -> architecture ("amd64", "arm64", "arm")
 }
 
 func NewDockerManager(notifySvc *NotificationService) *DockerManager {
@@ -1968,6 +1969,7 @@ func NewDockerManager(notifySvc *NotificationService) *DockerManager {
 		clients:    make(map[string]*client.Client),
 		lastStates: make(map[string]string),
 		notifySvc:  notifySvc,
+		hostArches: make(map[string]string),
 	}
 	dm.initClients()
 	return dm
@@ -2006,6 +2008,54 @@ func (dm *DockerManager) GetClient(hostID string) (*client.Client, error) {
 		return nil, fmt.Errorf("no client for host: %s", hostID)
 	}
 	return cli, nil
+}
+
+// getHostArch returns the Docker host's CPU architecture, cached for the session.
+// Falls back to runtime.GOARCH if the Docker Info call fails.
+func (dm *DockerManager) getHostArch(ctx context.Context, hostID string) string {
+	dm.mu.RLock()
+	if arch, ok := dm.hostArches[hostID]; ok {
+		dm.mu.RUnlock()
+		return arch
+	}
+	dm.mu.RUnlock()
+
+	cli, err := dm.GetClient(hostID)
+	if err != nil {
+		return runtime.GOARCH
+	}
+
+	info, err := cli.Info(ctx)
+	if err != nil {
+		log.Printf("[UpdateCheck] Could not get Docker info for host %s, using %s: %v", hostID, runtime.GOARCH, err)
+		return runtime.GOARCH
+	}
+
+	// Docker reports arch as "x86_64", "aarch64", "armv7l" etc.
+	// Map to GOARCH format
+	arch := dockerArchToGoArch(info.Architecture)
+
+	dm.mu.Lock()
+	dm.hostArches[hostID] = arch
+	dm.mu.Unlock()
+
+	return arch
+}
+
+// dockerArchToGoArch maps Docker's architecture strings to Go's GOARCH format.
+func dockerArchToGoArch(dockerArch string) string {
+	switch strings.ToLower(dockerArch) {
+	case "x86_64", "amd64":
+		return "amd64"
+	case "aarch64", "arm64":
+		return "arm64"
+	case "armv7l", "armv6l", "arm":
+		return "arm"
+	case "i386", "i686", "386":
+		return "386"
+	default:
+		return runtime.GOARCH
+	}
 }
 
 func (dm *DockerManager) GetAllContainers(ctx context.Context) ([]ContainerInfo, error) {
@@ -4524,9 +4574,9 @@ func checkContainerUpdate(ctx context.Context, container ContainerInfo, dm *Dock
 		}
 	}
 
-	// Detect host architecture for platform-specific digest comparison
-	// arm64 for Raspberry Pi, amd64 for x86 servers
-	arch := runtime.GOARCH
+	// Detect the remote Docker host's architecture for platform-specific digest comparison
+	// This is critical for multi-host setups: backend may run on x86 but monitor arm64 Raspberry Pis
+	arch := dm.getHostArch(ctx, container.HostID)
 	platform := &v1.Platform{OS: "linux", Architecture: arch}
 
 	// Get platform-specific digest to avoid multi-arch manifest false positives
