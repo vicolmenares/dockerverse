@@ -15,6 +15,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -33,6 +34,7 @@ import (
 	"github.com/gofiber/websocket/v2"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/go-containerregistry/pkg/crane"
+	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/pkg/sftp"
 	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
@@ -3734,9 +3736,13 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 		}
 
-		// Clear update cache for this container
+		// Clear update cache for all containers on this host (container IDs change after update)
 		updateCacheMu.Lock()
-		delete(updateCache, containerID)
+		for k := range updateCache {
+			if strings.HasSuffix(k, ":"+hostID) {
+				delete(updateCache, k)
+			}
+		}
 		updateCacheMu.Unlock()
 
 		return c.JSON(fiber.Map{
@@ -4459,8 +4465,10 @@ func checkSingleImageUpdate(ctx context.Context, hostID, containerID string, dm 
 // by comparing the local image digest with the remote registry digest.
 func checkContainerUpdate(ctx context.Context, container ContainerInfo, dm *DockerManager) *ImageUpdate {
 	// Check cache first (valid for 15 minutes)
+	// Use stable key (image:hostID) since container.ID changes on every recreate
+	cacheKey := container.Image + ":" + container.HostID
 	updateCacheMu.RLock()
-	if cached, ok := updateCache[container.ID]; ok {
+	if cached, ok := updateCache[cacheKey]; ok {
 		if time.Now().Unix()-cached.CheckedAt < 900 {
 			updateCacheMu.RUnlock()
 			return cached
@@ -4510,37 +4518,55 @@ func checkContainerUpdate(ctx context.Context, container ContainerInfo, dm *Dock
 		if val, ok := labels["com.centurylinklabs.watchtower.enable"]; ok && val == "false" {
 			// Container is explicitly excluded from updates
 			updateCacheMu.Lock()
-			updateCache[container.ID] = update
+			updateCache[cacheKey] = update
 			updateCacheMu.Unlock()
 			return update
 		}
 	}
 
-	// Compare local digest with remote registry digest using crane
-	remoteDigest, err := crane.Digest(container.Image)
+	// Detect host architecture for platform-specific digest comparison
+	// arm64 for Raspberry Pi, amd64 for x86 servers
+	arch := runtime.GOARCH
+	platform := &v1.Platform{OS: "linux", Architecture: arch}
+
+	// Get platform-specific digest to avoid multi-arch manifest false positives
+	// crane.Digest() without platform returns manifest-list SHA (differs from pulled image SHA)
+	remoteDigest, err := crane.Digest(container.Image, crane.WithPlatform(platform))
 	if err != nil {
-		// Registry unreachable, auth failed, or image not found - not an error
-		log.Printf("Could not check registry for %s: %v", container.Image, err)
+		log.Printf("[UpdateCheck] Could not check registry for %s (arch=%s): %v", container.Image, arch, err)
 		update.HasUpdate = false
 		update.LatestDigest = ""
 	} else {
-		// Compare: currentDigest is "image@sha256:xxx", remoteDigest is "sha256:yyy"
-		hasUpdate := currentDigest != "" && !strings.Contains(currentDigest, remoteDigest)
+		// Extract sha256 portion from local RepoDigests for comparison
+		// currentDigest format: "registry/image@sha256:ABCDEF..."
+		// remoteDigest format:  "sha256:ABCDEF..."
+		localSHA := ""
+		if idx := strings.Index(currentDigest, "@sha256:"); idx >= 0 {
+			localSHA = currentDigest[idx+1:] // "sha256:ABCDEF..."
+		}
+		hasUpdate := localSHA != "" && localSHA != remoteDigest
 		update.HasUpdate = hasUpdate
 		update.LatestDigest = remoteDigest
+		logLen := func(s string) string {
+			if len(s) > 19 {
+				return s[:19] + "..."
+			}
+			return s
+		}
+		log.Printf("[UpdateCheck] %s: local=%s remote=%s hasUpdate=%v",
+			container.Image, logLen(localSHA), logLen(remoteDigest), hasUpdate)
 		if hasUpdate {
-			// Show short digest as "latest tag" since we can't resolve the actual tag
-			if len(remoteDigest) > 15 {
-				update.LatestTag = remoteDigest[:15] + "..."
+			if len(remoteDigest) > 19 {
+				update.LatestTag = remoteDigest[:19] + "..."
 			} else {
 				update.LatestTag = remoteDigest
 			}
 		}
 	}
 
-	// Cache the result
+	// Cache with stable key (image:hostID) — container.ID changes on every recreate
 	updateCacheMu.Lock()
-	updateCache[container.ID] = update
+	updateCache[cacheKey] = update
 	updateCacheMu.Unlock()
 
 	return update
