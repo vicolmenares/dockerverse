@@ -84,6 +84,9 @@ func (ss *ScanStore) load() error {
 }
 
 func (ss *ScanStore) save() error {
+	if err := os.MkdirAll(ss.dataDir, 0755); err != nil {
+		return fmt.Errorf("create data dir: %w", err)
+	}
 	data, err := json.MarshalIndent(ss.results, "", "  ")
 	if err != nil {
 		return err
