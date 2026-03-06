@@ -71,7 +71,7 @@
   });
 
   // Derive active sidebar item from current URL path
-  let activeSidebarItem = $derived(() => {
+  let activeSidebarItem = $derived.by(() => {
     const pathname = $page.url.pathname;
     if (pathname.startsWith('/logs')) return 'logs';
     if (pathname.startsWith('/shell')) return 'shell';
@@ -368,7 +368,7 @@
         <nav class="flex-1 px-2 py-3 space-y-0.5 overflow-y-auto">
           {#each sidebarItems as item}
             {@const Icon = item.icon}
-            {@const isActive = activeSidebarItem() === item.id}
+            {@const isActive = activeSidebarItem === item.id}
             <a
               href={item.href}
               class="flex items-center {navCollapsed ? 'justify-center px-2 py-2.5' : 'gap-3 px-3 py-2.5'} rounded-lg transition-colors {isActive

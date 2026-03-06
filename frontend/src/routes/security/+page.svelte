@@ -1,10 +1,10 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { fetchScanHistory, type ScanResult, type Vulnerability } from "$lib/api/docker";
-  import { language } from "$lib/stores/docker";
+  import { type ScanResult, type Vulnerability } from "$lib/api/docker";
+  import { language, scanHistory, refreshScanHistory } from "$lib/stores/docker";
   import { Shield, ShieldAlert, ShieldCheck, X, ChevronDown, ChevronUp, AlertTriangle } from "lucide-svelte";
 
-  let scans = $state<ScanResult[]>([]);
+  let scans = $derived($scanHistory);
   let loading = $state(true);
   let error = $state("");
   let selected = $state<ScanResult | null>(null);
@@ -12,7 +12,7 @@
 
   onMount(async () => {
     try {
-      scans = await fetchScanHistory();
+      await refreshScanHistory();
     } catch (e) {
       error = e instanceof Error ? e.message : "Failed to load scan history";
     } finally {
