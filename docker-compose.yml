@@ -33,8 +33,6 @@ services:
     restart: unless-stopped
     expose:
       - "3001"
-    ports:
-      - "3006:3001"  # Keep direct access for debugging
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - backend_data:/data

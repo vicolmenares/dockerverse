@@ -60,3 +60,4 @@ coverage/
 # Development screenshots and output artifacts
 output/
 *.png
+backend/models/CLAUDE.md
