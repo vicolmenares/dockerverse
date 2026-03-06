@@ -304,7 +304,10 @@ var (
 	sshAuthErr    error
 )
 
-var scanStore *models.ScanStore
+var (
+	scanStore  *models.ScanStore
+	scanEngine *models.ScanEngine
+)
 
 func getSSHAuthMethod() (ssh.AuthMethod, error) {
 	sshAuthOnce.Do(func() {
@@ -2775,6 +2778,119 @@ healthCheck:
 	return nil
 }
 
+// performUpdateWithScan runs a container update with optional vulnerability scanning.
+// It emits SSE events via the emit callback. Returns an error if the update fails or is blocked.
+func performUpdateWithScan(
+	ctx context.Context,
+	hostID, containerID string,
+	cfg models.ScannerConfig,
+	forceOverride bool,
+	dm *DockerManager,
+	engine *models.ScanEngine,
+	store *models.ScanStore,
+	emit func(string, interface{}),
+) error {
+	// Get container info to find image name
+	cli, err := dm.GetClient(hostID)
+	if err != nil {
+		return fmt.Errorf("get docker client: %w", err)
+	}
+
+	inspect, err := cli.ContainerInspect(ctx, containerID)
+	if err != nil {
+		return fmt.Errorf("inspect container: %w", err)
+	}
+
+	imageName := inspect.Config.Image
+	containerName := strings.TrimPrefix(inspect.Name, "/")
+
+	emit("progress", fiber.Map{"stage": "pulling", "message": fmt.Sprintf("Pulling %s...", imageName)})
+
+	// Pull latest image
+	pullCtx, pullCancel := context.WithTimeout(ctx, 5*time.Minute)
+	pullResp, pullErr := cli.ImagePull(pullCtx, imageName, image.PullOptions{})
+	pullCancel()
+	if pullErr != nil {
+		return fmt.Errorf("pull image: %w", pullErr)
+	}
+	_, _ = io.Copy(io.Discard, pullResp)
+	pullResp.Close()
+
+	emit("progress", fiber.Map{"stage": "pulled", "message": "Image pulled successfully"})
+
+	// Run vulnerability scan if configured
+	if cfg.Scanner != "" && cfg.Scanner != "none" {
+		emit("progress", fiber.Map{"stage": "scanning", "message": "Starting vulnerability scan..."})
+
+		scanResults, scanErr := engine.Scan(ctx, hostID, imageName, cfg, func(ev models.ScanEvent) {
+			emit("scan_progress", ev)
+		})
+		if scanErr != nil {
+			// Scan failure is non-fatal unless scanner == required
+			emit("progress", fiber.Map{"stage": "scan_warning", "message": fmt.Sprintf("Scan error: %v", scanErr)})
+		} else {
+			// Persist scan results
+			for i := range scanResults {
+				scanResults[i].ContainerID = containerID
+				scanResults[i].ContainerName = containerName
+				scanResults[i].TriggeredBy = "manual"
+				if saveErr := store.Save(&scanResults[i]); saveErr != nil {
+					log.Printf("[Scan] Failed to save scan result: %v", saveErr)
+				}
+			}
+
+			if len(scanResults) > 0 {
+				summary := models.AggregateSummary(scanResults)
+				emit("scan_result", fiber.Map{
+					"summary": summary,
+					"scanner": cfg.Scanner,
+				})
+
+				// Evaluate blocking criteria (unless force override)
+				if !forceOverride && cfg.Criteria != "never" && cfg.Criteria != "" {
+					var baseline *models.ScanSummary
+					if cfg.Criteria == "more_than_current" {
+						if prev := store.GetLatestForImage(imageName); prev != nil {
+							baseline = &prev.Summary
+						}
+					}
+					blocked, reason := models.EvaluateCriteria(cfg.Criteria, summary, baseline)
+					if blocked {
+						emit("blocked", fiber.Map{
+							"reason":  reason,
+							"summary": summary,
+						})
+						return fmt.Errorf("update blocked: %s", reason)
+					}
+				}
+
+				if forceOverride {
+					emit("progress", fiber.Map{"stage": "override", "message": "Force override — proceeding despite scan results"})
+				}
+			}
+		}
+	}
+
+	// Proceed with the actual container update
+	emit("progress", fiber.Map{"stage": "updating", "message": "Recreating container..."})
+
+	if err := dm.updateContainerImage(ctx, hostID, containerID); err != nil {
+		return fmt.Errorf("update container: %w", err)
+	}
+
+	// Clear update cache for this host
+	updateCacheMu.Lock()
+	for k := range updateCache {
+		if strings.HasSuffix(k, ":"+hostID) {
+			delete(updateCache, k)
+		}
+	}
+	updateCacheMu.Unlock()
+
+	emit("updated", fiber.Map{"stage": "done", "message": "Container updated successfully"})
+	return nil
+}
+
 // =============================================================================
 // WebSocket Hub for Real-time Updates
 // =============================================================================
@@ -3775,6 +3891,41 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 	})
 
 	// Container actions
+	// SSE: stream real-time update + scan progress
+	// IMPORTANT: This must come BEFORE the generic /:action route to avoid conflicts
+	protected.Get("/containers/:hostId/:containerId/update-stream", func(c *fiber.Ctx) error {
+		hostID := c.Params("hostId")
+		containerID := c.Params("containerId")
+		scanner := c.Query("scanner", "trivy")
+		criteria := c.Query("criteria", "never")
+		force := c.QueryBool("force", false)
+
+		c.Set("Content-Type", "text/event-stream")
+		c.Set("Cache-Control", "no-cache")
+		c.Set("Connection", "keep-alive")
+		c.Set("X-Accel-Buffering", "no")
+
+		c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
+			emit := func(event string, data interface{}) {
+				b, _ := json.Marshal(data)
+				fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, string(b))
+				w.Flush()
+			}
+
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+			defer cancel()
+
+			cfg := models.ScannerConfig{Scanner: scanner, Criteria: criteria}
+			err := performUpdateWithScan(ctx, hostID, containerID, cfg, force, dm, scanEngine, scanStore, emit)
+			if err != nil {
+				emit("error", fiber.Map{"message": err.Error()})
+			}
+			fmt.Fprintf(w, "event: close\ndata: {}\n\n")
+			w.Flush()
+		})
+		return nil
+	})
+
 	// Trigger Watchtower update for a specific container
 	// IMPORTANT: This must come BEFORE the generic /:action route to avoid conflicts
 	protected.Post("/containers/:hostId/:containerId/update", func(c *fiber.Ctx) error {
@@ -3803,6 +3954,60 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 			"success": true,
 			"message": "Container updated successfully with health validation",
 		})
+	})
+
+	// Manual vulnerability scan for a container
+	// IMPORTANT: This must come BEFORE the generic /:action route to avoid conflicts
+	protected.Post("/containers/:hostId/:containerId/scan", func(c *fiber.Ctx) error {
+		hostID := c.Params("hostId")
+		containerID := c.Params("containerId")
+
+		var req struct {
+			Scanner string `json:"scanner"`
+		}
+		if err := c.BodyParser(&req); err != nil || req.Scanner == "" {
+			req.Scanner = "trivy"
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
+
+		cli, err := dm.GetClient(hostID)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+
+		inspect, err := cli.ContainerInspect(ctx, containerID)
+		if err != nil {
+			return c.Status(404).JSON(fiber.Map{"error": "container not found"})
+		}
+
+		imageName := inspect.Config.Image
+		containerName := strings.TrimPrefix(inspect.Name, "/")
+
+		results, err := scanEngine.Scan(ctx, hostID, imageName,
+			models.ScannerConfig{Scanner: req.Scanner, Criteria: "never"}, nil)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+
+		for i := range results {
+			results[i].ContainerID = containerID
+			results[i].ContainerName = containerName
+			results[i].TriggeredBy = "manual"
+			_ = scanStore.Save(&results[i])
+		}
+
+		return c.JSON(results)
+	})
+
+	// Scan history list
+	protected.Get("/scans", func(c *fiber.Ctx) error {
+		limit := 100
+		if l := c.QueryInt("limit", 100); l > 0 && l <= 500 {
+			limit = l
+		}
+		return c.JSON(scanStore.List(limit))
 	})
 
 	// Generic container actions (start, stop, restart, pause, unpause)
@@ -4733,6 +4938,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to initialize scan store: %v", err)
 	}
+	scanEngine = models.NewScanEngine(dm)
 
 	go hub.Run()
 	startBroadcaster(dm, hub)
