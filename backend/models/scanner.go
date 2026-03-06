@@ -157,11 +157,10 @@ func (se *ScanEngine) runScanner(ctx context.Context, hostID, imageName string, 
 		emit(ScanEvent{Stage: "pull", Scanner: spec.name, Message: fmt.Sprintf("Pulling %s …", spec.imageName)})
 
 		pullCtx, pullCancel := context.WithTimeout(ctx, 10*time.Minute)
-		defer pullCancel()
-
-		pullResp, err := cli.ImagePull(pullCtx, spec.imageName, image.PullOptions{})
-		if err != nil {
-			return result, fmt.Errorf("pull scanner image %s: %w", spec.imageName, err)
+		pullResp, pullErr := cli.ImagePull(pullCtx, spec.imageName, image.PullOptions{})
+		pullCancel() // cancel immediately after use, not deferred
+		if pullErr != nil {
+			return result, fmt.Errorf("pull scanner image %s: %w", spec.imageName, pullErr)
 		}
 		_, _ = io.Copy(io.Discard, pullResp)
 		pullResp.Close()
@@ -218,15 +217,15 @@ func (se *ScanEngine) runScanner(ctx context.Context, hostID, imageName string, 
 
 	// Step 5: Wait for the container to finish (10-minute timeout).
 	waitCtx, waitCancel := context.WithTimeout(ctx, 10*time.Minute)
-	defer waitCancel()
-
 	statusCh, errCh := cli.ContainerWait(waitCtx, containerID, container.WaitConditionNotRunning)
 	select {
 	case waitErr := <-errCh:
+		waitCancel() // cancel immediately after select completes
 		if waitErr != nil {
 			return result, fmt.Errorf("wait for scanner container: %w", waitErr)
 		}
 	case waitResp := <-statusCh:
+		waitCancel() // cancel immediately after select completes
 		if waitResp.Error != nil {
 			return result, fmt.Errorf("scanner container error: %s", waitResp.Error.Message)
 		}
@@ -263,7 +262,21 @@ func (se *ScanEngine) runScanner(ctx context.Context, hostID, imageName string, 
 
 // extractJSON finds the outermost JSON object in a string that may contain
 // non-JSON preamble lines (common with both Trivy and Grype).
+// It scans line-by-line for the first line starting with '{', then trims to
+// the last '}' — more robust than a simple strings.Index on the full output.
 func extractJSON(s string) string {
+	lines := strings.Split(s, "\n")
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "{") {
+			candidate := strings.Join(lines[i:], "\n")
+			end := strings.LastIndex(candidate, "}")
+			if end >= 0 {
+				return candidate[:end+1]
+			}
+		}
+	}
+	// Fallback: original heuristic for single-line outputs
 	start := strings.Index(s, "{")
 	end := strings.LastIndex(s, "}")
 	if start == -1 || end == -1 || end <= start {
@@ -460,6 +473,12 @@ func EvaluateCriteria(criteria string, newSummary ScanSummary, baseline *ScanSum
 		}
 		if newSummary.High > baseline.High {
 			return true, fmt.Sprintf("blocked: high vulnerabilities increased from %d to %d", baseline.High, newSummary.High)
+		}
+		if newSummary.Medium > baseline.Medium {
+			return true, fmt.Sprintf("blocked: medium vulnerabilities increased from %d to %d", baseline.Medium, newSummary.Medium)
+		}
+		if newSummary.Low > baseline.Low {
+			return true, fmt.Sprintf("blocked: low vulnerabilities increased from %d to %d", baseline.Low, newSummary.Low)
 		}
 		return false, ""
 
