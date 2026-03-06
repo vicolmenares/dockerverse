@@ -2829,6 +2829,15 @@ func performUpdateWithScan(
 			// Scan failure is non-fatal unless scanner == required
 			emit("progress", fiber.Map{"stage": "scan_warning", "message": fmt.Sprintf("Scan error: %v", scanErr)})
 		} else {
+			// Fetch baseline BEFORE saving new results so more_than_current
+			// compares against the previous scan, not the one we just ran.
+			var baseline *models.ScanSummary
+			if cfg.Criteria == "more_than_current" {
+				if prev := store.GetLatestForImage(imageName); prev != nil {
+					baseline = &prev.Summary
+				}
+			}
+
 			// Persist scan results
 			for i := range scanResults {
 				scanResults[i].ContainerID = containerID
@@ -2848,12 +2857,6 @@ func performUpdateWithScan(
 
 				// Evaluate blocking criteria (unless force override)
 				if !forceOverride && cfg.Criteria != "never" && cfg.Criteria != "" {
-					var baseline *models.ScanSummary
-					if cfg.Criteria == "more_than_current" {
-						if prev := store.GetLatestForImage(imageName); prev != nil {
-							baseline = &prev.Summary
-						}
-					}
 					blocked, reason := models.EvaluateCriteria(cfg.Criteria, summary, baseline)
 					if blocked {
 						emit("blocked", fiber.Map{
@@ -4960,9 +4963,12 @@ func main() {
 	}
 
 	app := fiber.New(fiber.Config{
-		AppName:      "DockerVerse API",
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 30 * time.Second,
+		AppName:     "DockerVerse API",
+		ReadTimeout: 30 * time.Second,
+		// WriteTimeout is disabled (0) to support long-running SSE streams
+		// (update-stream, log-stream). A 30s write timeout would kill scans
+		// that take minutes to complete.
+		WriteTimeout: 0,
 	})
 
 	// Middleware
