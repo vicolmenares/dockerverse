@@ -4,7 +4,7 @@
 > 
 > A modern, real-time Docker monitoring and management portal built with **Svelte 5 + SvelteKit** frontend and **Go + Fiber** backend.
 
-![DockerVerse](https://img.shields.io/badge/DockerVerse-v2.1.0-blue)
+![DockerVerse](https://img.shields.io/badge/DockerVerse-v2.5.0-blue)
 ![Svelte](https://img.shields.io/badge/Svelte-5.0-orange)
 ![Go](https://img.shields.io/badge/Go-1.22+-cyan)
 ![License](https://img.shields.io/badge/License-MIT-green)
@@ -31,6 +31,15 @@
 - **🔄 Image Updates**: Watchtower-style update detection
 - **🔔 Updates Counter**: Badge showing pending image updates
 - **🌐 Multi-language**: Full Spanish/English support
+
+### Security Scanning (v2.5.0)
+- **🛡️ Vulnerability Scanning**: Trivy and Grype integration via ephemeral Docker containers
+- **⚡ Real-time Progress**: SSE streaming for live update + scan feedback
+- **🚫 Configurable Blocking**: 5 criteria: never / any / critical_high / critical / more_than_current
+- **🔓 Admin Override**: Force update despite vulnerabilities, with full audit trail
+- **📜 Scan History**: Persistent history of all scans at `/security`
+- **🏷️ CVE Badges**: Critical/High counts shown on container cards
+- **🔧 Multi-arch Fix**: Correct digest comparison for ARM64 (Raspberry Pi) hosts
 
 ## 🏗️ Architecture
 
