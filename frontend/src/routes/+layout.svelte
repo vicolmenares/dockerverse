@@ -75,6 +75,7 @@
     const pathname = $page.url.pathname;
     if (pathname.startsWith('/logs')) return 'logs';
     if (pathname.startsWith('/shell')) return 'shell';
+    if (pathname.startsWith('/security')) return 'security-scans';
     if (pathname.startsWith('/settings/users')) return 'users';
     if (pathname.startsWith('/settings/notifications')) return 'notifications';
     if (pathname.startsWith('/settings/appearance')) return 'appearance';
@@ -120,6 +121,12 @@
       icon: SquareTerminal,
       label: "Shell",
       href: "/shell",
+    },
+    {
+      id: "security-scans",
+      icon: Shield,
+      label: $language === "es" ? "Seguridad" : "Security",
+      href: "/security",
     },
     {
       id: "environments",

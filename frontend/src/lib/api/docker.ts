@@ -91,6 +91,35 @@ export interface ImageUpdate {
 	checkedAt: number;
 }
 
+export interface Vulnerability {
+	id: string;
+	severity: string;
+	package: string;
+	version: string;
+	fixedVersion?: string;
+	description?: string;
+	link?: string;
+	scanner: string;
+}
+
+export interface ScanResult {
+	id: string;
+	containerId: string;
+	containerName: string;
+	imageName: string;
+	imageId: string;
+	hostId: string;
+	scanner: string;
+	scannedAt: string;
+	scanDurationMs: number;
+	summary: { critical: number; high: number; medium: number; low: number; negligible: number; unknown: number };
+	vulnerabilities: Vulnerability[];
+	blocked: boolean;
+	blockReason: string;
+	forceOverride: boolean;
+	triggeredBy: string;
+}
+
 export interface BulkUpdateResultItem {
 	containerId: string;
 	containerName: string;
@@ -226,6 +255,12 @@ export async function triggerBulkUpdate(
 		failed,
 		results
 	};
+}
+
+export async function fetchScanHistory(): Promise<ScanResult[]> {
+	const res = await fetchWithTimeout(`${API_BASE}/api/scans`, { headers: getAuthHeaders() }, 15000);
+	if (!res.ok) throw new Error('Failed to fetch scan history');
+	return res.json();
 }
 
 // SSE Event Source with callbacks for all message types

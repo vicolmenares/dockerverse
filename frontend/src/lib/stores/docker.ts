@@ -218,7 +218,7 @@ export function disconnectWebSocket() {
 }
 
 // Image updates store
-import { fetchImageUpdates, type ImageUpdate } from '$lib/api/docker';
+import { fetchImageUpdates, fetchScanHistory, type ImageUpdate, type ScanResult } from '$lib/api/docker';
 
 export const imageUpdates = writable<ImageUpdate[]>([]);
 export const updatesLoading = writable(false);
@@ -228,6 +228,18 @@ export const lastUpdateCheck = writable<Date | null>(null);
 export const pendingUpdatesCount = derived(imageUpdates, ($updates) => 
 	$updates.filter(u => u.hasUpdate).length
 );
+
+// Scan history store
+export const scanHistory = writable<ScanResult[]>([]);
+
+export async function refreshScanHistory(): Promise<void> {
+	try {
+		const results = await fetchScanHistory();
+		scanHistory.set(results);
+	} catch (e) {
+		console.error('Failed to fetch scan history:', e);
+	}
+}
 
 // Function to check for updates (with retry on failure)
 export async function checkForUpdates(): Promise<void> {

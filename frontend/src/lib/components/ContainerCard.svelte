@@ -32,6 +32,7 @@
     imageUpdates,
     checkForUpdates,
     lastUpdateCheck,
+    scanHistory,
   } from "$lib/stores/docker";
 
   let {
@@ -167,6 +168,13 @@
   // Use derived values to track container state changes
   const image = $derived(parseImage(container.image));
   const isRunning = $derived(container.state === "running");
+
+  // Latest vulnerability scan for this container
+  const latestScan = $derived.by(() => {
+    return $scanHistory.find(
+      (s) => s.imageName === container.image || s.containerName === container.name
+    ) ?? null;
+  });
 </script>
 
 <div class="card card-hover p-4 flex flex-col gap-3 h-[300px]">
@@ -214,6 +222,14 @@
               title={$language === "es" ? "Watchtower monitoreando" : "Watchtower monitoring"}
             >
               <RotateCcw class="w-2.5 h-2.5 watchtower-spin" />
+            </span>
+          {/if}
+          {#if latestScan && (latestScan.summary.critical > 0 || latestScan.summary.high > 0)}
+            <span
+              class="flex items-center gap-1 text-[10px] font-semibold text-accent-red bg-accent-red/15 border border-accent-red/30 px-1.5 py-0.5 rounded-full flex-shrink-0 cursor-help"
+              title={$language === "es" ? "Último escaneo de vulnerabilidades" : "Last vulnerability scan"}
+            >
+              {#if latestScan.summary.critical > 0}{latestScan.summary.critical}C{/if}{#if latestScan.summary.critical > 0 && latestScan.summary.high > 0}&nbsp;{/if}{#if latestScan.summary.high > 0}{latestScan.summary.high}H{/if}
             </span>
           {/if}
         </div>
