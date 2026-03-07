@@ -34,7 +34,6 @@ import (
 	"github.com/gofiber/websocket/v2"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/go-containerregistry/pkg/crane"
-	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/pkg/sftp"
 	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
@@ -595,20 +594,75 @@ type SSEMessage struct {
 type Environment struct {
 	ID             string `json:"id"`
 	Name           string `json:"name"`
-	ConnectionType string `json:"connectionType"` // "socket" or "tcp"
-	Address        string `json:"address"`        // socket path or host:port
+	ConnectionType string `json:"connectionType"` // "socket", "tcp", "tcp+tls"
+	Address        string `json:"address"`        // kept for migration compat
+	SocketPath     string `json:"socketPath"`     // configurable socket path
+	Host           string `json:"host"`           // hostname/IP for tcp modes
+	Port           int    `json:"port"`           // port for tcp modes
 	Protocol       string `json:"protocol"`       // "http" or "https"
 	IsLocal        bool   `json:"isLocal"`
-	Labels         string `json:"labels"`
-	Status         string `json:"status"` // "online", "offline", "unknown"
-	DockerVersion  string `json:"dockerVersion"`
+	// TLS
+	TlsCa         string `json:"tlsCa"`
+	TlsCert       string `json:"tlsCert"`
+	TlsKey        string `json:"tlsKey"`
+	TlsSkipVerify bool   `json:"tlsSkipVerify"`
+	// Metadata
+	Labels        []string `json:"labels"`
+	PublicIP      string   `json:"publicIp"`
+	Timezone      string   `json:"timezone"`
+	Status        string   `json:"status"` // "online", "offline", "unknown"
+	DockerVersion string   `json:"dockerVersion"`
 	// Update settings
 	AutoUpdate     bool   `json:"autoUpdate"`
-	UpdateSchedule string `json:"updateSchedule"` // cron expression
+	UpdateSchedule string `json:"updateSchedule"`
 	ImagePrune     bool   `json:"imagePrune"`
-	// Feature flags
-	EventTracking bool `json:"eventTracking"`
-	VulnScanning  bool `json:"vulnScanning"`
+	ImagePruneMode string `json:"imagePruneMode"` // "dangling" | "all"
+	ImagePruneCron string `json:"imagePruneCron"`
+	// Monitoring flags
+	EventTracking    bool `json:"eventTracking"`
+	VulnScanning     bool `json:"vulnScanning"`
+	CollectMetrics   bool `json:"collectMetrics"`
+	HighlightChanges bool `json:"highlightChanges"`
+	// Disk warning
+	DiskWarningEnabled   bool    `json:"diskWarningEnabled"`
+	DiskWarningMode      string  `json:"diskWarningMode"`      // "percentage" | "absolute"
+	DiskWarningThreshold float64 `json:"diskWarningThreshold"` // % or GB
+}
+
+func (e *Environment) UnmarshalJSON(data []byte) error {
+	// Use an alias to avoid infinite recursion
+	type Alias Environment
+	// First unmarshal everything except Labels using the alias
+	aux := &struct {
+		Labels json.RawMessage `json:"labels"`
+		*Alias
+	}{
+		Alias: (*Alias)(e),
+	}
+	if err := json.Unmarshal(data, aux); err != nil {
+		return err
+	}
+	if aux.Labels != nil {
+		// Try []string first (new format)
+		var labelSlice []string
+		if err := json.Unmarshal(aux.Labels, &labelSlice); err == nil {
+			e.Labels = labelSlice
+		} else {
+			// Try string (old format) — split by comma
+			var labelStr string
+			if err := json.Unmarshal(aux.Labels, &labelStr); err == nil {
+				if labelStr != "" {
+					for _, l := range strings.Split(labelStr, ",") {
+						l = strings.TrimSpace(l)
+						if l != "" {
+							e.Labels = append(e.Labels, l)
+						}
+					}
+				}
+			}
+		}
+	}
+	return nil
 }
 
 // EnvironmentStore manages environment persistence
@@ -637,6 +691,39 @@ func (es *EnvironmentStore) load() {
 	if err := json.Unmarshal(data, &es.Environments); err != nil {
 		log.Printf("Warning: failed to parse environments file: %v", err)
 		es.migrateFromHosts()
+		return
+	}
+	// Migrate old data: populate SocketPath/Host/Port from Address if empty
+	for i := range es.Environments {
+		env := es.Environments[i]
+		if env.SocketPath == "" && env.Host == "" {
+			if env.ConnectionType == "socket" || env.IsLocal {
+				env.SocketPath = env.Address
+				if env.SocketPath == "" {
+					env.SocketPath = "/var/run/docker.sock"
+				}
+			} else {
+				// Parse "host:port" or "http://host:port"
+				addr := strings.TrimPrefix(env.Address, "http://")
+				addr = strings.TrimPrefix(addr, "https://")
+				if h, p, err := net.SplitHostPort(addr); err == nil {
+					env.Host = h
+					if port, err := strconv.Atoi(p); err == nil {
+						env.Port = port
+					}
+				} else {
+					env.Host = addr
+					env.Port = 2375
+				}
+			}
+		}
+		if env.Port == 0 && !env.IsLocal && env.ConnectionType != "socket" {
+			env.Port = 2375
+		}
+		if env.SocketPath == "" && (env.ConnectionType == "socket" || env.IsLocal) {
+			env.SocketPath = "/var/run/docker.sock"
+		}
+		es.Environments[i] = env
 	}
 }
 
@@ -649,7 +736,7 @@ func (es *EnvironmentStore) migrateFromHosts() {
 			connType = "socket"
 			addr = h.Address
 		}
-		es.Environments[h.ID] = &Environment{
+		env := &Environment{
 			ID:             h.ID,
 			Name:           h.Name,
 			ConnectionType: connType,
@@ -659,6 +746,25 @@ func (es *EnvironmentStore) migrateFromHosts() {
 			Status:         "unknown",
 			EventTracking:  true,
 		}
+		if h.IsLocal {
+			env.SocketPath = h.Address
+			if env.SocketPath == "" {
+				env.SocketPath = "/var/run/docker.sock"
+			}
+		} else {
+			a := strings.TrimPrefix(addr, "http://")
+			a = strings.TrimPrefix(a, "https://")
+			if host, port, err := net.SplitHostPort(a); err == nil {
+				env.Host = host
+				if p, err := strconv.Atoi(port); err == nil {
+					env.Port = p
+				}
+			} else {
+				env.Host = a
+				env.Port = 2375
+			}
+		}
+		es.Environments[h.ID] = env
 	}
 	es.save()
 }
@@ -2140,11 +2246,11 @@ func (dm *DockerManager) GetAllContainers(ctx context.Context) ([]ContainerInfo,
 					Service:  c.Labels["com.docker.compose.service"],
 				}
 
-				// Check state changes for notifications
+				// Check state changes for notifications — skip internal scanner containers.
 				key := h.ID + ":" + c.ID[:12]
 				dm.stateMu.Lock()
 				lastState, exists := dm.lastStates[key]
-				if exists && lastState != c.State {
+				if exists && lastState != c.State && c.Labels["com.dockerverse.internal"] == "" {
 					if c.State == "running" && lastState == "exited" {
 						go dm.notifySvc.NotifyContainerState(name, "started")
 					} else if c.State == "exited" && lastState == "running" {
@@ -2590,6 +2696,155 @@ func (dm *DockerManager) GetContainerLogs(ctx context.Context, hostID, container
 	}
 
 	return cli.ContainerLogs(ctx, containerID, options)
+}
+
+// updateContainerWatchtower updates a container using Watchtower's direct approach:
+// pull → compare image IDs → stop → remove → recreate → start.
+// Returns (true, nil) when updated, (false, nil) when image was already up to date.
+func (dm *DockerManager) updateContainerWatchtower(ctx context.Context, hostID, containerID string, emit func(string, interface{})) (bool, error) {
+	cli, err := dm.GetClient(hostID)
+	if err != nil {
+		return false, fmt.Errorf("get docker client: %w", err)
+	}
+
+	inspect, err := cli.ContainerInspect(ctx, containerID)
+	if err != nil {
+		return false, fmt.Errorf("inspect container: %w", err)
+	}
+
+	imageName := inspect.Config.Image
+	containerName := strings.TrimPrefix(inspect.Name, "/")
+
+	// Step 1: Pull latest image
+	emit("progress", fiber.Map{"stage": "pulling", "message": fmt.Sprintf("Pulling %s...", imageName)})
+	pullCtx, pullCancel := context.WithTimeout(ctx, 5*time.Minute)
+	pullResp, pullErr := cli.ImagePull(pullCtx, imageName, image.PullOptions{})
+	pullCancel()
+	if pullErr != nil {
+		return false, fmt.Errorf("pull image: %w", pullErr)
+	}
+	_, _ = io.Copy(io.Discard, pullResp)
+	pullResp.Close()
+	emit("progress", fiber.Map{"stage": "pulled", "message": "Image pulled"})
+
+	// Step 2: Compare image IDs — if unchanged, skip restart (Watchtower optimization)
+	newImageInfo, _, inspErr := cli.ImageInspectWithRaw(ctx, imageName)
+	if inspErr == nil && newImageInfo.ID == inspect.Image {
+		emit("progress", fiber.Map{"stage": "no_change", "message": "Image already up to date — no restart needed"})
+		return false, nil
+	}
+
+	// Step 3: Stop old container gracefully (10s timeout)
+	emit("progress", fiber.Map{"stage": "stopping", "message": fmt.Sprintf("Stopping %s...", containerName)})
+	stopTimeout := 10
+	_ = cli.ContainerStop(ctx, containerID, container.StopOptions{Timeout: &stopTimeout})
+
+	// Step 4: Remove old container
+	if err := cli.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true}); err != nil {
+		return false, fmt.Errorf("remove old container: %w", err)
+	}
+
+	// Step 5: Recreate container with exact same configuration (volumes, ports, env, labels, network)
+	emit("progress", fiber.Map{"stage": "creating", "message": fmt.Sprintf("Recreating %s...", containerName)})
+	newCreateResp, err := cli.ContainerCreate(ctx, inspect.Config, inspect.HostConfig, nil, nil, containerName)
+	if err != nil {
+		return false, fmt.Errorf("create container: %w", err)
+	}
+	newID := newCreateResp.ID
+
+	// Step 6: Start new container
+	if err := cli.ContainerStart(ctx, newID, container.StartOptions{}); err != nil {
+		cleanCtx, cleanCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cleanCancel()
+		_ = cli.ContainerRemove(cleanCtx, newID, container.RemoveOptions{Force: true})
+		return false, fmt.Errorf("start container: %w", err)
+	}
+
+	emit("progress", fiber.Map{"stage": "started", "message": fmt.Sprintf("%s running with new image", containerName)})
+	log.Printf("[Update] ✅ %s: %s → %s", containerName, containerID[:12], newID[:12])
+	return true, nil
+}
+
+// performUpdate runs a Watchtower-style container update, then streams a background
+// security scan (trivy) through the same SSE connection — informational only, never blocks.
+// UX flow: pull → recreate → "updated" ✓ → scan runs → scan_result displayed.
+func performUpdate(
+	ctx context.Context,
+	hostID, containerID string,
+	dm *DockerManager,
+	engine *models.ScanEngine,
+	store *models.ScanStore,
+	emit func(string, interface{}),
+) error {
+	cli, err := dm.GetClient(hostID)
+	if err != nil {
+		return err
+	}
+	inspect, err := cli.ContainerInspect(ctx, containerID)
+	if err != nil {
+		return err
+	}
+	imageName := inspect.Config.Image
+	containerName := strings.TrimPrefix(inspect.Name, "/")
+
+	// Update (Watchtower-style: pull → compare → stop → recreate → start)
+	updated, err := dm.updateContainerWatchtower(ctx, hostID, containerID, emit)
+	if err != nil {
+		return err
+	}
+
+	// Always clear the update cache entry for this image so the badge disappears —
+	// whether we just updated it or confirmed it was already current.
+	cacheKey := imageName + ":" + hostID
+	updateCacheMu.Lock()
+	if updated {
+		// Full update: clear all entries for this host (other containers may share base images).
+		for k := range updateCache {
+			if strings.HasSuffix(k, ":"+hostID) {
+				delete(updateCache, k)
+			}
+		}
+	} else {
+		// Already up to date: mark this specific image as having no update.
+		if entry, ok := updateCache[cacheKey]; ok {
+			entry.HasUpdate = false
+		}
+	}
+	updateCacheMu.Unlock()
+
+	// Signal update complete — frontend shows ✓ immediately
+	if updated {
+		emit("updated", fiber.Map{"stage": "done", "message": fmt.Sprintf("%s updated successfully", containerName)})
+	} else {
+		emit("updated", fiber.Map{"stage": "done", "message": fmt.Sprintf("%s is already up to date", containerName)})
+	}
+
+	// Background security scan — SSE stays open so results stream back.
+	// Scan is always informational: never blocks or rolls back the update.
+	if engine != nil {
+		emit("progress", fiber.Map{"stage": "scan_start", "message": "Scanning for vulnerabilities..."})
+		cfg := models.ScannerConfig{Scanner: "trivy", Criteria: "never"}
+		results, scanErr := engine.Scan(ctx, hostID, imageName, cfg, func(ev models.ScanEvent) {
+			emit("scan_progress", ev)
+		})
+		if scanErr != nil {
+			log.Printf("[BackgroundScan] %s: %v", imageName, scanErr)
+			emit("progress", fiber.Map{"stage": "scan_error", "message": fmt.Sprintf("Scan unavailable: %v", scanErr)})
+		} else if len(results) > 0 {
+			for i := range results {
+				results[i].ContainerID = containerID
+				results[i].ContainerName = containerName
+				results[i].TriggeredBy = "auto"
+				_ = store.Save(&results[i])
+			}
+			summary := models.AggregateSummary(results)
+			emit("scan_result", fiber.Map{"summary": summary, "scanner": "trivy"})
+			log.Printf("[BackgroundScan] Completed for %s: %dC %dH %dM %dL",
+				imageName, summary.Critical, summary.High, summary.Medium, summary.Low)
+		}
+	}
+
+	return nil
 }
 
 // updateContainerImage updates a container using health check validation approach.
@@ -3899,9 +4154,6 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 	protected.Get("/containers/:hostId/:containerId/update-stream", func(c *fiber.Ctx) error {
 		hostID := c.Params("hostId")
 		containerID := c.Params("containerId")
-		scanner := c.Query("scanner", "trivy")
-		criteria := c.Query("criteria", "never")
-		force := c.QueryBool("force", false)
 
 		c.Set("Content-Type", "text/event-stream")
 		c.Set("Cache-Control", "no-cache")
@@ -3915,11 +4167,11 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 				w.Flush()
 			}
 
+			// 15 min timeout covers pull (5m) + update + trivy scan (up to 10m)
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 			defer cancel()
 
-			cfg := models.ScannerConfig{Scanner: scanner, Criteria: criteria}
-			err := performUpdateWithScan(ctx, hostID, containerID, cfg, force, dm, scanEngine, scanStore, emit)
+			err := performUpdate(ctx, hostID, containerID, dm, scanEngine, scanStore, emit)
 			if err != nil {
 				emit("error", fiber.Map{"message": err.Error()})
 			}
@@ -4786,16 +5038,15 @@ func checkContainerUpdate(ctx context.Context, container ContainerInfo, dm *Dock
 		}
 	}
 
-	// Detect the remote Docker host's architecture for platform-specific digest comparison
-	// This is critical for multi-host setups: backend may run on x86 but monitor arm64 Raspberry Pis
-	arch := dm.getHostArch(ctx, container.HostID)
-	platform := &v1.Platform{OS: "linux", Architecture: arch}
-
-	// Get platform-specific digest to avoid multi-arch manifest false positives
-	// crane.Digest() without platform returns manifest-list SHA (differs from pulled image SHA)
-	remoteDigest, err := crane.Digest(container.Image, crane.WithPlatform(platform))
+	// Get remote manifest digest (manifest-list SHA for multi-arch images, or single manifest SHA).
+	// Docker stores the manifest-list digest in RepoDigests, so we must compare against the
+	// manifest-list digest — NOT the platform-specific image manifest digest.
+	// Using crane.WithPlatform() was wrong: it returns the arm64-specific manifest SHA, which
+	// never matches the manifest-list SHA stored in RepoDigests → all multi-arch images
+	// show hasUpdate=true permanently (false positives). This matches Watchtower's approach.
+	remoteDigest, err := crane.Digest(container.Image)
 	if err != nil {
-		log.Printf("[UpdateCheck] Could not check registry for %s (arch=%s): %v", container.Image, arch, err)
+		log.Printf("[UpdateCheck] Could not check registry for %s: %v", container.Image, err)
 		update.HasUpdate = false
 		update.LatestDigest = ""
 	} else {
