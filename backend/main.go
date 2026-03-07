@@ -4828,23 +4828,95 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 			return c.Status(403).JSON(fiber.Map{"error": "admin required"})
 		}
 
-		var env Environment
-		if err := c.BodyParser(&env); err != nil {
+		var body struct {
+			ID               string   `json:"id"`
+			Name             string   `json:"name"`
+			ConnectionType   string   `json:"connectionType"`
+			SocketPath       string   `json:"socketPath"`
+			Host             string   `json:"host"`
+			Port             int      `json:"port"`
+			Protocol         string   `json:"protocol"`
+			TlsCa            string   `json:"tlsCa"`
+			TlsCert          string   `json:"tlsCert"`
+			TlsKey           string   `json:"tlsKey"`
+			TlsSkipVerify    bool     `json:"tlsSkipVerify"`
+			Labels           []string `json:"labels"`
+			PublicIP         string   `json:"publicIp"`
+			Timezone         string   `json:"timezone"`
+			AutoUpdate       bool     `json:"autoUpdate"`
+			UpdateSchedule   string   `json:"updateSchedule"`
+			ImagePrune       bool     `json:"imagePrune"`
+			ImagePruneMode   string   `json:"imagePruneMode"`
+			ImagePruneCron   string   `json:"imagePruneCron"`
+			EventTracking    bool     `json:"eventTracking"`
+			VulnScanning     bool     `json:"vulnScanning"`
+			CollectMetrics   bool     `json:"collectMetrics"`
+			HighlightChanges bool     `json:"highlightChanges"`
+			DiskWarningEnabled   bool    `json:"diskWarningEnabled"`
+			DiskWarningMode      string  `json:"diskWarningMode"`
+			DiskWarningThreshold float64 `json:"diskWarningThreshold"`
+		}
+		if err := c.BodyParser(&body); err != nil {
 			return c.Status(400).JSON(fiber.Map{"error": "invalid request"})
 		}
-		if env.ID == "" || env.Name == "" {
+		if body.ID == "" || body.Name == "" {
 			return c.Status(400).JSON(fiber.Map{"error": "id and name are required"})
 		}
 
-		envStore.Create(&env)
+		isLocal := body.ConnectionType == "socket" || body.ConnectionType == ""
+		socketPath := body.SocketPath
+		if socketPath == "" && isLocal {
+			socketPath = "/var/run/docker.sock"
+		}
+		port := body.Port
+		if port == 0 && !isLocal {
+			port = 2375
+		}
+		address := socketPath
+		if !isLocal {
+			address = fmt.Sprintf("%s:%d", body.Host, port)
+		}
+
+		env := &Environment{
+			ID:             body.ID,
+			Name:           body.Name,
+			ConnectionType: body.ConnectionType,
+			Address:        address,
+			SocketPath:     socketPath,
+			Host:           body.Host,
+			Port:           port,
+			Protocol:       body.Protocol,
+			IsLocal:        isLocal,
+			TlsCa:          body.TlsCa,
+			TlsCert:        body.TlsCert,
+			TlsKey:         body.TlsKey,
+			TlsSkipVerify:  body.TlsSkipVerify,
+			Labels:         body.Labels,
+			PublicIP:       body.PublicIP,
+			Timezone:       body.Timezone,
+			Status:         "unknown",
+			AutoUpdate:     body.AutoUpdate,
+			UpdateSchedule: body.UpdateSchedule,
+			ImagePrune:     body.ImagePrune,
+			ImagePruneMode: body.ImagePruneMode,
+			ImagePruneCron: body.ImagePruneCron,
+			EventTracking:  body.EventTracking,
+			VulnScanning:   body.VulnScanning,
+			CollectMetrics: body.CollectMetrics,
+			HighlightChanges: body.HighlightChanges,
+			DiskWarningEnabled:   body.DiskWarningEnabled,
+			DiskWarningMode:      body.DiskWarningMode,
+			DiskWarningThreshold: body.DiskWarningThreshold,
+		}
+
+		envStore.Create(env)
 
 		// Hot-reload: add to hosts and create Docker client
-		isLocal := env.ConnectionType == "socket"
 		newHost := HostConfig{
 			ID:      env.ID,
 			Name:    env.Name,
 			Address: env.Address,
-			IsLocal: isLocal,
+			IsLocal: env.IsLocal,
 		}
 		// Check if host already exists
 		found := false
@@ -4859,7 +4931,7 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 			hosts = append(hosts, newHost)
 		}
 		// Create Docker client using new Environment fields (TLS-aware)
-		if newCli, clientErr := createDockerClient(&env); clientErr == nil {
+		if newCli, clientErr := createDockerClient(env); clientErr == nil {
 			dm.mu.Lock()
 			dm.clients[env.ID] = newCli
 			dm.mu.Unlock()
@@ -4890,6 +4962,19 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 			return c.Status(400).JSON(fiber.Map{"error": "invalid request"})
 		}
 		env.ID = id
+		// Recompute derived fields from ConnectionType
+		env.IsLocal = env.ConnectionType == "socket" || env.ConnectionType == ""
+		if env.IsLocal {
+			if env.SocketPath == "" {
+				env.SocketPath = "/var/run/docker.sock"
+			}
+			env.Address = env.SocketPath
+		} else {
+			if env.Port == 0 {
+				env.Port = 2375
+			}
+			env.Address = fmt.Sprintf("%s:%d", env.Host, env.Port)
+		}
 		envStore.Update(&env)
 
 		// Hot-reload host config
