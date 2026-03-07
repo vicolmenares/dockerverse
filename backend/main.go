@@ -705,9 +705,10 @@ func (es *EnvironmentStore) load() {
 					env.SocketPath = "/var/run/docker.sock"
 				}
 			} else {
-				// Parse "host:port" or "http://host:port"
+				// Parse "host:port", "http://host:port", or "tcp://host:port"
 				addr := strings.TrimPrefix(env.Address, "http://")
 				addr = strings.TrimPrefix(addr, "https://")
+				addr = strings.TrimPrefix(addr, "tcp://")
 				if h, p, err := net.SplitHostPort(addr); err == nil {
 					env.Host = h
 					if port, err := strconv.Atoi(p); err == nil {
@@ -719,6 +720,24 @@ func (es *EnvironmentStore) load() {
 				}
 			}
 		}
+		// Sanitize host: strip any accidentally-stored scheme prefix (migration artifact)
+		if strings.Contains(env.Host, "://") {
+			h := env.Host
+			h = strings.TrimPrefix(h, "http://")
+			h = strings.TrimPrefix(h, "https://")
+			h = strings.TrimPrefix(h, "tcp://")
+			// If it still looks like "host:port", split and use host part only
+			if host, port, err := net.SplitHostPort(h); err == nil {
+				env.Host = host
+				if env.Port == 0 {
+					if p, err := strconv.Atoi(port); err == nil {
+						env.Port = p
+					}
+				}
+			} else {
+				env.Host = h
+			}
+		}
 		if env.Port == 0 && !env.IsLocal && env.ConnectionType != "socket" {
 			env.Port = 2375
 		}
@@ -727,6 +746,8 @@ func (es *EnvironmentStore) load() {
 		}
 		es.Environments[i] = env
 	}
+	// Persist any migration changes back to disk
+	es.save()
 }
 
 func (es *EnvironmentStore) migrateFromHosts() {
@@ -756,6 +777,7 @@ func (es *EnvironmentStore) migrateFromHosts() {
 		} else {
 			a := strings.TrimPrefix(addr, "http://")
 			a = strings.TrimPrefix(a, "https://")
+			a = strings.TrimPrefix(a, "tcp://")
 			if host, port, err := net.SplitHostPort(a); err == nil {
 				env.Host = host
 				if p, err := strconv.Atoi(port); err == nil {
@@ -5452,7 +5474,7 @@ func main() {
 	userStore := NewUserStore()
 	notifySvc := NewNotificationService(userStore)
 	emailSvc := NewEmailService()
-	envStore := NewEnvironmentStore("data/environments.json")
+	envStore := NewEnvironmentStore(filepath.Join(dataDir, "environments.json"))
 	dm := NewDockerManager(notifySvc)
 	hub := NewWSHub()
 

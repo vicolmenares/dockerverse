@@ -13,10 +13,6 @@
   interface EnvironmentResponse extends EnvironmentData {
     status: string;
     dockerVersion: string;
-    socketPath?: string;
-    host?: string;
-    port?: number;
-    labels: string[] | string;
   }
 
   interface TestResult {
