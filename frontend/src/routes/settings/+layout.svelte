@@ -36,7 +36,7 @@
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="max-w-2xl mx-auto">
+<div class="max-w-5xl mx-auto w-full">
   <!-- Header with breadcrumb -->
   <div class="flex items-center gap-2 mb-6">
     {#if currentPage()}

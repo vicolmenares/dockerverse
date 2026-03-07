@@ -1,7 +1,7 @@
 import type { Language } from '$lib/stores/docker';
 
 // Settings view types
-export type SettingsView = 'main' | 'profile' | 'security' | 'notifications' | 'appearance' | 'language' | 'data' | 'about' | 'users';
+export type SettingsView = 'main' | 'profile' | 'security' | 'authentication' | 'notifications' | 'appearance' | 'general' | 'language' | 'data' | 'about' | 'users';
 
 // Theme type
 export type Theme = 'dark' | 'light' | 'system';
@@ -138,6 +138,12 @@ export const settingsText: Record<Language, Record<string, string>> = {
 		license: 'Licencia',
 		documentation: 'Documentación',
 		reportBug: 'Reportar un problema',
+		// General (renamed from Appearance)
+		general: 'General',
+		generalDesc: 'Tema, idioma y preferencias de pantalla',
+		// Authentication (renamed from Security)
+		authentication: 'Autenticación',
+		authenticationDesc: 'Contraseña y autenticación de dos factores',
 		// Security / 2FA
 		security: 'Seguridad',
 		securityDesc: 'Contraseña y autenticación de dos factores',
@@ -298,6 +304,12 @@ export const settingsText: Record<Language, Record<string, string>> = {
 		license: 'License',
 		documentation: 'Documentation',
 		reportBug: 'Report a bug',
+		// General (renamed from Appearance)
+		general: 'General',
+		generalDesc: 'Theme, language, and display preferences',
+		// Authentication (renamed from Security)
+		authentication: 'Authentication',
+		authenticationDesc: 'Password and two-factor authentication',
 		// Security / 2FA
 		security: 'Security',
 		securityDesc: 'Password and two-factor authentication',

@@ -10,6 +10,8 @@
     Database,
     Users,
     ChevronRight,
+    KeyRound,
+    Server,
   } from 'lucide-svelte';
   import { language, type Language } from '$lib/stores/docker';
   import { auth, currentUser } from '$lib/stores/auth';
@@ -21,11 +23,11 @@
     ...($currentUser?.roles?.includes('admin')
       ? [{ id: 'users', icon: Users, label: st.users, desc: st.usersDesc }]
       : []),
+    { id: 'environments', icon: Server, label: st.environments, desc: st.environmentsDesc },
     { id: 'profile', icon: User, label: st.profile, desc: st.profileDesc },
-    { id: 'security', icon: Shield, label: st.security, desc: st.securityDesc },
+    { id: 'authentication', icon: KeyRound, label: st.authentication, desc: st.authenticationDesc },
     { id: 'notifications', icon: Bell, label: st.notifications, desc: st.notificationsDesc },
-    { id: 'appearance', icon: Palette, label: st.appearance, desc: st.appearanceDesc },
-    { id: 'language', icon: Globe, label: st.language, desc: st.languageDesc },
+    { id: 'general', icon: Palette, label: st.general, desc: st.generalDesc },
     { id: 'data', icon: Database, label: st.data, desc: st.dataDesc },
     { id: 'about', icon: Info, label: st.about, desc: st.aboutDesc },
   ] as const);
