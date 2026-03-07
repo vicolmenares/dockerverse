@@ -104,6 +104,14 @@ type LdapConfig struct {
 	StartTLS        bool   `json:"startTls"`
 }
 
+type ldapUserInfo struct {
+	DN          string
+	Username    string
+	Email       string
+	DisplayName string
+	IsAdmin     bool
+}
+
 type APIKey struct {
 	ID          string    `json:"id"`
 	UserID      string    `json:"userId"`      // username
@@ -1130,6 +1138,102 @@ func testLdapConnection(cfg LdapConfig) error {
 	return nil
 }
 
+func authenticateLdap(cfg LdapConfig, username, password string) (*ldapUserInfo, error) {
+	conn, err := dialLdap(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("ldap dial: %w", err)
+	}
+	defer conn.Close()
+
+	// Bind with service account to search for the user
+	if cfg.BindDN != "" {
+		if err := conn.Bind(cfg.BindDN, cfg.BindPassword); err != nil {
+			return nil, fmt.Errorf("ldap service bind: %w", err)
+		}
+	}
+
+	// Build user filter
+	userFilter := cfg.UserFilter
+	if userFilter == "" {
+		userFilter = fmt.Sprintf("(%s=%%s)", cfg.UsernameAttr)
+	}
+	filter := fmt.Sprintf(userFilter, ldap.EscapeFilter(username))
+
+	usernameAttr := cfg.UsernameAttr
+	if usernameAttr == "" {
+		usernameAttr = "uid"
+	}
+	emailAttr := cfg.EmailAttr
+	if emailAttr == "" {
+		emailAttr = "mail"
+	}
+	displayAttr := cfg.DisplayNameAttr
+	if displayAttr == "" {
+		displayAttr = "cn"
+	}
+
+	searchReq := ldap.NewSearchRequest(
+		cfg.BaseDN,
+		ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 1, 0, false,
+		filter,
+		[]string{"dn", usernameAttr, emailAttr, displayAttr},
+		nil,
+	)
+
+	result, err := conn.Search(searchReq)
+	if err != nil {
+		return nil, fmt.Errorf("ldap search: %w", err)
+	}
+	if len(result.Entries) == 0 {
+		return nil, fmt.Errorf("user not found in LDAP")
+	}
+
+	entry := result.Entries[0]
+	userDN := entry.DN
+
+	// Bind as the found user to verify password
+	if err := conn.Bind(userDN, password); err != nil {
+		return nil, fmt.Errorf("invalid credentials")
+	}
+
+	info := &ldapUserInfo{
+		DN:          userDN,
+		Username:    entry.GetAttributeValue(usernameAttr),
+		Email:       entry.GetAttributeValue(emailAttr),
+		DisplayName: entry.GetAttributeValue(displayAttr),
+	}
+	if info.Username == "" {
+		info.Username = username
+	}
+
+	// Check admin group membership (optional)
+	if cfg.AdminGroup != "" && cfg.GroupBaseDN != "" {
+		// groupFilter template must contain one %s placeholder for the user DN
+		groupFilterTpl := cfg.GroupFilter
+		if groupFilterTpl == "" {
+			groupFilterTpl = fmt.Sprintf("(&(objectClass=groupOfNames)(cn=%s)(member=%%s))", ldap.EscapeFilter(cfg.AdminGroup))
+		}
+		groupFilter := fmt.Sprintf(groupFilterTpl, ldap.EscapeFilter(userDN))
+		// Re-bind service account for group search
+		if cfg.BindDN != "" {
+			_ = conn.Bind(cfg.BindDN, cfg.BindPassword)
+		}
+		groupReq := ldap.NewSearchRequest(
+			cfg.GroupBaseDN,
+			ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 1, 0, false,
+			groupFilter,
+			[]string{"dn"},
+			nil,
+		)
+		groupResult, err := conn.Search(groupReq)
+		if err == nil && len(groupResult.Entries) > 0 {
+			info.IsAdmin = true
+		}
+	}
+
+	return info, nil
+}
+
 func isLockedOut(username string) bool {
 	loginAttemptsMu.Lock()
 	defer loginAttemptsMu.Unlock()
@@ -1366,6 +1470,38 @@ func (s *UserStore) DeleteUser(username string) error {
 	delete(s.Users, username)
 	s.save()
 	return nil
+}
+
+func (s *UserStore) FindUser(username string) (*User, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	usernameLower := strings.ToLower(username)
+	for _, u := range s.Users {
+		if strings.ToLower(u.Username) == usernameLower {
+			return u, nil
+		}
+	}
+	return nil, fmt.Errorf("user not found")
+}
+
+func (s *UserStore) CreateLdapUser(u *User) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.Users[u.Username]; exists {
+		return fmt.Errorf("user already exists")
+	}
+	s.Users[u.Username] = u
+	s.save()
+	return nil
+}
+
+func (s *UserStore) SetRole(username, role string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if u, exists := s.Users[username]; exists {
+		u.Role = role
+		s.save()
+	}
 }
 
 func (s *UserStore) ValidateLogin(username, password string) (*User, error) {
@@ -3611,8 +3747,44 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 
 		user, err := store.ValidateLogin(req.Username, req.Password)
 		if err != nil {
-			recordFailedLogin(req.Username)
-			return c.Status(401).JSON(fiber.Map{"error": "invalid credentials"})
+			// Try LDAP fallback if enabled
+			if ldapCfg.Enabled {
+				ldapInfo, ldapErr := authenticateLdap(ldapCfg, req.Username, req.Password)
+				if ldapErr == nil {
+					// LDAP auth succeeded — find or create local user record
+					user, _ = store.FindUser(ldapInfo.Username)
+					if user == nil && ldapCfg.AutoCreateUsers {
+						newUser := &User{
+							Username:     ldapInfo.Username,
+							Email:        ldapInfo.Email,
+							FirstName:    ldapInfo.DisplayName,
+							Role:         "user",
+							AuthProvider: "ldap",
+							CreatedAt:    time.Now(),
+						}
+						if ldapInfo.IsAdmin {
+							newUser.Role = "admin"
+						}
+						if createErr := store.CreateLdapUser(newUser); createErr != nil {
+							recordFailedLogin(req.Username)
+							return c.Status(500).JSON(fiber.Map{"error": "failed to provision LDAP user"})
+						}
+						user, _ = store.FindUser(ldapInfo.Username)
+					}
+					if user != nil {
+						// Update role from LDAP admin group on each login
+						if ldapInfo.IsAdmin && user.Role != "admin" {
+							store.SetRole(user.Username, "admin")
+							user.Role = "admin"
+						}
+						err = nil // clear error so login proceeds
+					}
+				}
+			}
+			if err != nil || user == nil {
+				recordFailedLogin(req.Username)
+				return c.Status(401).JSON(fiber.Map{"error": "invalid credentials"})
+			}
 		}
 
 		// Check if user has TOTP enabled
