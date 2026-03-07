@@ -21,7 +21,6 @@
   import UpdateModal from "./UpdateModal.svelte";
   import {
     containerAction,
-    triggerContainerUpdate,
     checkImageUpdate,
     formatBytes,
     formatUptime,

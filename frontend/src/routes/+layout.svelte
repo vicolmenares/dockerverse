@@ -281,6 +281,13 @@
       auth.logout();
     });
 
+    // Safety net: if auth.isLoading stays true for >3s in the browser,
+    // force it to false. Prevents permanent stuck loading screen after
+    // a container update that restarts the backend.
+    const loadingGuard = setTimeout(() => {
+      auth.update((s) => (s.isLoading ? { ...s, isLoading: false } : s));
+    }, 3000);
+
     // Start update check and WebSocket if already authenticated
     if ($isAuthenticated) {
       startUpdateCheck();
@@ -299,6 +306,7 @@
     });
 
     return () => {
+      clearTimeout(loadingGuard);
       window.removeEventListener("keydown", handleKeydown);
       window.removeEventListener("click", handleClickOutside);
       unsubAuth();

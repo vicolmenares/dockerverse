@@ -212,18 +212,26 @@ function createAuthStore() {
 					return { success };
 				}
 				
-				// Local authentication
-				const response = await fetch(`${API_BASE}/api/auth/login`, {
-					method: 'POST',
-					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify({
-						username: credentials.username,
-						password: credentials.password,
-						rememberMe: credentials.rememberMe,
-						totpCode: credentials.totpCode,
-						recoveryCode: credentials.recoveryCode
-					})
-				});
+				// Local authentication (10s timeout prevents infinite loading if backend is unreachable)
+				const loginController = new AbortController();
+				const loginTimeout = setTimeout(() => loginController.abort(), 10000);
+				let response: Response;
+				try {
+					response = await fetch(`${API_BASE}/api/auth/login`, {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({
+							username: credentials.username,
+							password: credentials.password,
+							rememberMe: credentials.rememberMe,
+							totpCode: credentials.totpCode,
+							recoveryCode: credentials.recoveryCode
+						}),
+						signal: loginController.signal
+					});
+				} finally {
+					clearTimeout(loginTimeout);
+				}
 
 				if (!response.ok) {
 					const error = await response.json();
@@ -272,7 +280,8 @@ function createAuthStore() {
 
 				return { success: true };
 			} catch (e) {
-				const error = e instanceof Error ? e.message : 'Login failed';
+				const isTimeout = e instanceof Error && e.name === 'AbortError';
+				const error = isTimeout ? 'Connection timeout — backend unreachable' : (e instanceof Error ? e.message : 'Login failed');
 				update(s => ({ ...s, isLoading: false, error }));
 				return { success: false, error };
 			}

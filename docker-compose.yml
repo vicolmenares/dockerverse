@@ -10,7 +10,6 @@ services:
       - "3007:80"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - nginx_cache:/var/cache/nginx
     depends_on:
       - frontend
       - backend
@@ -45,6 +44,8 @@ services:
       - APPRISE_URL=http://apprise:8000
       # Security (GO-CONFIG-001): JWT_SECRET must be set in .env — no hardcoded fallback.
       - JWT_SECRET=${JWT_SECRET}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - dockerverse-net
       - container_network_ipv4
@@ -73,7 +74,6 @@ services:
       - "com.dockerverse.service=frontend"
 
 volumes:
-  nginx_cache:
   backend_data:
 
 networks:
