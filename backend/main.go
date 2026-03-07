@@ -741,6 +741,10 @@ func (es *EnvironmentStore) load() {
 		if env.Port == 0 && !env.IsLocal && env.ConnectionType != "socket" {
 			env.Port = 2375
 		}
+		// Sanitize socketPath: strip any accidentally-stored unix:// prefix
+		if strings.HasPrefix(env.SocketPath, "unix://") {
+			env.SocketPath = strings.TrimPrefix(env.SocketPath, "unix://")
+		}
 		if env.SocketPath == "" && (env.ConnectionType == "socket" || env.IsLocal) {
 			env.SocketPath = "/var/run/docker.sock"
 		}
@@ -4994,6 +4998,7 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 		// Recompute derived fields from ConnectionType
 		env.IsLocal = env.ConnectionType == "socket" || env.ConnectionType == ""
 		if env.IsLocal {
+			env.SocketPath = strings.TrimPrefix(env.SocketPath, "unix://")
 			if env.SocketPath == "" {
 				env.SocketPath = "/var/run/docker.sock"
 			}
