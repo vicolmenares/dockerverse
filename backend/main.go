@@ -2131,6 +2131,9 @@ func createDockerClient(env *Environment) (*client.Client, error) {
 		if socketPath == "" {
 			socketPath = "/var/run/docker.sock"
 		}
+		// Strip existing scheme prefix to avoid doubling (e.g. "unix:///var/run/docker.sock")
+		socketPath = strings.TrimPrefix(socketPath, "unix://")
+		socketPath = strings.TrimPrefix(socketPath, "unix:")
 		opts = append(opts, client.WithHost("unix://"+socketPath))
 
 	case "tcp+tls":
@@ -2151,8 +2154,12 @@ func createDockerClient(env *Environment) (*client.Client, error) {
 		if env.Host != "" {
 			hostAddr = fmt.Sprintf("tcp://%s:%d", env.Host, env.Port)
 		} else {
-			// fallback to old Address field
-			hostAddr = "tcp://" + strings.TrimPrefix(env.Address, "http://")
+			// fallback to old Address field — strip any existing scheme prefix
+			addr := env.Address
+			addr = strings.TrimPrefix(addr, "tcp://")
+			addr = strings.TrimPrefix(addr, "http://")
+			addr = strings.TrimPrefix(addr, "https://")
+			hostAddr = "tcp://" + addr
 		}
 		opts = append(opts, client.WithHost(hostAddr))
 	}
@@ -5111,7 +5118,7 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 			{"/run/podman/podman.sock", "Podman (alt)"},
 		}
 
-		var found []fiber.Map
+		found := []fiber.Map{}
 		for _, candidate := range candidates {
 			if _, err := os.Stat(candidate.path); err == nil {
 				found = append(found, fiber.Map{
