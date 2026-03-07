@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
@@ -1008,6 +1009,17 @@ func (s *UserStore) save() {
 var authCfg AuthConfig
 var authConfigPath = filepath.Join(dataDir, "auth-config.json")
 
+type loginAttempt struct {
+	count     int
+	firstSeen time.Time
+	lockedAt  time.Time
+}
+
+var (
+	loginAttempts   = make(map[string]*loginAttempt)
+	loginAttemptsMu sync.Mutex
+)
+
 func loadAuthConfig() AuthConfig {
 	cfg := AuthConfig{
 		AuthEnabled:         true,
@@ -1029,6 +1041,45 @@ func saveAuthConfig(cfg AuthConfig) error {
 		return err
 	}
 	return os.WriteFile(authConfigPath, data, 0600)
+}
+
+func isLockedOut(username string) bool {
+	loginAttemptsMu.Lock()
+	defer loginAttemptsMu.Unlock()
+	a, ok := loginAttempts[username]
+	if !ok {
+		return false
+	}
+	if a.lockedAt.IsZero() {
+		return false
+	}
+	return time.Since(a.lockedAt) < time.Duration(authCfg.LockoutDurationSecs)*time.Second
+}
+
+func recordFailedLogin(username string) {
+	loginAttemptsMu.Lock()
+	defer loginAttemptsMu.Unlock()
+	a, ok := loginAttempts[username]
+	if !ok {
+		a = &loginAttempt{}
+		loginAttempts[username] = a
+	}
+	window := time.Duration(authCfg.LockoutDurationSecs) * time.Second
+	if time.Since(a.firstSeen) > window {
+		a.count = 0
+		a.firstSeen = time.Now()
+		a.lockedAt = time.Time{}
+	}
+	a.count++
+	if a.count >= authCfg.MaxLoginAttempts {
+		a.lockedAt = time.Now()
+	}
+}
+
+func clearFailedLogins(username string) {
+	loginAttemptsMu.Lock()
+	defer loginAttemptsMu.Unlock()
+	delete(loginAttempts, username)
 }
 
 func (s *UserStore) GetUser(username string) *User {
@@ -1297,6 +1348,11 @@ func (s *UserStore) SetupTOTP(username string) (secret string, url string, err e
 	return key.Secret(), key.URL(), nil
 }
 
+func hashRecoveryCode(code string) string {
+	h := sha256.Sum256([]byte(code))
+	return fmt.Sprintf("%x", h)
+}
+
 func (s *UserStore) EnableTOTP(username string, code string) ([]string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1316,18 +1372,21 @@ func (s *UserStore) EnableTOTP(username string, code string) ([]string, error) {
 	}
 
 	// Generate recovery codes
-	recoveryCodes := make([]string, 10)
+	rawCodes := make([]string, 10)
+	hashedCodes := make([]string, 10)
 	for i := 0; i < 10; i++ {
-		code := make([]byte, 8)
-		rand.Read(code)
-		recoveryCodes[i] = fmt.Sprintf("%x", code)[:16]
+		b := make([]byte, 8)
+		rand.Read(b)
+		raw := fmt.Sprintf("%x", b)[:16]
+		rawCodes[i] = raw
+		hashedCodes[i] = hashRecoveryCode(raw)
 	}
 
 	user.TOTPEnabled = true
-	user.RecoveryCodes = recoveryCodes
+	user.RecoveryCodes = hashedCodes // store hashed
 	s.save()
 
-	return recoveryCodes, nil
+	return rawCodes, nil // return raw to caller (shown once)
 }
 
 func (s *UserStore) DisableTOTP(username string, password string) error {
@@ -1362,8 +1421,9 @@ func (s *UserStore) UseRecoveryCode(username string, code string) (bool, error) 
 	}
 
 	// Find and remove the recovery code
+	hashed := hashRecoveryCode(code)
 	for i, rc := range user.RecoveryCodes {
-		if rc == code {
+		if rc == hashed {
 			// Remove the used code
 			user.RecoveryCodes = append(user.RecoveryCodes[:i], user.RecoveryCodes[i+1:]...)
 			s.save()
@@ -1404,17 +1464,20 @@ func (s *UserStore) RegenerateRecoveryCodes(username string, password string) ([
 	}
 
 	// Generate new recovery codes
-	recoveryCodes := make([]string, 10)
+	rawCodes := make([]string, 10)
+	hashedCodes := make([]string, 10)
 	for i := 0; i < 10; i++ {
-		code := make([]byte, 8)
-		rand.Read(code)
-		recoveryCodes[i] = fmt.Sprintf("%x", code)[:16]
+		b := make([]byte, 8)
+		rand.Read(b)
+		raw := fmt.Sprintf("%x", b)[:16]
+		rawCodes[i] = raw
+		hashedCodes[i] = hashRecoveryCode(raw)
 	}
 
-	user.RecoveryCodes = recoveryCodes
+	user.RecoveryCodes = hashedCodes // store hashed
 	s.save()
 
-	return recoveryCodes, nil
+	return rawCodes, nil // return raw to caller (shown once)
 }
 
 // Generate a temporary token for 2FA verification step
@@ -3392,8 +3455,16 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 			return c.Status(400).JSON(fiber.Map{"error": "invalid request"})
 		}
 
+		if isLockedOut(req.Username) {
+			return c.Status(429).JSON(fiber.Map{
+				"error":   "account temporarily locked",
+				"message": fmt.Sprintf("Too many failed attempts. Try again in %d minutes.", authCfg.LockoutDurationSecs/60),
+			})
+		}
+
 		user, err := store.ValidateLogin(req.Username, req.Password)
 		if err != nil {
+			recordFailedLogin(req.Username)
 			return c.Status(401).JSON(fiber.Map{"error": "invalid credentials"})
 		}
 
@@ -3423,17 +3494,20 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 				})
 				log.Printf("2FA attempt for %s: valid=%v err=%v", user.Username, valid, validErr)
 				if !valid || validErr != nil {
+					recordFailedLogin(req.Username)
 					return c.Status(401).JSON(fiber.Map{"error": "invalid 2FA code"})
 				}
 			} else if req.RecoveryCode != "" {
 				// Check recovery code
 				valid, err := store.UseRecoveryCode(user.Username, req.RecoveryCode)
 				if err != nil || !valid {
+					recordFailedLogin(req.Username)
 					return c.Status(401).JSON(fiber.Map{"error": "invalid recovery code"})
 				}
 			}
 		}
 
+		clearFailedLogins(req.Username)
 		tokens, err := generateTokens(user, req.RememberMe)
 		if err != nil {
 			return c.Status(500).JSON(fiber.Map{"error": "failed to generate tokens"})
@@ -5539,6 +5613,19 @@ func main() {
 	// Initialize stores
 	userStore := NewUserStore()
 	authCfg = loadAuthConfig()
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		for range ticker.C {
+			loginAttemptsMu.Lock()
+			cutoff := time.Duration(authCfg.LockoutDurationSecs) * time.Second * 2
+			for k, a := range loginAttempts {
+				if time.Since(a.firstSeen) > cutoff {
+					delete(loginAttempts, k)
+				}
+			}
+			loginAttemptsMu.Unlock()
+		}
+	}()
 	notifySvc := NewNotificationService(userStore)
 	emailSvc := NewEmailService()
 	envStore := NewEnvironmentStore(filepath.Join(dataDir, "environments.json"))
