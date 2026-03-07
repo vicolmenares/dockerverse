@@ -40,6 +40,7 @@ import (
 	"github.com/pkg/sftp"
 	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
+	ldap "github.com/go-ldap/ldap/v3"
 	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/crypto/ssh"
 
@@ -83,6 +84,34 @@ type AuthConfig struct {
 	MaxLoginAttempts    int    `json:"maxLoginAttempts"`    // default 5
 	LockoutDurationSecs int    `json:"lockoutDurationSecs"` // default 900 (15min)
 	DefaultProvider     string `json:"defaultProvider"`     // "local" | "ldap" | "oidc"
+}
+
+type LdapConfig struct {
+	Enabled         bool   `json:"enabled"`
+	ServerURL       string `json:"serverUrl"`
+	BindDN          string `json:"bindDn"`
+	BindPassword    string `json:"bindPassword"`
+	BaseDN          string `json:"baseDn"`
+	UserFilter      string `json:"userFilter"`
+	UsernameAttr    string `json:"usernameAttr"`
+	EmailAttr       string `json:"emailAttr"`
+	DisplayNameAttr string `json:"displayNameAttr"`
+	GroupBaseDN     string `json:"groupBaseDn"`
+	GroupFilter     string `json:"groupFilter"`
+	AdminGroup      string `json:"adminGroup"`
+	AutoCreateUsers bool   `json:"autoCreateUsers"`
+	TLSEnabled      bool   `json:"tlsEnabled"`
+	StartTLS        bool   `json:"startTls"`
+}
+
+type APIKey struct {
+	ID          string    `json:"id"`
+	UserID      string    `json:"userId"`      // username
+	Description string    `json:"description"`
+	Prefix      string    `json:"prefix"`      // first 10 chars of raw key (display only)
+	Digest      string    `json:"-"`           // SHA256 of raw key (never exposed)
+	CreatedAt   time.Time `json:"createdAt"`
+	LastUsed    time.Time `json:"lastUsed,omitempty"`
 }
 
 var hosts = parseHostsConfig(getEnvOrDefault("DOCKER_HOSTS",
@@ -512,6 +541,7 @@ type User struct {
 	TOTPSecret     string    `json:"-"`           // TOTP secret (not exposed to API)
 	TOTPEnabled    bool      `json:"totpEnabled"` // Whether 2FA is enabled
 	RecoveryCodes  []string  `json:"-"`           // Recovery codes (not exposed to API)
+	AuthProvider   string    `json:"authProvider,omitempty"` // "local" | "ldap" | "oidc"
 	CreatedAt      time.Time `json:"createdAt"`
 	LastLogin      time.Time `json:"lastLogin,omitempty"`
 }
@@ -525,6 +555,7 @@ type ResetCode struct {
 type UserStore struct {
 	Users      map[string]*User `json:"users"`
 	Settings   AppSettings      `json:"settings"`
+	APIKeys    []APIKey         `json:"apiKeys"`
 	mu         sync.RWMutex
 	resetCodes map[string]*ResetCode // email -> reset code (not persisted)
 }
@@ -1041,6 +1072,62 @@ func saveAuthConfig(cfg AuthConfig) error {
 		return err
 	}
 	return os.WriteFile(authConfigPath, data, 0600)
+}
+
+var ldapCfg LdapConfig
+var ldapConfigPath = filepath.Join(dataDir, "ldap-config.json")
+
+func loadLdapConfig() LdapConfig {
+	cfg := LdapConfig{
+		UserFilter:      "(uid=%s)",
+		UsernameAttr:    "uid",
+		EmailAttr:       "mail",
+		DisplayNameAttr: "cn",
+		GroupFilter:     "(&(objectClass=groupOfNames)(member=%s))",
+	}
+	data, _ := os.ReadFile(ldapConfigPath)
+	json.Unmarshal(data, &cfg)
+	return cfg
+}
+
+func saveLdapConfig(cfg LdapConfig) error {
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(ldapConfigPath, data, 0600)
+}
+
+func dialLdap(cfg LdapConfig) (*ldap.Conn, error) {
+	var conn *ldap.Conn
+	var err error
+	if cfg.TLSEnabled {
+		conn, err = ldap.DialURL(cfg.ServerURL, ldap.DialWithTLSConfig(&tls.Config{InsecureSkipVerify: false}))
+	} else {
+		conn, err = ldap.DialURL(cfg.ServerURL)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("dial: %w", err)
+	}
+	if cfg.StartTLS {
+		if err = conn.StartTLS(&tls.Config{InsecureSkipVerify: false}); err != nil {
+			conn.Close()
+			return nil, fmt.Errorf("starttls: %w", err)
+		}
+	}
+	return conn, nil
+}
+
+func testLdapConnection(cfg LdapConfig) error {
+	conn, err := dialLdap(cfg)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if cfg.BindDN != "" {
+		return conn.Bind(cfg.BindDN, cfg.BindPassword)
+	}
+	return nil
 }
 
 func isLockedOut(username string) bool {
@@ -1595,6 +1682,66 @@ func adminOnly() fiber.Handler {
 		if user.Role != "admin" {
 			return c.Status(403).JSON(fiber.Map{"error": "admin access required"})
 		}
+		return c.Next()
+	}
+}
+
+func (s *UserStore) CreateAPIKey(username, description string) (string, *APIKey, error) {
+	raw := make([]byte, 32)
+	rand.Read(raw)
+	rawKey := "dv_" + base64.RawURLEncoding.EncodeToString(raw)
+
+	h := sha256.Sum256([]byte(rawKey))
+	digest := fmt.Sprintf("%x", h)
+
+	key := APIKey{
+		ID:          fmt.Sprintf("%d", time.Now().UnixNano()),
+		UserID:      username,
+		Description: description,
+		Prefix:      rawKey[:10],
+		Digest:      digest,
+		CreatedAt:   time.Now(),
+	}
+
+	s.mu.Lock()
+	s.APIKeys = append(s.APIKeys, key)
+	s.mu.Unlock()
+	s.save()
+
+	return rawKey, &key, nil
+}
+
+func (s *UserStore) ValidateAPIKey(rawKey string) (*User, *APIKey, error) {
+	h := sha256.Sum256([]byte(rawKey))
+	digest := fmt.Sprintf("%x", h)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.APIKeys {
+		if s.APIKeys[i].Digest == digest {
+			user, ok := s.Users[s.APIKeys[i].UserID]
+			if !ok {
+				return nil, nil, fmt.Errorf("user not found")
+			}
+			s.APIKeys[i].LastUsed = time.Now()
+			keyCopy := s.APIKeys[i]
+			return user, &keyCopy, nil
+		}
+	}
+	return nil, nil, fmt.Errorf("invalid api key")
+}
+
+func apiKeyAuth(store *UserStore) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		key := c.Get("X-API-Key")
+		if key == "" {
+			return c.Next()
+		}
+		user, _, err := store.ValidateAPIKey(key)
+		if err != nil {
+			return c.Status(401).JSON(fiber.Map{"error": "invalid api key"})
+		}
+		store.save() // persist LastUsed
+		c.Locals("user", user)
 		return c.Next()
 	}
 }
@@ -3730,7 +3877,80 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 	// Protected routes
 	// =========================
 
-	protected := api.Group("", jwtMiddleware(store))
+	protected := api.Group("", apiKeyAuth(store), jwtMiddleware(store))
+
+	// =========================
+	// API Key routes
+	// =========================
+
+	// GET /api/auth/api-keys — list own keys
+	protected.Get("/auth/api-keys", func(c *fiber.Ctx) error {
+		user := c.Locals("user").(*User)
+		var keys []APIKey
+		store.mu.RLock()
+		for _, k := range store.APIKeys {
+			if k.UserID == user.Username {
+				k.Digest = "" // never expose
+				keys = append(keys, k)
+			}
+		}
+		store.mu.RUnlock()
+		if keys == nil {
+			keys = []APIKey{}
+		}
+		return c.JSON(keys)
+	})
+
+	// POST /api/auth/api-keys — create key
+	protected.Post("/auth/api-keys", func(c *fiber.Ctx) error {
+		user := c.Locals("user").(*User)
+		var req struct {
+			Description string `json:"description"`
+			Password    string `json:"password"`
+		}
+		if err := c.BodyParser(&req); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid body"})
+		}
+		if len(req.Description) == 0 || len(req.Description) > 128 {
+			return c.Status(400).JSON(fiber.Map{"error": "description must be 1-128 characters"})
+		}
+		// Verify password for local users
+		if user.AuthProvider == "local" || user.AuthProvider == "" {
+			if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
+				return c.Status(401).JSON(fiber.Map{"error": "invalid password"})
+			}
+		}
+		rawKey, key, err := store.CreateAPIKey(user.Username, req.Description)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "failed to create key"})
+		}
+		safeKey := *key
+		safeKey.Digest = ""
+		return c.JSON(fiber.Map{"rawKey": rawKey, "apiKey": safeKey})
+	})
+
+	// DELETE /api/auth/api-keys/:id — revoke key
+	protected.Delete("/auth/api-keys/:id", func(c *fiber.Ctx) error {
+		user := c.Locals("user").(*User)
+		id := c.Params("id")
+		store.mu.Lock()
+		newKeys := make([]APIKey, 0, len(store.APIKeys))
+		found := false
+		for _, k := range store.APIKeys {
+			if k.ID == id && k.UserID == user.Username {
+				found = true
+				continue
+			}
+			newKeys = append(newKeys, k)
+		}
+		store.APIKeys = newKeys
+		store.mu.Unlock()
+		if !found {
+			return c.Status(404).JSON(fiber.Map{"error": "not found"})
+		}
+		store.save()
+		return c.JSON(fiber.Map{"success": true})
+	})
 
 	// =========================
 	// TOTP/2FA routes (require auth)
@@ -4048,6 +4268,34 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 			return c.Status(500).JSON(fiber.Map{"error": "failed to save"})
 		}
 		return c.JSON(authCfg)
+	})
+
+	protected.Get("/settings/ldap", adminOnly(), func(c *fiber.Ctx) error {
+		safe := ldapCfg
+		safe.BindPassword = ""
+		return c.JSON(safe)
+	})
+
+	protected.Put("/settings/ldap", adminOnly(), func(c *fiber.Ctx) error {
+		var updated LdapConfig
+		if err := c.BodyParser(&updated); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid body"})
+		}
+		if updated.BindPassword == "" {
+			updated.BindPassword = ldapCfg.BindPassword
+		}
+		ldapCfg = updated
+		if err := saveLdapConfig(ldapCfg); err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "failed to save"})
+		}
+		return c.JSON(fiber.Map{"success": true})
+	})
+
+	protected.Post("/settings/ldap/test", adminOnly(), func(c *fiber.Ctx) error {
+		if err := testLdapConnection(ldapCfg); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+		}
+		return c.JSON(fiber.Map{"success": true, "message": "LDAP connection successful"})
 	})
 
 	// =========================
@@ -5613,6 +5861,7 @@ func main() {
 	// Initialize stores
 	userStore := NewUserStore()
 	authCfg = loadAuthConfig()
+	ldapCfg = loadLdapConfig()
 	go func() {
 		ticker := time.NewTicker(5 * time.Minute)
 		for range ticker.C {
