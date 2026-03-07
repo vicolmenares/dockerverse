@@ -6,10 +6,14 @@
     Key,
     LogOut,
     RefreshCw,
+    Settings,
+    AlertTriangle,
+    Clock,
   } from 'lucide-svelte';
   import { language } from '$lib/stores/docker';
   import {
     auth,
+    currentUser,
     getAutoLogoutMinutes,
     setAutoLogoutMinutes,
   } from '$lib/stores/auth';
@@ -17,6 +21,64 @@
   import { settingsText } from '$lib/settings';
 
   let st = $derived(settingsText[$language]);
+  let isAdmin = $derived($currentUser?.roles?.includes('admin') ?? false);
+
+  // ── Admin: Auth Config ──────────────────────────────────────────────────────
+  type AuthConfig = {
+    authEnabled: boolean;
+    sessionTimeoutSecs: number;
+    maxLoginAttempts: number;
+    lockoutDurationSecs: number;
+    defaultProvider: string;
+  };
+
+  let authConfig = $state<AuthConfig>({
+    authEnabled: true,
+    sessionTimeoutSecs: 86400,
+    maxLoginAttempts: 5,
+    lockoutDurationSecs: 900,
+    defaultProvider: 'local',
+  });
+  let authConfigLoading = $state(false);
+  let authConfigSaved = $state(false);
+  let authConfigError = $state<string | null>(null);
+
+  async function loadAuthConfig() {
+    if (!isAdmin) return;
+    const token = localStorage.getItem('auth_access_token');
+    try {
+      const res = await fetch(`${API_BASE}/api/settings/auth`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) authConfig = await res.json();
+    } catch {
+      // non-critical
+    }
+  }
+
+  async function saveAuthConfig() {
+    authConfigLoading = true;
+    authConfigError = null;
+    const token = localStorage.getItem('auth_access_token');
+    try {
+      const res = await fetch(`${API_BASE}/api/settings/auth`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(authConfig),
+      });
+      if (res.ok) {
+        authConfigSaved = true;
+        setTimeout(() => (authConfigSaved = false), 3000);
+      } else {
+        const err = await res.json();
+        authConfigError = err.error || 'Failed to save';
+      }
+    } catch {
+      authConfigError = 'Connection error';
+    } finally {
+      authConfigLoading = false;
+    }
+  }
 
   // TOTP/2FA State
   let totpState = $state({
@@ -247,9 +309,10 @@
     return `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(otpauthUrl)}`;
   }
 
-  // Load TOTP status on mount
+  // Load on mount
   $effect(() => {
     loadTOTPStatus();
+    loadAuthConfig();
   });
 </script>
 
@@ -257,6 +320,139 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <!-- svelte-ignore a11y_label_has_associated_control -->
 <div class="p-4 space-y-6">
+
+  <!-- Admin: Auth Configuration (admin only) -->
+  {#if isAdmin}
+    <div class="space-y-4">
+      <h3 class="text-lg font-semibold text-foreground flex items-center gap-2">
+        <Settings class="w-5 h-5 text-primary" />
+        {$language === 'es' ? 'Configuración de Autenticación' : 'Authentication Configuration'}
+      </h3>
+
+      {#if authConfigSaved}
+        <div class="flex items-center gap-2 p-3 bg-running/10 border border-running/30 rounded-lg text-running text-sm">
+          <Check class="w-4 h-4" />
+          {$language === 'es' ? 'Guardado correctamente' : 'Saved successfully'}
+        </div>
+      {/if}
+
+      {#if authConfigError}
+        <div class="flex items-center gap-2 p-3 bg-stopped/10 border border-stopped/30 rounded-lg text-stopped text-sm">
+          <AlertTriangle class="w-4 h-4" />
+          {authConfigError}
+        </div>
+      {/if}
+
+      <!-- Auth enabled toggle -->
+      <div class="flex items-center justify-between p-3 rounded-lg bg-background-tertiary/30 border border-border">
+        <div>
+          <p class="text-sm font-medium text-foreground">
+            {$language === 'es' ? 'Autenticación requerida' : 'Require authentication'}
+          </p>
+          <p class="text-xs text-foreground-muted">
+            {$language === 'es'
+              ? 'Proteger la aplicación con inicio de sesión'
+              : 'Protect the application with a login screen'}
+          </p>
+        </div>
+        <button
+          class="relative w-11 h-6 rounded-full transition-colors {authConfig.authEnabled ? 'bg-primary' : 'bg-background-tertiary'}"
+          onclick={() => (authConfig.authEnabled = !authConfig.authEnabled)}
+          aria-label={authConfig.authEnabled ? 'Disable auth' : 'Enable auth'}
+        >
+          <span class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform shadow-sm {authConfig.authEnabled ? 'translate-x-5' : ''}"></span>
+        </button>
+      </div>
+
+      <!-- Session timeout -->
+      <div class="p-3 rounded-lg bg-background-tertiary/30 border border-border">
+        <div class="flex items-center gap-2 mb-2">
+          <Clock class="w-4 h-4 text-foreground-muted" />
+          <p class="text-sm font-medium text-foreground">
+            {$language === 'es' ? 'Tiempo de sesión (horas)' : 'Session timeout (hours)'}
+          </p>
+        </div>
+        <div class="flex gap-2">
+          {#each [1, 8, 24, 72, 168] as hours}
+            <button
+              class="flex-1 px-2 py-1.5 text-sm rounded-lg transition-colors {authConfig.sessionTimeoutSecs === hours * 3600 ? 'bg-primary text-white' : 'bg-background text-foreground-muted hover:bg-background-tertiary'}"
+              onclick={() => (authConfig.sessionTimeoutSecs = hours * 3600)}
+            >
+              {hours}h
+            </button>
+          {/each}
+        </div>
+      </div>
+
+      <!-- Login attempts -->
+      <div class="grid grid-cols-2 gap-3">
+        <div class="p-3 rounded-lg bg-background-tertiary/30 border border-border">
+          <p class="text-sm font-medium text-foreground mb-2">
+            {$language === 'es' ? 'Intentos máximos' : 'Max login attempts'}
+          </p>
+          <div class="flex gap-1">
+            {#each [3, 5, 10] as n}
+              <button
+                class="flex-1 py-1.5 text-sm rounded-lg transition-colors {authConfig.maxLoginAttempts === n ? 'bg-primary text-white' : 'bg-background text-foreground-muted hover:bg-background-tertiary'}"
+                onclick={() => (authConfig.maxLoginAttempts = n)}
+              >
+                {n}
+              </button>
+            {/each}
+          </div>
+        </div>
+
+        <div class="p-3 rounded-lg bg-background-tertiary/30 border border-border">
+          <p class="text-sm font-medium text-foreground mb-2">
+            {$language === 'es' ? 'Bloqueo (minutos)' : 'Lockout (minutes)'}
+          </p>
+          <div class="flex gap-1">
+            {#each [5, 15, 30] as min}
+              <button
+                class="flex-1 py-1.5 text-sm rounded-lg transition-colors {authConfig.lockoutDurationSecs === min * 60 ? 'bg-primary text-white' : 'bg-background text-foreground-muted hover:bg-background-tertiary'}"
+                onclick={() => (authConfig.lockoutDurationSecs = min * 60)}
+              >
+                {min}m
+              </button>
+            {/each}
+          </div>
+        </div>
+      </div>
+
+      <!-- Default provider -->
+      <div class="p-3 rounded-lg bg-background-tertiary/30 border border-border">
+        <p class="text-sm font-medium text-foreground mb-2">
+          {$language === 'es' ? 'Proveedor predeterminado' : 'Default provider'}
+        </p>
+        <div class="flex gap-2">
+          {#each [{ id: 'local', label: $language === 'es' ? 'Local' : 'Local' }, { id: 'ldap', label: 'LDAP' }, { id: 'oidc', label: 'OIDC' }] as p}
+            <button
+              class="flex-1 py-1.5 text-sm rounded-lg transition-colors {authConfig.defaultProvider === p.id ? 'bg-primary text-white' : 'bg-background text-foreground-muted hover:bg-background-tertiary'}"
+              onclick={() => (authConfig.defaultProvider = p.id)}
+            >
+              {p.label}
+            </button>
+          {/each}
+        </div>
+      </div>
+
+      <button
+        onclick={saveAuthConfig}
+        disabled={authConfigLoading}
+        class="w-full py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+      >
+        {#if authConfigLoading}
+          <RefreshCw class="w-4 h-4 animate-spin" />
+          {$language === 'es' ? 'Guardando...' : 'Saving...'}
+        {:else}
+          {st.save}
+        {/if}
+      </button>
+    </div>
+
+    <hr class="border-border" />
+  {/if}
+
   <!-- Auto-Logout Section -->
   <div class="space-y-4">
     <h3 class="text-lg font-semibold text-foreground flex items-center gap-2">
