@@ -13,6 +13,10 @@
   interface EnvironmentResponse extends EnvironmentData {
     status: string;
     dockerVersion: string;
+    socketPath?: string;
+    host?: string;
+    port?: number;
+    labels: string[] | string;
   }
 
   interface TestResult {
@@ -125,7 +129,18 @@
 
   function getLabels(env: EnvironmentResponse): string[] {
     if (!env.labels) return [];
-    return env.labels.split(",").map(l => l.trim()).filter(Boolean);
+    if (Array.isArray(env.labels)) return env.labels;
+    // fallback for old comma-string format
+    return (env.labels as unknown as string).split(",").map((l: string) => l.trim()).filter(Boolean);
+  }
+
+  function getConnectionLabel(env: EnvironmentResponse): string {
+    if (!env.connectionType || env.connectionType === "socket") {
+      return env.socketPath || env.address || "/var/run/docker.sock";
+    }
+    const host = env.host || "";
+    const port = env.port || 2375;
+    return host ? `${host}:${port}` : (env.address || "");
   }
 
   onMount(() => {
@@ -228,7 +243,7 @@
 
               <!-- Connection -->
               <td class="px-4 py-3">
-                <span class="text-xs text-foreground-muted font-mono">{env.address}</span>
+                <span class="text-xs text-foreground-muted font-mono">{getConnectionLabel(env)}</span>
               </td>
 
               <!-- Labels -->
