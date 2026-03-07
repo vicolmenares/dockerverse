@@ -75,6 +75,15 @@ type AppSettings struct {
 	NotifyTags         []string `json:"notifyTags"`
 }
 
+// Auth configuration - persisted to data/auth-config.json
+type AuthConfig struct {
+	AuthEnabled         bool   `json:"authEnabled"`
+	SessionTimeoutSecs  int    `json:"sessionTimeoutSecs"`  // default 86400 (24h)
+	MaxLoginAttempts    int    `json:"maxLoginAttempts"`    // default 5
+	LockoutDurationSecs int    `json:"lockoutDurationSecs"` // default 900 (15min)
+	DefaultProvider     string `json:"defaultProvider"`     // "local" | "ldap" | "oidc"
+}
+
 var hosts = parseHostsConfig(getEnvOrDefault("DOCKER_HOSTS",
 	"raspi1:Raspeberry Main:unix:///var/run/docker.sock:local"))
 
@@ -994,6 +1003,32 @@ func (s *UserStore) save() {
 	path := dataDir + "/users.json"
 	data, _ := json.MarshalIndent(s, "", "  ")
 	os.WriteFile(path, data, 0644)
+}
+
+var authCfg AuthConfig
+var authConfigPath = filepath.Join(dataDir, "auth-config.json")
+
+func loadAuthConfig() AuthConfig {
+	cfg := AuthConfig{
+		AuthEnabled:         true,
+		SessionTimeoutSecs:  86400,
+		MaxLoginAttempts:    5,
+		LockoutDurationSecs: 900,
+		DefaultProvider:     "local",
+	}
+	data, err := os.ReadFile(authConfigPath)
+	if err == nil {
+		json.Unmarshal(data, &cfg)
+	}
+	return cfg
+}
+
+func saveAuthConfig(cfg AuthConfig) error {
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(authConfigPath, data, 0600)
 }
 
 func (s *UserStore) GetUser(username string) *User {
@@ -3915,6 +3950,32 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 		return c.JSON(settings)
 	})
 
+	protected.Get("/settings/auth", adminOnly(), func(c *fiber.Ctx) error {
+		return c.JSON(authCfg)
+	})
+
+	protected.Put("/settings/auth", adminOnly(), func(c *fiber.Ctx) error {
+		var updated AuthConfig
+		if err := c.BodyParser(&updated); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid body"})
+		}
+		// Clamp values to sane ranges
+		if updated.SessionTimeoutSecs < 300 {
+			updated.SessionTimeoutSecs = 300
+		}
+		if updated.MaxLoginAttempts < 1 {
+			updated.MaxLoginAttempts = 1
+		}
+		if updated.LockoutDurationSecs < 60 {
+			updated.LockoutDurationSecs = 60
+		}
+		authCfg = updated
+		if err := saveAuthConfig(authCfg); err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "failed to save"})
+		}
+		return c.JSON(authCfg)
+	})
+
 	// =========================
 	// Notifications
 	// =========================
@@ -5477,6 +5538,7 @@ func startBroadcaster(dm *DockerManager, hub *WSHub) {
 func main() {
 	// Initialize stores
 	userStore := NewUserStore()
+	authCfg = loadAuthConfig()
 	notifySvc := NewNotificationService(userStore)
 	emailSvc := NewEmailService()
 	envStore := NewEnvironmentStore(filepath.Join(dataDir, "environments.json"))
