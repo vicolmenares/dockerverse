@@ -5032,6 +5032,98 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 		return c.JSON(fiber.Map{"success": true})
 	})
 
+	// POST /api/environments/test — test connection WITHOUT saving (pre-save)
+	protected.Post("/environments/test", func(c *fiber.Ctx) error {
+		var body struct {
+			ConnectionType string `json:"connectionType"`
+			SocketPath     string `json:"socketPath"`
+			Host           string `json:"host"`
+			Port           int    `json:"port"`
+			Protocol       string `json:"protocol"`
+			TlsCa          string `json:"tlsCa"`
+			TlsCert        string `json:"tlsCert"`
+			TlsKey         string `json:"tlsKey"`
+			TlsSkipVerify  bool   `json:"tlsSkipVerify"`
+		}
+		if err := c.BodyParser(&body); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid body"})
+		}
+		if body.Port == 0 {
+			body.Port = 2375
+		}
+		if body.SocketPath == "" && (body.ConnectionType == "socket" || body.ConnectionType == "") {
+			body.SocketPath = "/var/run/docker.sock"
+		}
+
+		env := &Environment{
+			ConnectionType: body.ConnectionType,
+			SocketPath:     body.SocketPath,
+			Host:           body.Host,
+			Port:           body.Port,
+			Protocol:       body.Protocol,
+			TlsCa:          body.TlsCa,
+			TlsCert:        body.TlsCert,
+			TlsKey:         body.TlsKey,
+			TlsSkipVerify:  body.TlsSkipVerify,
+		}
+
+		cli, err := createDockerClient(env)
+		if err != nil {
+			return c.JSON(fiber.Map{"success": false, "error": err.Error()})
+		}
+		defer cli.Close()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		info, err := cli.Info(ctx)
+		if err != nil {
+			return c.JSON(fiber.Map{"success": false, "error": err.Error()})
+		}
+
+		version, err := cli.ServerVersion(ctx)
+		serverVersion := ""
+		if err == nil {
+			serverVersion = version.Version
+		}
+
+		return c.JSON(fiber.Map{
+			"success": true,
+			"info": fiber.Map{
+				"serverVersion": serverVersion,
+				"containers":    info.Containers,
+				"images":        info.Images,
+				"name":          info.Name,
+				"os":            info.OSType + " " + info.Architecture,
+			},
+		})
+	})
+
+	// GET /api/environments/detect-sockets — find available Docker sockets on the host
+	protected.Get("/environments/detect-sockets", func(c *fiber.Ctx) error {
+		candidates := []struct {
+			path string
+			name string
+		}{
+			{"/var/run/docker.sock", "Docker (default)"},
+			{"/run/docker.sock", "Docker (alt)"},
+			{"/var/run/podman/podman.sock", "Podman"},
+			{"/run/podman/podman.sock", "Podman (alt)"},
+		}
+
+		var found []fiber.Map
+		for _, candidate := range candidates {
+			if _, err := os.Stat(candidate.path); err == nil {
+				found = append(found, fiber.Map{
+					"path": candidate.path,
+					"name": candidate.name,
+				})
+			}
+		}
+
+		return c.JSON(fiber.Map{"sockets": found})
+	})
+
 	protected.Post("/environments/:id/test", func(c *fiber.Ctx) error {
 		id := c.Params("id")
 		env := envStore.Get(id)
