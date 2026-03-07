@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -2090,18 +2092,20 @@ func NewDockerManager(notifySvc *NotificationService) *DockerManager {
 
 func (dm *DockerManager) initClients() {
 	for _, host := range hosts {
-		var cli *client.Client
-		var err error
-
+		// Convert HostConfig to Environment for createDockerClient
+		connType := "tcp"
 		if host.IsLocal {
-			cli, err = client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
-		} else {
-			cli, err = client.NewClientWithOpts(
-				client.WithHost(host.Address),
-				client.WithAPIVersionNegotiation(),
-			)
+			connType = "socket"
+		}
+		env := &Environment{
+			ID:             host.ID,
+			Name:           host.Name,
+			ConnectionType: connType,
+			Address:        host.Address,
+			IsLocal:        host.IsLocal,
 		}
 
+		cli, err := createDockerClient(env)
 		if err != nil {
 			log.Printf("Warning: Could not connect to host %s: %v", host.Name, err)
 			continue
@@ -2110,6 +2114,72 @@ func (dm *DockerManager) initClients() {
 		dm.clients[host.ID] = cli
 		log.Printf("Connected to Docker host: %s", host.Name)
 	}
+}
+
+// createDockerClient builds a Docker API client from an Environment definition,
+// supporting socket, tcp, and tcp+tls connection types.
+func createDockerClient(env *Environment) (*client.Client, error) {
+	var opts []client.Opt
+	opts = append(opts, client.WithAPIVersionNegotiation())
+
+	switch env.ConnectionType {
+	case "socket", "":
+		socketPath := env.SocketPath
+		if socketPath == "" {
+			socketPath = env.Address // backward compat
+		}
+		if socketPath == "" {
+			socketPath = "/var/run/docker.sock"
+		}
+		opts = append(opts, client.WithHost("unix://"+socketPath))
+
+	case "tcp+tls":
+		host := fmt.Sprintf("tcp://%s:%d", env.Host, env.Port)
+		opts = append(opts, client.WithHost(host))
+		if env.TlsCa != "" || env.TlsCert != "" {
+			tlsCfg, err := buildTLSConfig(env)
+			if err != nil {
+				return nil, fmt.Errorf("TLS config: %w", err)
+			}
+			opts = append(opts, client.WithHTTPClient(&http.Client{
+				Transport: &http.Transport{TLSClientConfig: tlsCfg},
+			}))
+		}
+
+	default: // "tcp"
+		var hostAddr string
+		if env.Host != "" {
+			hostAddr = fmt.Sprintf("tcp://%s:%d", env.Host, env.Port)
+		} else {
+			// fallback to old Address field
+			hostAddr = "tcp://" + strings.TrimPrefix(env.Address, "http://")
+		}
+		opts = append(opts, client.WithHost(hostAddr))
+	}
+
+	return client.NewClientWithOpts(opts...)
+}
+
+// buildTLSConfig constructs a *tls.Config from the certificate fields in an Environment.
+func buildTLSConfig(env *Environment) (*tls.Config, error) {
+	tlsCfg := &tls.Config{
+		InsecureSkipVerify: env.TlsSkipVerify, //nolint:gosec
+	}
+	if env.TlsCa != "" {
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM([]byte(env.TlsCa)) {
+			return nil, fmt.Errorf("invalid CA certificate")
+		}
+		tlsCfg.RootCAs = pool
+	}
+	if env.TlsCert != "" && env.TlsKey != "" {
+		cert, err := tls.X509KeyPair([]byte(env.TlsCert), []byte(env.TlsKey))
+		if err != nil {
+			return nil, fmt.Errorf("invalid client cert/key: %w", err)
+		}
+		tlsCfg.Certificates = []tls.Certificate{cert}
+	}
+	return tlsCfg, nil
 }
 
 func (dm *DockerManager) GetClient(hostID string) (*client.Client, error) {
@@ -4788,10 +4858,17 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 		if !found {
 			hosts = append(hosts, newHost)
 		}
-		// Force client recreation
-		dm.mu.Lock()
-		delete(dm.clients, env.ID)
-		dm.mu.Unlock()
+		// Create Docker client using new Environment fields (TLS-aware)
+		if newCli, clientErr := createDockerClient(&env); clientErr == nil {
+			dm.mu.Lock()
+			dm.clients[env.ID] = newCli
+			dm.mu.Unlock()
+		} else {
+			log.Printf("Warning: Could not create Docker client for environment %s: %v", env.Name, clientErr)
+			dm.mu.Lock()
+			delete(dm.clients, env.ID)
+			dm.mu.Unlock()
+		}
 
 		return c.Status(201).JSON(env)
 	})
@@ -4828,9 +4905,17 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 				break
 			}
 		}
-		dm.mu.Lock()
-		delete(dm.clients, id)
-		dm.mu.Unlock()
+		// Recreate Docker client using updated Environment fields (TLS-aware)
+		if newCli, clientErr := createDockerClient(&env); clientErr == nil {
+			dm.mu.Lock()
+			dm.clients[id] = newCli
+			dm.mu.Unlock()
+		} else {
+			log.Printf("Warning: Could not create Docker client for environment %s: %v", env.Name, clientErr)
+			dm.mu.Lock()
+			delete(dm.clients, id)
+			dm.mu.Unlock()
+		}
 
 		return c.JSON(env)
 	})
