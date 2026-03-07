@@ -158,12 +158,13 @@ func (se *ScanEngine) runScanner(ctx context.Context, hostID, imageName string, 
 
 		pullCtx, pullCancel := context.WithTimeout(ctx, 10*time.Minute)
 		pullResp, pullErr := cli.ImagePull(pullCtx, spec.imageName, image.PullOptions{})
-		pullCancel() // cancel immediately after use, not deferred
 		if pullErr != nil {
+			pullCancel()
 			return result, fmt.Errorf("pull scanner image %s: %w", spec.imageName, pullErr)
 		}
 		_, _ = io.Copy(io.Discard, pullResp)
 		pullResp.Close()
+		pullCancel() // cancel AFTER fully draining response so Docker commits layers
 
 		emit(ScanEvent{Stage: "pull_done", Scanner: spec.name, Message: fmt.Sprintf("Pulled %s", spec.imageName)})
 	}
@@ -185,6 +186,10 @@ func (se *ScanEngine) runScanner(ctx context.Context, hostID, imageName string, 
 		Image: spec.imageName,
 		Cmd:   spec.cmdFn(imageName),
 		Env:   []string{fmt.Sprintf("%s=%s", spec.envVar, spec.cacheDir)},
+		Labels: map[string]string{
+			"com.dockerverse.internal": "scanner",
+			"com.centurylinklabs.watchtower.enable": "false",
+		},
 	}
 
 	hostCfg := &container.HostConfig{

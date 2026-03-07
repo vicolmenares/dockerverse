@@ -575,10 +575,6 @@
           </form>
         {/if}
 
-        <!-- Demo credentials hint -->
-        <div class="mt-6 text-center">
-          <p class="text-xs text-foreground-muted">{lt.demo}</p>
-        </div>
       {:else if forgotView === "request"}
         <!-- Request Reset Code -->
         <div class="space-y-6">
