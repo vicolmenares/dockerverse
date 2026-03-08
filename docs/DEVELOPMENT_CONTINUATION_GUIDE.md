@@ -1,26 +1,42 @@
-### 2026-03-08 - feature/auth-system: Sistema de autenticación completo (LDAP, OIDC, API Keys)
+### 2026-03-08 - v2.6.0: Sistema de autenticación completo (LDAP, OIDC, API Keys) ✅ COMPLETADO
 
-- **Branch**: `feature/auth-system` (worktree en `~/.config/superpowers/worktrees/dockerverse/feature-auth-system/`)
-- **Estado**: ✅ DEPLOYED Y VALIDADO en raspi (2026-03-08). Listo para merge a main.
+- **Branch**: `feature/auth-system` → mergeado a `master` (commit `af8e9aa`)
+- **Estado**: ✅ DEPLOYED Y VALIDADO en raspi (2026-03-08).
 - **Deploy**: Unified container en `docker-compose.unified.yml` (puerto 3007). Fixes aplicados: `golang:1.24`, `COPY backend/models/`.
 - **Validación Playwright** (raspi 192.168.1.145:3007): Login ✅, Auth Config buttons ✅, Change Password ✅, API Keys ✅, 2FA/TOTP ✅
-- **Cambios principales** (15 commits):
-  - Backend: TOTP/2FA, recovery codes, LDAP auth con auto-provisioning, OIDC/PKCE flow, API Keys, configuración persistente en JSON
-  - Frontend settings/authentication: tabs para Admin Config, LDAP, OIDC, API Keys
-  - Login.svelte: botón OIDC, estado de 2FA
-  - Nueva ruta `auth/oidc/callback/+page.svelte`
-  - `auth.ts` store: método `handleOidcCallback`
+- **Cambios principales** (15 commits + merge):
+  - **Task 1** — `AuthConfig` struct: enable/disable auth, session timeout, lockout config; persistencia JSON; `GET/PUT /api/settings/auth`
+  - **Task 2** — Rate limiter en memoria: 5 intentos fallidos → lockout 15 min; limpieza automática cada 5 min
+  - **Task 3** — Recovery codes hasheados con SHA256 antes de almacenamiento (fix seguridad)
+  - **Task 4** — Auth Settings UI: tab "Admin Config" (enable/disable auth, session timeout, lockout settings)
+  - **Task 5-6** — LDAP: dependencia `go-ldap/ldap/v3`, `LdapConfig` struct + API `GET/PUT /api/auth/ldap/config`
+  - **Task 7** — LDAP auth logic: bind con service account, búsqueda de usuario con `ldap.EscapeFilter`, auto-provisioning de usuarios LDAP, grupo DN → admin mapping
+  - **Task 8** — LDAP Settings UI: tab con server URL, bindDN, baseDN, group mapping, test connection
+  - **Task 9** — OIDC: dependencias `coreos/go-oidc/v3` + `golang.org/x/oauth2`; `OidcConfig` struct; `GET /api/auth/oidc/providers`
+  - **Task 10** — OIDC auth flow: PKCE + state + nonce; callback handler; JWT generado tras validación del ID token
+  - **Task 11** — OIDC Settings UI + botón OIDC en Login.svelte + ruta `/auth/oidc/callback`
+  - **Task 12** — API Keys backend: model `ApiKey` con `sha256` digest; `POST/GET/DELETE /api/keys`; middleware `X-API-Key`
+  - **Task 13** — API Keys UI: tab en settings/authentication para crear/revocar claves
+  - **Task 14** — Deploy & E2E verification en raspi ✅
 - **Bugs corregidos** (commit `31fd55c`):
   - LdapConfig JSON tags alineados con frontend: `serverURL`, `bindDN`, `baseDN`, `groupBaseDN`, `startTLS`
   - LDAP auto-provisioning: `User.ID` ahora se asigna al crear usuario LDAP
   - Login.svelte: variable `password` declarada como `$state("")` (causaba build failure)
-- **Verificación**: `go build ./...` OK, `npm run build` OK (0 errores)
 - **Archivos clave**:
-  - `backend/main.go` — structs: LdapConfig, OidcConfig, ApiKey; handlers: /api/auth/ldap/config, /api/auth/oidc/*, /api/keys/*
-  - `frontend/src/routes/settings/authentication/+page.svelte` — UI completa
+  - `backend/main.go` — structs: AuthConfig, LdapConfig, OidcConfig, ApiKey; todos los handlers de auth
+  - `frontend/src/routes/settings/authentication/+page.svelte` — UI completa con 4 tabs
   - `frontend/src/lib/stores/auth.ts` — handleOidcCallback
   - `frontend/src/routes/auth/oidc/callback/+page.svelte` — callback OIDC
-- **Pendiente**: merge a main, deploy a raspi, prueba de integración con LDAP/OIDC real
+
+### 2026-03-08 - Refactor UI: Settings sidebar simplificado
+
+- **Commit**: `877a059` en `master`
+- **Cambios**:
+  - `+layout.svelte`: "Settings" ahora es un link directo en el sidebar (antes era grupo colapsable con sub-items). Eliminados `settingsItems`, `toggleSettings`, `isSettingsActive`.
+  - `settings/+layout.svelte`: tabs horizontales dentro de la página de settings (Environments, Users, Profile, Authentication, Notifications, General, Data, About). Cada tab muestra el ícono y es role-aware (Users solo visible para admin).
+  - `settings/+page.svelte`: muestra overview de tabs en lugar de redirigir.
+- **Deploy**: ✅ raspi 192.168.1.145:3007
+- **Git push**: ✅
 
 ### 2026-02-12 - Fix SSH/IP real en DOCKER_HOSTS y backend
 
@@ -57,8 +73,8 @@ Added logging to `backend/main.go` in `dialSSH()` to surface the resolved host a
 
 > **Documento de transferencia de conocimiento para continuar el desarrollo desde macOS**
 > 
-> Última actualización: 17 de febrero de 2026
-> Versión actual: v2.4.1
+> Última actualización: 8 de marzo de 2026
+> Versión actual: v2.6.0
 
 ---
 
@@ -95,7 +111,7 @@ Added logging to `backend/main.go` in `dialSSH()` to surface the resolved host a
 - **Deployment**: Docker con arquitectura unificada (single container)
 - **Target**: Raspberry Pi 4/5 con Docker instalado
 
-### Características Principales (v2.4.0)
+### Características Principales (v2.6.0)
 
 - ✅ Gestión multi-host de contenedores Docker
 - ✅ Terminal web con WebSocket (7 temas, búsqueda, reconexión, WebGL, zoom)
@@ -137,6 +153,16 @@ Added logging to `backend/main.go` in `dialSSH()` to surface the resolved host a
 - ✅ Socket-proxy integration para acceso seguro al Docker daemon (v2.4.0)
 - ✅ Docker version fallback via ServerVersion API (v2.4.0)
 - ✅ Health endpoint /health para container healthcheck (v2.4.0)
+- ✅ Vulnerability scanning integrado en update flow (Trivy/Grype) (v2.5.0)
+- ✅ Scanner SSE endpoint para streaming de resultados en tiempo real (v2.5.0)
+- ✅ Credenciales hardcoded removidas → variables de entorno (v2.5.0)
+- ✅ LDAP authentication con auto-provisioning de usuarios (v2.6.0)
+- ✅ OIDC/SSO con PKCE flow y callback handler (v2.6.0)
+- ✅ API Keys con X-API-Key middleware y revocación (v2.6.0)
+- ✅ Rate limiting: 5 intentos → lockout 15 min (v2.6.0)
+- ✅ Recovery codes hasheados con SHA256 (v2.6.0)
+- ✅ Auth Settings UI: Admin Config, LDAP, OIDC, API Keys tabs (v2.6.0)
+- ✅ Settings sidebar: link directo con tabs horizontales internos (v2.6.0)
 
 ---
 
@@ -1064,22 +1090,43 @@ docker exec dockerverse sh -c 'echo "[NUEVO_JSON]" > /data/users.json'
 - [x] Fix: `groupedContainers` ahora deriva de `filteredContainers` (no de `$containers` raw)
 - [x] Fix: `state_unsafe_mutation` — `regexResult` como objeto combinado `{pattern, error}`
 
-### v2.5.0 (Planificado)
+### v2.5.0 (Completado - 6 Mar 2026)
 
-- [ ] Container Activity chart (bar chart estilo Jobs Activity)
-- [ ] Docker Compose management (view/edit compose files)
+- [x] Vulnerability scanning integrado en update flow (Trivy + Grype con fallback)
+- [x] SSE endpoint para streaming de resultados de scan en tiempo real
+- [x] Tabla de CVEs con severidad coloreada, paquetes afectados, fix disponible
+- [x] Multi-arch digest detection (arm64 vs amd64) para comparación correcta
+- [x] Credenciales hardcoded removidas → variables de entorno (GO-CONFIG-001)
+- [x] README actualizado; docs raíz movidos a `docs/`
+
+### v2.6.0 (Completado - 8 Mar 2026)
+
+- [x] AuthConfig struct: enable/disable auth, session timeout, lockout config (persistente JSON)
+- [x] Rate limiter en memoria: 5 intentos fallidos → lockout 15 min
+- [x] Recovery codes hasheados con SHA256 antes de almacenamiento
+- [x] LDAP authentication: bind + búsqueda con EscapeFilter + auto-provisioning + group→admin mapping
+- [x] OIDC/SSO: PKCE + state + nonce; `go-oidc/v3`; callback handler; JWT generado tras validación
+- [x] API Keys: modelo con SHA256 digest; middleware X-API-Key; endpoints crear/listar/revocar
+- [x] Auth Settings UI: 4 tabs (Admin Config, LDAP, OIDC, API Keys) en `settings/authentication`
+- [x] Login.svelte: botón SSO para OIDC; flujo 2FA por pasos
+- [x] Settings sidebar: link directo; tabs horizontales con íconos dentro de settings layout
+- [x] Bug fix: LdapConfig JSON tags alineados (`serverURL`, `bindDN`, `baseDN`, `groupBaseDN`, `startTLS`)
+
+### v2.7.0 (Planificado)
+
+- [ ] Audit log (quién hizo qué y cuándo — persistido en JSON)
+- [ ] Container Activity chart (bar chart estilo Jobs Activity en dashboard)
+- [ ] Docker Compose management (ver/editar compose files via UI)
+- [ ] Profile page completa (avatar, display name, change password, 2FA desde perfil)
+
+### v3.0.0 (Planificado)
+
 - [ ] Container creation wizard
 - [ ] Network visualization
 - [ ] Volume management UI
 - [ ] Container templates/presets
-
-### v3.0.0 (Planificado)
-
-- [ ] Multi-user permissions (RBAC)
-- [ ] Audit log
-- [ ] API keys for automation
 - [ ] Webhook integrations
-- [ ] Dashboard widgets customization
+- [ ] Dashboard widgets customization (drag & drop)
 
 ### v4.0.0 (Futuro)
 
