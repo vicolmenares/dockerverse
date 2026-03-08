@@ -17,19 +17,11 @@
     Menu,
     Home,
     Shield,
-    Bell,
-    Palette,
-    Info,
-    Database,
-    Users,
     ArrowUpCircle,
     ScrollText,
     SquareTerminal,
-    Server,
     ChevronsLeft,
     ChevronsRight,
-    KeyRound,
-    ChevronRight,
   } from "lucide-svelte";
   import CommandPalette from "$lib/components/CommandPalette.svelte";
   import Login from "$lib/components/Login.svelte";
@@ -59,12 +51,6 @@
   let isRefreshing = $state(false);
   let showUpdatesDropdown = $state(false);
   let navCollapsed = $state(browser ? localStorage.getItem('dockerverse-nav-collapsed') === 'true' : false);
-  let settingsOpen = $state(browser ? localStorage.getItem('dockerverse-settings-open') !== 'false' : true);
-
-  function toggleSettings() {
-    settingsOpen = !settingsOpen;
-    if (browser) localStorage.setItem('dockerverse-settings-open', String(settingsOpen));
-  }
 
   function toggleNav() {
     navCollapsed = !navCollapsed;
@@ -84,27 +70,9 @@
     if (pathname.startsWith('/logs')) return 'logs';
     if (pathname.startsWith('/shell')) return 'shell';
     if (pathname.startsWith('/security') && !pathname.startsWith('/settings')) return 'security-scans';
-    if (pathname.startsWith('/settings/users')) return 'users';
-    if (pathname.startsWith('/settings/notifications')) return 'notifications';
-    if (pathname.startsWith('/settings/general') || pathname.startsWith('/settings/appearance')) return 'general';
-    if (pathname.startsWith('/settings/authentication') || pathname.startsWith('/settings/security')) return 'authentication';
-    if (pathname.startsWith('/settings/environments')) return 'environments';
-    if (pathname.startsWith('/settings/data')) return 'data';
-    if (pathname.startsWith('/settings/about')) return 'about';
     if (pathname.startsWith('/settings')) return 'settings';
     return 'dashboard';
   });
-
-  let isSettingsActive = $derived(
-    activeSidebarItem === 'environments' ||
-    activeSidebarItem === 'users' ||
-    activeSidebarItem === 'notifications' ||
-    activeSidebarItem === 'general' ||
-    activeSidebarItem === 'authentication' ||
-    activeSidebarItem === 'data' ||
-    activeSidebarItem === 'about' ||
-    activeSidebarItem === 'settings'
-  );
 
   // Theme state - initialize from localStorage if available
   type Theme = "dark" | "light";
@@ -121,25 +89,13 @@
     logout: $language === "es" ? "Cerrar Sesión" : "Sign Out",
   });
 
-  // Main navigation items (top-level)
+  // Main navigation items
   const mainItems = $derived([
     { id: "dashboard", icon: Home, label: "Dashboard", href: "/" },
     { id: "logs", icon: ScrollText, label: "Logs", href: "/logs" },
     { id: "shell", icon: SquareTerminal, label: "Shell", href: "/shell" },
     { id: "security-scans", icon: Shield, label: $language === "es" ? "Seguridad" : "Security", href: "/security" },
-  ]);
-
-  // Settings sub-navigation items
-  const settingsItems = $derived([
-    { id: "environments", icon: Server, label: $language === "es" ? "Entornos" : "Environments", href: "/settings/environments" },
-    ...($currentUser?.roles?.includes("admin")
-      ? [{ id: "users", icon: Users, label: $language === "es" ? "Usuarios" : "Users", href: "/settings/users" }]
-      : []),
-    { id: "notifications", icon: Bell, label: $language === "es" ? "Notificaciones" : "Notifications", href: "/settings/notifications" },
-    { id: "general", icon: Palette, label: $language === "es" ? "General" : "General", href: "/settings/general" },
-    { id: "authentication", icon: KeyRound, label: $language === "es" ? "Autenticación" : "Authentication", href: "/settings/authentication" },
-    { id: "data", icon: Database, label: $language === "es" ? "Datos" : "Data", href: "/settings/data" },
-    { id: "about", icon: Info, label: $language === "es" ? "Acerca de" : "About", href: "/settings/about" },
+    { id: "settings", icon: SettingsIcon, label: $language === "es" ? "Configuración" : "Settings", href: "/settings" },
   ]);
 
   function handleKeydown(e: KeyboardEvent) {
@@ -340,7 +296,6 @@
 
         <!-- Navigation -->
         <nav class="flex-1 px-2 py-3 overflow-y-auto">
-          <!-- Main items -->
           <div class="space-y-0.5">
             {#each mainItems as item}
               {@const Icon = item.icon}
@@ -359,57 +314,6 @@
                 {/if}
               </a>
             {/each}
-          </div>
-
-          <!-- Settings group -->
-          <div class="mt-4 pt-3 border-t border-border/50">
-            <button
-              class="w-full flex items-center {navCollapsed ? 'justify-center px-2 py-2' : 'gap-3 px-3 py-2'} rounded-lg transition-colors {isSettingsActive ? 'text-primary' : 'text-foreground-muted hover:text-foreground'} hover:bg-background-tertiary"
-              onclick={toggleSettings}
-              title={navCollapsed ? ($language === 'es' ? 'Configuración' : 'Settings') : undefined}
-            >
-              <SettingsIcon class="w-5 h-5 flex-shrink-0" />
-              {#if !navCollapsed}
-                <span class="text-sm font-medium flex-1 text-left">{$language === 'es' ? 'Configuración' : 'Settings'}</span>
-                <ChevronRight class="w-3.5 h-3.5 transition-transform duration-200 {settingsOpen ? 'rotate-90' : ''}" />
-              {/if}
-            </button>
-
-            {#if !navCollapsed && (settingsOpen || isSettingsActive)}
-              <div class="mt-1 ml-3 pl-3 border-l border-border space-y-0.5">
-                {#each settingsItems as item}
-                  {@const Icon = item.icon}
-                  {@const isActive = activeSidebarItem === item.id}
-                  <a
-                    href={item.href}
-                    class="flex items-center gap-3 px-2 py-2 rounded-lg transition-colors {isActive
-                      ? 'bg-primary/15 text-primary'
-                      : 'text-foreground-muted hover:text-foreground hover:bg-background-tertiary'}"
-                    onclick={() => { showSidebar = false; }}
-                  >
-                    <Icon class="w-4 h-4 flex-shrink-0" />
-                    <span class="text-sm font-medium">{item.label}</span>
-                  </a>
-                {/each}
-              </div>
-            {:else if navCollapsed}
-              <div class="mt-0.5 space-y-0.5">
-                {#each settingsItems as item}
-                  {@const Icon = item.icon}
-                  {@const isActive = activeSidebarItem === item.id}
-                  <a
-                    href={item.href}
-                    class="flex items-center justify-center px-2 py-2.5 rounded-lg transition-colors {isActive
-                      ? 'bg-primary/15 text-primary'
-                      : 'text-foreground-muted hover:text-foreground hover:bg-background-tertiary'}"
-                    onclick={() => { showSidebar = false; }}
-                    title={item.label}
-                  >
-                    <Icon class="w-4 h-4 flex-shrink-0" />
-                  </a>
-                {/each}
-              </div>
-            {/if}
           </div>
         </nav>
 

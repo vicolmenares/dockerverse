@@ -1640,6 +1640,192 @@ npm run dev
 - Deploy: ✅ Completado con `./deploy-to-raspi.sh`
 - Git commit/push: pendiente (siguiente paso)
 
+### 2026-03-07 - Environments redesign completo + Settings sidebar redesign
+
+- Commits: `7cabe3d`, `8a89062`, `11c1e98`, `e8d530e`, `4fb8984`, `65c4ec5`, `2fb7a0c`, `667d3fa`, `a836f5c`, `3981801`, `d9486e0`, `45dc945`, `9e9f71e`
+
+#### Environments - Backend
+
+- **Struct extendido** (`Environment` en `backend/main.go`):
+  - Nuevos campos: `TLS bool`, `TLSCACert`, `TLSCert`, `TLSKey` (strings), `Labels []string`, `SocketPath string`, `MonitoringEnabled bool`, `MonitoringInterval int`
+  - `ConnectionType` ahora soporta: `local`, `tcp`, `tcp+tls`, `socket`
+- **TLS Docker client**: `createDockerClient()` ahora soporta `tcp+tls` generando `tls.Config` con certs embebidos
+- **PUT handler**: recalcula `IsLocal` y `Address` desde `ConnectionType` en cada update para mantener consistencia
+- **Pre-save connection test**: nuevo endpoint `POST /api/environments/:id/test` que prueba conexión antes de guardar
+- **Detect sockets**: nuevo endpoint `GET /api/environments/sockets` que lista Unix sockets Docker disponibles en el host
+- **Fix scheme doubling**: `createDockerClient()` ya no duplica prefijo `tcp://` si ya está presente
+- **Unix:// sanitization**: `socketPath` se sanitiza removiendo prefijo `unix://` al cargar y hacer PUT
+
+#### Environments - Frontend
+
+- **Vista de lista plana**: se reemplazaron las cards por filas de tabla (más denso, estilo Dozzle/Portainer)
+  - Columna "Connection" muestra `socketPath` o `host:port` según tipo
+  - Labels mostrados como badges
+- **EnvironmentModal de 4 tabs**: General | Connection | TLS | Labels
+  - Tab Connection: selector de tipo con campos condicionales (socket, TCP, TCP+TLS)
+  - Auto-detección de sockets Docker disponibles vía endpoint `/api/environments/sockets`
+  - Tab TLS: campos para CA cert, client cert, client key
+  - Tab Labels: agregar/remover labels como key=value
+  - Botón "Test Connection" antes de guardar
+- **Labels handling**: backend acepta labels como `[]string` (formato `key=value`), frontend convierte desde/hacia objeto
+
+#### Scanner - Fix crítico
+
+- **`pullCancel` movido**: en `backend/models/scanner.go`, `pullCancel()` ahora se llama después de `io.Copy()` (no antes), evitando que Trivy falle al commitear la imagen
+- **Internal label**: contenedores lanzados por el scanner llevan label `dockerverse.internal=true` para ser excluidos de notificaciones y listas
+
+#### Deployment improvements
+
+- `docker-compose.unified.yml`: agregado `extra_hosts: host.docker.internal:host-gateway`
+- nginx: limpieza de config
+- auth store: mejoras en manejo de estado
+
+#### Settings - Sidebar redesign
+
+- `frontend/src/routes/+layout.svelte`: "Settings" ahora es un grupo colapsable en el sidebar con sub-items:
+  - Environments, Users, Profile, Authentication, Notifications, General, Data, About
+- Nuevas rutas creadas:
+  - `settings/+layout.svelte`: layout con tab bar horizontal (estilo Dockhand)
+  - `settings/+page.svelte`: redirect a `/settings/environments`
+  - `settings/environments/+page.svelte`
+  - `settings/authentication/+page.svelte`
+  - `settings/general/+page.svelte`
+  - `settings/appearance/+page.svelte` (alias de general)
+  - `settings/security/+page.svelte` (alias de authentication)
+- Route `/security` existente mantenida para compatibilidad
+- Traducciones (`src/lib/settings/index.ts`): añadidos `authentication`, `authenticationDesc`, `general`, `generalDesc` en `en` y `es`
+
+- Deploy: pendiente
+- Git commit: ✅ (9e9f71e)
+
+---
+
+### 2026-03-06 - Vulnerability scanning UI + v2.5.0
+
+- Commits: `3903bab`, `ecdad67`, `6e6b626`, `e377b80`, `22ed803`, `c01e9e1`, `9e87e7d`, `f4bdcb4`
+
+- **Vulnerability scanning integrado en el update flow**:
+  - `UpdateModal.svelte`: ahora muestra resultados del scan (Critical/High/Medium/Low/Unknown) antes de confirmar update
+  - SSE endpoint para streaming de resultados de scan en tiempo real
+  - Fix: baseline ordering correcto en SSE; write timeout aumentado para streams largos
+  - Fix: reactive state y `ScanStore` compartido entre componentes
+- **Scan UI**: tabla de vulnerabilidades con severidad coloreada, CVE IDs, paquetes afectados y fix disponible
+- **Dockerfile backend**: actualizado a Go 1.23 (requerido por `go.mod`)
+- **Docs**: README actualizado para v2.5.0; docs raíz eliminados (todo movido a `docs/`)
+
+- Deploy: ✅ completado
+- Git push: ✅
+
+---
+
+### 2026-03-02 - Vulnerability scanner engine (Trivy + Grype)
+
+- Commits: `b2668bd`, `e3dddfa`, `c73318f`, `16cf3ff`, `03d7cf6`
+
+- **Modelo de almacenamiento**: `backend/models/scan.go` — struct `ScanResult` con CVEs, severidades, timestamps; persistencia JSON en data dir
+- **Scanner engine**: `backend/models/scanner.go` — orquestador que lanza contenedor Trivy o Grype, parsea output JSON, almacena resultado
+  - Soporte para ambos scanners como fallback
+  - Timeout configurable, cleanup automático del contenedor temporal
+- **Multi-arch digest**: `detectRemoteDigest()` ahora detecta arquitectura del host remoto (arm64 vs amd64) para comparar el digest correcto del manifest list
+- **Fix digest comparison**: `strings.Contains` reemplazado por comparación exacta de digest para evitar false positives
+
+- Deploy: ✅
+- Git push: ✅
+
+---
+
+### 2026-02-27 - Security: credenciales hardcoded removidas
+
+- Commits: `286b2b5`, `fb5e98e`, `61d4942`
+
+- **GO-CONFIG-001**: todas las credenciales hardcoded eliminadas de `backend/main.go`; migradas a variables de entorno
+- **SECURITY_REMEDIATION.md**: documento creado en `docs/` con el log completo de la remediación
+- `.gitignore`: actualizado para ignorar screenshots, output playwright y artifacts de test
+
+- Deploy: no requerido (config-only)
+- Git push: ✅
+
+---
+
+### 2026-02-18 - Fix freeze en Shell page (Svelte 5 $effect loop)
+
+- Commit: `1673821`
+
+- **Root cause**: `$effect` en `Shell.svelte` creaba un ciclo infinito al leer y escribir estado reactivo dentro del mismo effect
+- **Fix**: extraído el state write fuera del `$effect`, usando `$derived` para el valor calculado
+
+- Deploy: ✅
+- Git push: ✅
+
+---
+
+### 2026-02-17 - Shell page + Logs polish completo
+
+- Commits: `0724535`, `3ee6599`, `80821e1`, `ce2397f`, `c319b01`, `8c9b65f`, `388243b`, `00b6e8c`, `acb3b35`, y fixes `8c1ff60`, `a846db7`, `06ca6e6`, `f0fb0e3`, `261ea47`, `cce6eee`
+
+#### Shell page - nueva feature
+
+- **Shell nav entry**: nueva entrada en sidebar → `/shell`
+- **Terminal embedded mode**: `Terminal.svelte` acepta prop `embedded=true` para usarse dentro de Shell sin header propio
+- **Shell page** (`/shell`):
+  - Multi-tab: crear tabs de tipo SSH (host) o Exec (contenedor)
+  - Toolbar con selector de host/contenedor y botón [+]
+  - Status dots por tab (running/stopped/error)
+  - Ctrl+T: shortcut para nueva tab
+  - Drag-to-resize del split pane (planificado, UI presente)
+- **Fixes de build**: `@const` movido a scope correcto en each-block; nested button reemplazado por `div[role=tab]`
+- **Fix listeners**: `onData`/`onResize` de xterm no se duplican en reconexión
+
+#### Logs page - polish
+
+- **Font**: JetBrains Mono para líneas de log
+- **Zebra striping**: filas alternas con background sutil
+- **Colores**: log levels con colores Dozzle (ERROR=rojo, WARN=amarillo, INFO=azul, DEBUG=gris)
+- **ANSI stripping**: prefijos de timestamp Docker y códigos ANSI removidos antes de renderizar
+- **Resizable panel**: panel izquierdo (lista containers) con drag-to-resize
+- **Collapsible nav**: sidebar colapsable con CSS variable `--sidebar-width` que expande el content area
+- **Toolbar**: nombres de containers en toolbar, timestamp cycling (local/UTC/relativo), keyboard shortcuts
+- **Display limit**: selector de últimas N líneas con input libre
+- **Stack grouping**: containers agrupados por Docker Compose stack (Dozzle-style)
+- **Host filter breadcrumb**: filtro por host como breadcrumb en el nav de stacks
+
+- Deploy: ✅ (con deploy-to-raspi.sh)
+- Git push: ✅
+
+---
+
+### 2026-02-16 - Health-check updates + Logs page base
+
+- Commits: `a2310bd`, `38b8649`, `dce0c36`, `4997fe7`, `9833721`, `b4b77bd`, `fcfe9ac`, `5000dbd`, `43757d3`, `51d3edf`, `8fd2608`, `48a4d25`, `b89d963`, `28afae6`, `c88cebb`, `f7769e5`, `c1556b1`
+
+#### Container updates - Approach A (health-check based)
+
+- **raspi1**: usa socket Docker local (`/var/run/docker.sock`) montado en el contenedor
+- **raspi2**: usa Docker API port directo (TCP)
+- **Username lookup**: case-insensitive para evitar errores de login con caps
+- **Host SSH console**: carga componente `Terminal` correctamente al seleccionar host
+
+#### Logs page - base (Dozzle-style)
+
+- **`/api/stacks`**: nuevo endpoint que agrupa containers por label `com.docker.compose.project`
+- **`/api/containers`**: enriquecido con metadata de stack (nombre, número de servicios)
+- Stack navigation UI: árbol host → stacks → containers en panel izquierdo
+- Host filter breadcrumb (nivel superior de navegación)
+- Interfaces TypeScript: `Stack`, `StackGroup`, `ContainerWithStack`
+- Layout flexbox para estabilidad (reemplaza height fixed)
+- Auth headers en fetch a `/api/hosts`
+- WebSocket para updates en tiempo real de containers
+- Phases 3 & 4: búsqueda avanzada, regex filter, timestamp cycling, level filtering
+
+#### Models refactor (WIP)
+
+- `backend/models/docker.go`: types extraídos de `main.go` a package `models` (Phase 1, incompleto)
+
+- Deploy: ✅
+- Git push: ✅
+
+---
+
 ### 2026-02-10 - 2FA SHA1 fix + Docker version fallback
 
 - Commits: d5cd321, 06af6de (en master, mergeados a branch el 14 Feb)

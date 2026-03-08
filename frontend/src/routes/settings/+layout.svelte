@@ -2,58 +2,79 @@
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
   import { browser } from '$app/environment';
-  import { ChevronRight } from 'lucide-svelte';
+  import {
+    Server, User, KeyRound, Bell, Palette, Database, Info, Users, Settings
+  } from 'lucide-svelte';
   import { language } from '$lib/stores/docker';
-  import { isAuthenticated } from '$lib/stores/auth';
+  import { isAuthenticated, currentUser } from '$lib/stores/auth';
   import { settingsText } from '$lib/settings';
 
   let { children } = $props();
 
   let st = $derived(settingsText[$language]);
 
-  // Derive current page name from pathname
-  let currentPage = $derived(() => {
-    const path = $page.url.pathname;
-    const segments = path.split('/').filter(Boolean);
-    if (segments.length <= 1) return null; // /settings
-    return segments[segments.length - 1]; // e.g., "profile", "security"
-  });
-
-  let pageTitle = $derived(() => {
-    const pg = currentPage();
-    if (!pg) return st.settings;
-    const key = pg as keyof typeof st;
-    return (st[key] as string) || st.settings;
-  });
-
-  // Auth guard - redirect to / if not authenticated
+  // Auth guard
   $effect(() => {
     if (browser && !$isAuthenticated) {
       goto('/');
     }
   });
+
+  let tabs = $derived([
+    { id: 'environments', label: st.environments, icon: Server, href: '/settings/environments' },
+    ...($currentUser?.roles?.includes('admin')
+      ? [{ id: 'users', label: st.users, icon: Users, href: '/settings/users' }]
+      : []),
+    { id: 'profile', label: st.profile, icon: User, href: '/settings/profile' },
+    { id: 'authentication', label: st.authentication, icon: KeyRound, href: '/settings/authentication' },
+    { id: 'notifications', label: st.notifications, icon: Bell, href: '/settings/notifications' },
+    { id: 'general', label: st.general, icon: Palette, href: '/settings/general' },
+    { id: 'data', label: st.data, icon: Database, href: '/settings/data' },
+    { id: 'about', label: st.about, icon: Info, href: '/settings/about' },
+  ]);
+
+  let activeTab = $derived.by(() => {
+    const path = $page.url.pathname;
+    if (path.startsWith('/settings/environments')) return 'environments';
+    if (path.startsWith('/settings/users')) return 'users';
+    if (path.startsWith('/settings/profile')) return 'profile';
+    if (path.startsWith('/settings/authentication') || path.startsWith('/settings/security')) return 'authentication';
+    if (path.startsWith('/settings/notifications')) return 'notifications';
+    if (path.startsWith('/settings/general') || path.startsWith('/settings/appearance')) return 'general';
+    if (path.startsWith('/settings/data')) return 'data';
+    if (path.startsWith('/settings/about')) return 'about';
+    return 'environments';
+  });
 </script>
 
-<!-- svelte-ignore a11y_click_events_have_key_events -->
-<!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="max-w-5xl mx-auto w-full">
-  <!-- Header with breadcrumb -->
-  <div class="flex items-center gap-2 mb-6">
-    {#if currentPage()}
-      <a
-        href="/settings"
-        class="flex items-center gap-2 text-foreground-muted hover:text-foreground transition-colors"
-      >
-        <ChevronRight class="w-5 h-5 rotate-180" />
-        <span class="text-sm">{st.back}</span>
-      </a>
-      <span class="text-foreground-muted">/</span>
-      <h2 class="text-lg font-semibold text-foreground">{pageTitle()}</h2>
-    {:else}
-      <h2 class="text-lg font-semibold text-foreground">{st.settings}</h2>
-    {/if}
+  <!-- Header -->
+  <div class="flex items-center gap-2.5 mb-5">
+    <Settings class="w-5 h-5 text-primary flex-shrink-0" />
+    <h2 class="text-lg font-semibold text-foreground">{st.settings}</h2>
   </div>
 
-  <!-- Page content -->
+  <!-- Horizontal tab bar -->
+  <div class="border-b border-border mb-6">
+    <div class="flex gap-0 overflow-x-auto" role="tablist" aria-label="Settings sections">
+      {#each tabs as tab}
+        {@const Icon = tab.icon}
+        {@const isActive = activeTab === tab.id}
+        <a
+          href={tab.href}
+          role="tab"
+          aria-selected={isActive}
+          class="flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium whitespace-nowrap border-b-2 transition-colors cursor-pointer {isActive
+            ? 'border-primary text-primary'
+            : 'border-transparent text-foreground-muted hover:text-foreground hover:border-border'}"
+        >
+          <Icon class="w-3.5 h-3.5" />
+          {tab.label}
+        </a>
+      {/each}
+    </div>
+  </div>
+
+  <!-- Tab content -->
   {@render children()}
 </div>
