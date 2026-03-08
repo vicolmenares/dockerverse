@@ -484,12 +484,53 @@
     }
   }
 
+  // ── API Keys ─────────────────────────────────────────────────────────────────
+  type ApiKey = { id: string; description: string; prefix: string; createdAt: string };
+  let apiKeys = $state<ApiKey[]>([]);
+  let apiKeyDesc = $state('');
+  let apiKeyCreated = $state('');
+  let apiKeyLoading = $state(false);
+  let apiKeyError = $state<string | null>(null);
+
+  async function loadApiKeys() {
+    const token = localStorage.getItem('auth_access_token');
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/api-keys`, { headers: { Authorization: `Bearer ${token}` } });
+      if (res.ok) apiKeys = await res.json();
+    } catch { /* non-critical */ }
+  }
+
+  async function createApiKey() {
+    apiKeyLoading = true; apiKeyError = null;
+    const token = localStorage.getItem('auth_access_token');
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/api-keys`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ description: apiKeyDesc }),
+      });
+      const data = await res.json();
+      if (res.ok) { apiKeyCreated = data.key; apiKeyDesc = ''; await loadApiKeys(); }
+      else apiKeyError = data.error || 'Failed to create key';
+    } catch { apiKeyError = 'Connection error'; }
+    finally { apiKeyLoading = false; }
+  }
+
+  async function deleteApiKey(id: string) {
+    const token = localStorage.getItem('auth_access_token');
+    try {
+      await fetch(`${API_BASE}/api/auth/api-keys/${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
+      await loadApiKeys();
+    } catch { /* non-critical */ }
+  }
+
   // Load on mount
   $effect(() => {
     loadTOTPStatus();
     loadAuthConfig();
     loadLdapConfig();
     loadOidcConfig();
+    loadApiKeys();
   });
 </script>
 
@@ -1366,6 +1407,83 @@
           {$language === 'es' ? 'Entendido, los guardé' : 'Got it, I saved them'}
         </button>
       </div>
+    {/if}
+  </div>
+
+  <hr class="border-border" />
+
+  <!-- API Keys Section -->
+  <div class="space-y-4" id="api-keys-section">
+    <h3 class="text-lg font-semibold text-foreground flex items-center gap-2">
+      <Key class="w-5 h-5 text-primary" />
+      {$language === 'es' ? 'Claves de API' : 'API Keys'}
+    </h3>
+    <p class="text-sm text-foreground-muted">
+      {$language === 'es'
+        ? 'Genera claves para acceder a la API sin contraseña (scripts, CI/CD).'
+        : 'Generate keys for passwordless API access (scripts, CI/CD pipelines).'}
+    </p>
+
+    {#if apiKeyCreated}
+      <div class="p-3 bg-running/10 border border-running/30 rounded-lg space-y-2">
+        <p class="text-sm font-medium text-running">
+          {$language === 'es' ? '¡Copia tu clave ahora! No se mostrará de nuevo.' : 'Copy your key now — it will not be shown again.'}
+        </p>
+        <div class="flex gap-2">
+          <code class="flex-1 px-3 py-2 bg-background border border-border rounded-lg text-sm font-mono break-all select-all">{apiKeyCreated}</code>
+          <button
+            onclick={() => { navigator.clipboard.writeText(apiKeyCreated); }}
+            class="px-3 py-2 bg-primary text-white rounded-lg text-sm hover:bg-primary/90 transition-colors shrink-0"
+          >{$language === 'es' ? 'Copiar' : 'Copy'}</button>
+        </div>
+        <button onclick={() => (apiKeyCreated = '')} class="text-xs text-foreground-muted hover:text-foreground transition-colors">
+          {$language === 'es' ? 'Entendido, la guardé' : 'Got it, I saved it'}
+        </button>
+      </div>
+    {/if}
+
+    {#if apiKeyError}
+      <div class="p-3 bg-stopped/10 border border-stopped/30 rounded-lg text-stopped text-sm">{apiKeyError}</div>
+    {/if}
+
+    <!-- Create new key -->
+    <div class="flex gap-2">
+      <input
+        type="text"
+        bind:value={apiKeyDesc}
+        placeholder={$language === 'es' ? 'Descripción (ej: CI/CD)' : 'Description (e.g., CI/CD)'}
+        class="flex-1 px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground focus:border-primary focus:outline-none"
+      />
+      <button
+        onclick={createApiKey}
+        disabled={apiKeyLoading || !apiKeyDesc}
+        class="px-4 py-2 bg-primary text-white rounded-lg text-sm hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-2"
+      >
+        {#if apiKeyLoading}<RefreshCw class="w-4 h-4 animate-spin" />{/if}
+        {$language === 'es' ? 'Crear' : 'Create'}
+      </button>
+    </div>
+
+    <!-- Existing keys -->
+    {#if apiKeys.length > 0}
+      <div class="space-y-2">
+        {#each apiKeys as key}
+          <div class="flex items-center justify-between p-3 rounded-lg bg-background-tertiary/30 border border-border">
+            <div>
+              <p class="text-sm font-medium text-foreground">{key.description}</p>
+              <p class="text-xs text-foreground-muted font-mono">{key.prefix}… · {new Date(key.createdAt).toLocaleDateString()}</p>
+            </div>
+            <button
+              onclick={() => deleteApiKey(key.id)}
+              class="px-3 py-1.5 text-xs border border-stopped/50 text-stopped rounded-lg hover:bg-stopped/10 transition-colors"
+            >{$language === 'es' ? 'Revocar' : 'Revoke'}</button>
+          </div>
+        {/each}
+      </div>
+    {:else}
+      <p class="text-sm text-foreground-muted italic">
+        {$language === 'es' ? 'Sin claves de API. Crea una arriba.' : 'No API keys. Create one above.'}
+      </p>
     {/if}
   </div>
 </div>
