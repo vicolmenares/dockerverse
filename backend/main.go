@@ -90,20 +90,20 @@ type AuthConfig struct {
 
 type LdapConfig struct {
 	Enabled         bool   `json:"enabled"`
-	ServerURL       string `json:"serverUrl"`
-	BindDN          string `json:"bindDn"`
+	ServerURL       string `json:"serverURL"`
+	BindDN          string `json:"bindDN"`
 	BindPassword    string `json:"bindPassword"`
-	BaseDN          string `json:"baseDn"`
+	BaseDN          string `json:"baseDN"`
 	UserFilter      string `json:"userFilter"`
 	UsernameAttr    string `json:"usernameAttr"`
 	EmailAttr       string `json:"emailAttr"`
 	DisplayNameAttr string `json:"displayNameAttr"`
-	GroupBaseDN     string `json:"groupBaseDn"`
+	GroupBaseDN     string `json:"groupBaseDN"`
 	GroupFilter     string `json:"groupFilter"`
 	AdminGroup      string `json:"adminGroup"`
 	AutoCreateUsers bool   `json:"autoCreateUsers"`
 	TLSEnabled      bool   `json:"tlsEnabled"`
-	StartTLS        bool   `json:"startTls"`
+	StartTLS        bool   `json:"startTLS"`
 }
 
 type OidcConfig struct {
@@ -3993,6 +3993,7 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 					user, _ = store.FindUser(ldapInfo.Username)
 					if user == nil && ldapCfg.AutoCreateUsers {
 						newUser := &User{
+							ID:           ldapInfo.Username,
 							Username:     ldapInfo.Username,
 							Email:        ldapInfo.Email,
 							FirstName:    ldapInfo.DisplayName,

@@ -47,6 +47,7 @@
   $effect(() => { loadProviders(); });
 
   let username = $state("");
+  let password = $state("");
   let rememberMe = $state(false);
   let showPassword = $state(false);
   let isLoading = $state(false);
