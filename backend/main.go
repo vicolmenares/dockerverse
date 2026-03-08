@@ -4325,8 +4325,8 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 		if len(req.Description) == 0 || len(req.Description) > 128 {
 			return c.Status(400).JSON(fiber.Map{"error": "description must be 1-128 characters"})
 		}
-		// Verify password for local users
-		if user.AuthProvider == "local" || user.AuthProvider == "" {
+		// Password confirmation is optional — verify only if provided
+		if req.Password != "" && (user.AuthProvider == "local" || user.AuthProvider == "") {
 			if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
 				return c.Status(401).JSON(fiber.Map{"error": "invalid password"})
 			}

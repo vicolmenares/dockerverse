@@ -510,7 +510,7 @@
         body: JSON.stringify({ description: apiKeyDesc }),
       });
       const data = await res.json();
-      if (res.ok) { apiKeyCreated = data.key; apiKeyDesc = ''; await loadApiKeys(); }
+      if (res.ok) { apiKeyCreated = data.rawKey; apiKeyDesc = ''; await loadApiKeys(); }
       else apiKeyError = data.error || 'Failed to create key';
     } catch { apiKeyError = 'Connection error'; }
     finally { apiKeyLoading = false; }
