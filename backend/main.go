@@ -104,6 +104,18 @@ type LdapConfig struct {
 	StartTLS        bool   `json:"startTls"`
 }
 
+type OidcConfig struct {
+	Enabled         bool     `json:"enabled"`
+	ProviderURL     string   `json:"providerURL"`
+	ClientID        string   `json:"clientId"`
+	ClientSecret    string   `json:"clientSecret"`
+	Scopes          []string `json:"scopes"`
+	RedirectURL     string   `json:"redirectURL"`
+	AutoCreateUsers bool     `json:"autoCreateUsers"`
+	AdminGroupClaim string   `json:"adminGroupClaim"` // claim name, e.g. "groups"
+	AdminGroupValue string   `json:"adminGroupValue"` // value that means admin, e.g. "admins"
+}
+
 type ldapUserInfo struct {
 	DN          string
 	Username    string
@@ -1104,6 +1116,31 @@ func saveLdapConfig(cfg LdapConfig) error {
 		return err
 	}
 	return os.WriteFile(ldapConfigPath, data, 0600)
+}
+
+var oidcCfg OidcConfig
+var oidcConfigPath = filepath.Join(dataDir, "oidc-config.json")
+
+var oidcStateMu sync.Mutex
+var oidcStates = map[string]string{} // state token -> PKCE code verifier
+
+func loadOidcConfig() OidcConfig {
+	cfg := OidcConfig{
+		Scopes: []string{"openid", "email", "profile"},
+	}
+	data, _ := os.ReadFile(oidcConfigPath)
+	if len(data) > 0 {
+		json.Unmarshal(data, &cfg)
+	}
+	return cfg
+}
+
+func saveOidcConfig(cfg OidcConfig) error {
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(oidcConfigPath, data, 0600)
 }
 
 func dialLdap(cfg LdapConfig) (*ldap.Conn, error) {
@@ -3732,6 +3769,18 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 	// Auth routes (no auth required)
 	// =========================
 
+	// GET /api/auth/providers — list enabled providers (public)
+	api.Get("/auth/providers", func(c *fiber.Ctx) error {
+		providers := []fiber.Map{{"id": "local", "name": "Local"}}
+		if ldapCfg.Enabled {
+			providers = append(providers, fiber.Map{"id": "ldap", "name": "LDAP"})
+		}
+		if oidcCfg.Enabled && oidcCfg.ProviderURL != "" && oidcCfg.ClientID != "" {
+			providers = append(providers, fiber.Map{"id": "oidc", "name": "OIDC"})
+		}
+		return c.JSON(fiber.Map{"providers": providers, "default": authCfg.DefaultProvider})
+	})
+
 	api.Post("/auth/login", func(c *fiber.Ctx) error {
 		var req LoginRequest
 		if err := c.BodyParser(&req); err != nil {
@@ -4468,6 +4517,31 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 			return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 		}
 		return c.JSON(fiber.Map{"success": true, "message": "LDAP connection successful"})
+	})
+
+	// OIDC settings (admin)
+	protected.Get("/settings/oidc", adminOnly(), func(c *fiber.Ctx) error {
+		safe := oidcCfg
+		safe.ClientSecret = "" // never expose secret
+		return c.JSON(safe)
+	})
+
+	protected.Put("/settings/oidc", adminOnly(), func(c *fiber.Ctx) error {
+		var updated OidcConfig
+		if err := c.BodyParser(&updated); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid request"})
+		}
+		if updated.ClientSecret == "" {
+			updated.ClientSecret = oidcCfg.ClientSecret
+		}
+		if len(updated.Scopes) == 0 {
+			updated.Scopes = []string{"openid", "email", "profile"}
+		}
+		oidcCfg = updated
+		if err := saveOidcConfig(oidcCfg); err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "failed to save"})
+		}
+		return c.JSON(fiber.Map{"success": true})
 	})
 
 	// =========================
@@ -6034,6 +6108,7 @@ func main() {
 	userStore := NewUserStore()
 	authCfg = loadAuthConfig()
 	ldapCfg = loadLdapConfig()
+	oidcCfg = loadOidcConfig()
 	go func() {
 		ticker := time.NewTicker(5 * time.Minute)
 		for range ticker.C {
