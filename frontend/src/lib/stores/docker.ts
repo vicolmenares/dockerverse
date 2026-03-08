@@ -246,7 +246,7 @@ export async function checkForUpdates(): Promise<void> {
 	updatesLoading.set(true);
 	try {
 		const updates = await fetchImageUpdates();
-		imageUpdates.set(updates);
+		imageUpdates.set(updates ?? []);
 		lastUpdateCheck.set(new Date());
 	} catch (e) {
 		console.error('Failed to check for updates, retrying in 5s:', e);
@@ -254,7 +254,7 @@ export async function checkForUpdates(): Promise<void> {
 		setTimeout(async () => {
 			try {
 				const updates = await fetchImageUpdates();
-				imageUpdates.set(updates);
+				imageUpdates.set(updates ?? []);
 				lastUpdateCheck.set(new Date());
 			} catch (e2) {
 				console.error('Retry also failed:', e2);

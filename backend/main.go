@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
@@ -39,6 +40,9 @@ import (
 	"github.com/pkg/sftp"
 	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
+	ldap "github.com/go-ldap/ldap/v3"
+	gooidc "github.com/coreos/go-oidc/v3/oidc"
+	"golang.org/x/oauth2"
 	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/crypto/ssh"
 
@@ -73,6 +77,63 @@ type AppSettings struct {
 	NotifyOnHighMem    bool     `json:"notifyOnHighMem"`
 	AlertsBootstrapped bool     `json:"alertsBootstrapped,omitempty"`
 	NotifyTags         []string `json:"notifyTags"`
+}
+
+// Auth configuration - persisted to data/auth-config.json
+type AuthConfig struct {
+	AuthEnabled         bool   `json:"authEnabled"`
+	SessionTimeoutSecs  int    `json:"sessionTimeoutSecs"`  // default 86400 (24h)
+	MaxLoginAttempts    int    `json:"maxLoginAttempts"`    // default 5
+	LockoutDurationSecs int    `json:"lockoutDurationSecs"` // default 900 (15min)
+	DefaultProvider     string `json:"defaultProvider"`     // "local" | "ldap" | "oidc"
+}
+
+type LdapConfig struct {
+	Enabled         bool   `json:"enabled"`
+	ServerURL       string `json:"serverURL"`
+	BindDN          string `json:"bindDN"`
+	BindPassword    string `json:"bindPassword"`
+	BaseDN          string `json:"baseDN"`
+	UserFilter      string `json:"userFilter"`
+	UsernameAttr    string `json:"usernameAttr"`
+	EmailAttr       string `json:"emailAttr"`
+	DisplayNameAttr string `json:"displayNameAttr"`
+	GroupBaseDN     string `json:"groupBaseDN"`
+	GroupFilter     string `json:"groupFilter"`
+	AdminGroup      string `json:"adminGroup"`
+	AutoCreateUsers bool   `json:"autoCreateUsers"`
+	TLSEnabled      bool   `json:"tlsEnabled"`
+	StartTLS        bool   `json:"startTLS"`
+}
+
+type OidcConfig struct {
+	Enabled         bool     `json:"enabled"`
+	ProviderURL     string   `json:"providerURL"`
+	ClientID        string   `json:"clientId"`
+	ClientSecret    string   `json:"clientSecret"`
+	Scopes          []string `json:"scopes"`
+	RedirectURL     string   `json:"redirectURL"`
+	AutoCreateUsers bool     `json:"autoCreateUsers"`
+	AdminGroupClaim string   `json:"adminGroupClaim"` // claim name, e.g. "groups"
+	AdminGroupValue string   `json:"adminGroupValue"` // value that means admin, e.g. "admins"
+}
+
+type ldapUserInfo struct {
+	DN          string
+	Username    string
+	Email       string
+	DisplayName string
+	IsAdmin     bool
+}
+
+type APIKey struct {
+	ID          string    `json:"id"`
+	UserID      string    `json:"userId"`      // username
+	Description string    `json:"description"`
+	Prefix      string    `json:"prefix"`      // first 10 chars of raw key (display only)
+	Digest      string    `json:"-"`           // SHA256 of raw key (never exposed)
+	CreatedAt   time.Time `json:"createdAt"`
+	LastUsed    time.Time `json:"lastUsed,omitempty"`
 }
 
 var hosts = parseHostsConfig(getEnvOrDefault("DOCKER_HOSTS",
@@ -502,6 +563,7 @@ type User struct {
 	TOTPSecret     string    `json:"-"`           // TOTP secret (not exposed to API)
 	TOTPEnabled    bool      `json:"totpEnabled"` // Whether 2FA is enabled
 	RecoveryCodes  []string  `json:"-"`           // Recovery codes (not exposed to API)
+	AuthProvider   string    `json:"authProvider,omitempty"` // "local" | "ldap" | "oidc"
 	CreatedAt      time.Time `json:"createdAt"`
 	LastLogin      time.Time `json:"lastLogin,omitempty"`
 }
@@ -515,6 +577,7 @@ type ResetCode struct {
 type UserStore struct {
 	Users      map[string]*User `json:"users"`
 	Settings   AppSettings      `json:"settings"`
+	APIKeys    []APIKey         `json:"apiKeys"`
 	mu         sync.RWMutex
 	resetCodes map[string]*ResetCode // email -> reset code (not persisted)
 }
@@ -996,6 +1059,259 @@ func (s *UserStore) save() {
 	os.WriteFile(path, data, 0644)
 }
 
+var authCfg AuthConfig
+var authConfigPath = filepath.Join(dataDir, "auth-config.json")
+
+type loginAttempt struct {
+	count     int
+	firstSeen time.Time
+	lockedAt  time.Time
+}
+
+var (
+	loginAttempts   = make(map[string]*loginAttempt)
+	loginAttemptsMu sync.Mutex
+)
+
+func loadAuthConfig() AuthConfig {
+	cfg := AuthConfig{
+		AuthEnabled:         true,
+		SessionTimeoutSecs:  86400,
+		MaxLoginAttempts:    5,
+		LockoutDurationSecs: 900,
+		DefaultProvider:     "local",
+	}
+	data, err := os.ReadFile(authConfigPath)
+	if err == nil {
+		json.Unmarshal(data, &cfg)
+	}
+	return cfg
+}
+
+func saveAuthConfig(cfg AuthConfig) error {
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(authConfigPath, data, 0600)
+}
+
+var ldapCfg LdapConfig
+var ldapConfigPath = filepath.Join(dataDir, "ldap-config.json")
+
+func loadLdapConfig() LdapConfig {
+	cfg := LdapConfig{
+		UserFilter:      "(uid=%s)",
+		UsernameAttr:    "uid",
+		EmailAttr:       "mail",
+		DisplayNameAttr: "cn",
+		GroupFilter:     "(&(objectClass=groupOfNames)(member=%s))",
+	}
+	data, _ := os.ReadFile(ldapConfigPath)
+	json.Unmarshal(data, &cfg)
+	return cfg
+}
+
+func saveLdapConfig(cfg LdapConfig) error {
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(ldapConfigPath, data, 0600)
+}
+
+var oidcCfg OidcConfig
+var oidcConfigPath = filepath.Join(dataDir, "oidc-config.json")
+
+var oidcStateMu sync.Mutex
+var oidcStates = map[string]string{} // state token -> PKCE code verifier
+
+func loadOidcConfig() OidcConfig {
+	cfg := OidcConfig{
+		Scopes: []string{"openid", "email", "profile"},
+	}
+	data, _ := os.ReadFile(oidcConfigPath)
+	if len(data) > 0 {
+		json.Unmarshal(data, &cfg)
+	}
+	return cfg
+}
+
+func saveOidcConfig(cfg OidcConfig) error {
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(oidcConfigPath, data, 0600)
+}
+
+func dialLdap(cfg LdapConfig) (*ldap.Conn, error) {
+	var conn *ldap.Conn
+	var err error
+	if cfg.TLSEnabled {
+		conn, err = ldap.DialURL(cfg.ServerURL, ldap.DialWithTLSConfig(&tls.Config{InsecureSkipVerify: false}))
+	} else {
+		conn, err = ldap.DialURL(cfg.ServerURL)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("dial: %w", err)
+	}
+	if cfg.StartTLS {
+		if err = conn.StartTLS(&tls.Config{InsecureSkipVerify: false}); err != nil {
+			conn.Close()
+			return nil, fmt.Errorf("starttls: %w", err)
+		}
+	}
+	return conn, nil
+}
+
+func testLdapConnection(cfg LdapConfig) error {
+	conn, err := dialLdap(cfg)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if cfg.BindDN != "" {
+		return conn.Bind(cfg.BindDN, cfg.BindPassword)
+	}
+	return nil
+}
+
+func authenticateLdap(cfg LdapConfig, username, password string) (*ldapUserInfo, error) {
+	conn, err := dialLdap(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("ldap dial: %w", err)
+	}
+	defer conn.Close()
+
+	// Bind with service account to search for the user
+	if cfg.BindDN != "" {
+		if err := conn.Bind(cfg.BindDN, cfg.BindPassword); err != nil {
+			return nil, fmt.Errorf("ldap service bind: %w", err)
+		}
+	}
+
+	// Build user filter
+	userFilter := cfg.UserFilter
+	if userFilter == "" {
+		userFilter = fmt.Sprintf("(%s=%%s)", cfg.UsernameAttr)
+	}
+	filter := fmt.Sprintf(userFilter, ldap.EscapeFilter(username))
+
+	usernameAttr := cfg.UsernameAttr
+	if usernameAttr == "" {
+		usernameAttr = "uid"
+	}
+	emailAttr := cfg.EmailAttr
+	if emailAttr == "" {
+		emailAttr = "mail"
+	}
+	displayAttr := cfg.DisplayNameAttr
+	if displayAttr == "" {
+		displayAttr = "cn"
+	}
+
+	searchReq := ldap.NewSearchRequest(
+		cfg.BaseDN,
+		ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 1, 0, false,
+		filter,
+		[]string{"dn", usernameAttr, emailAttr, displayAttr},
+		nil,
+	)
+
+	result, err := conn.Search(searchReq)
+	if err != nil {
+		return nil, fmt.Errorf("ldap search: %w", err)
+	}
+	if len(result.Entries) == 0 {
+		return nil, fmt.Errorf("user not found in LDAP")
+	}
+
+	entry := result.Entries[0]
+	userDN := entry.DN
+
+	// Bind as the found user to verify password
+	if err := conn.Bind(userDN, password); err != nil {
+		return nil, fmt.Errorf("invalid credentials")
+	}
+
+	info := &ldapUserInfo{
+		DN:          userDN,
+		Username:    entry.GetAttributeValue(usernameAttr),
+		Email:       entry.GetAttributeValue(emailAttr),
+		DisplayName: entry.GetAttributeValue(displayAttr),
+	}
+	if info.Username == "" {
+		info.Username = username
+	}
+
+	// Check admin group membership (optional)
+	if cfg.AdminGroup != "" && cfg.GroupBaseDN != "" {
+		// groupFilter template must contain one %s placeholder for the user DN
+		groupFilterTpl := cfg.GroupFilter
+		if groupFilterTpl == "" {
+			groupFilterTpl = fmt.Sprintf("(&(objectClass=groupOfNames)(cn=%s)(member=%%s))", ldap.EscapeFilter(cfg.AdminGroup))
+		}
+		groupFilter := fmt.Sprintf(groupFilterTpl, ldap.EscapeFilter(userDN))
+		// Re-bind service account for group search
+		if cfg.BindDN != "" {
+			_ = conn.Bind(cfg.BindDN, cfg.BindPassword)
+		}
+		groupReq := ldap.NewSearchRequest(
+			cfg.GroupBaseDN,
+			ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 1, 0, false,
+			groupFilter,
+			[]string{"dn"},
+			nil,
+		)
+		groupResult, err := conn.Search(groupReq)
+		if err == nil && len(groupResult.Entries) > 0 {
+			info.IsAdmin = true
+		}
+	}
+
+	return info, nil
+}
+
+func isLockedOut(username string) bool {
+	loginAttemptsMu.Lock()
+	defer loginAttemptsMu.Unlock()
+	a, ok := loginAttempts[username]
+	if !ok {
+		return false
+	}
+	if a.lockedAt.IsZero() {
+		return false
+	}
+	return time.Since(a.lockedAt) < time.Duration(authCfg.LockoutDurationSecs)*time.Second
+}
+
+func recordFailedLogin(username string) {
+	loginAttemptsMu.Lock()
+	defer loginAttemptsMu.Unlock()
+	a, ok := loginAttempts[username]
+	if !ok {
+		a = &loginAttempt{}
+		loginAttempts[username] = a
+	}
+	window := time.Duration(authCfg.LockoutDurationSecs) * time.Second
+	if time.Since(a.firstSeen) > window {
+		a.count = 0
+		a.firstSeen = time.Now()
+		a.lockedAt = time.Time{}
+	}
+	a.count++
+	if a.count >= authCfg.MaxLoginAttempts {
+		a.lockedAt = time.Now()
+	}
+}
+
+func clearFailedLogins(username string) {
+	loginAttemptsMu.Lock()
+	defer loginAttemptsMu.Unlock()
+	delete(loginAttempts, username)
+}
+
 func (s *UserStore) GetUser(username string) *User {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -1195,6 +1511,38 @@ func (s *UserStore) DeleteUser(username string) error {
 	return nil
 }
 
+func (s *UserStore) FindUser(username string) (*User, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	usernameLower := strings.ToLower(username)
+	for _, u := range s.Users {
+		if strings.ToLower(u.Username) == usernameLower {
+			return u, nil
+		}
+	}
+	return nil, fmt.Errorf("user not found")
+}
+
+func (s *UserStore) CreateLdapUser(u *User) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.Users[u.Username]; exists {
+		return fmt.Errorf("user already exists")
+	}
+	s.Users[u.Username] = u
+	s.save()
+	return nil
+}
+
+func (s *UserStore) SetRole(username, role string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if u, exists := s.Users[username]; exists {
+		u.Role = role
+		s.save()
+	}
+}
+
 func (s *UserStore) ValidateLogin(username, password string) (*User, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1262,6 +1610,11 @@ func (s *UserStore) SetupTOTP(username string) (secret string, url string, err e
 	return key.Secret(), key.URL(), nil
 }
 
+func hashRecoveryCode(code string) string {
+	h := sha256.Sum256([]byte(code))
+	return fmt.Sprintf("%x", h)
+}
+
 func (s *UserStore) EnableTOTP(username string, code string) ([]string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1281,18 +1634,21 @@ func (s *UserStore) EnableTOTP(username string, code string) ([]string, error) {
 	}
 
 	// Generate recovery codes
-	recoveryCodes := make([]string, 10)
+	rawCodes := make([]string, 10)
+	hashedCodes := make([]string, 10)
 	for i := 0; i < 10; i++ {
-		code := make([]byte, 8)
-		rand.Read(code)
-		recoveryCodes[i] = fmt.Sprintf("%x", code)[:16]
+		b := make([]byte, 8)
+		rand.Read(b)
+		raw := fmt.Sprintf("%x", b)[:16]
+		rawCodes[i] = raw
+		hashedCodes[i] = hashRecoveryCode(raw)
 	}
 
 	user.TOTPEnabled = true
-	user.RecoveryCodes = recoveryCodes
+	user.RecoveryCodes = hashedCodes // store hashed
 	s.save()
 
-	return recoveryCodes, nil
+	return rawCodes, nil // return raw to caller (shown once)
 }
 
 func (s *UserStore) DisableTOTP(username string, password string) error {
@@ -1327,8 +1683,9 @@ func (s *UserStore) UseRecoveryCode(username string, code string) (bool, error) 
 	}
 
 	// Find and remove the recovery code
+	hashed := hashRecoveryCode(code)
 	for i, rc := range user.RecoveryCodes {
-		if rc == code {
+		if rc == hashed {
 			// Remove the used code
 			user.RecoveryCodes = append(user.RecoveryCodes[:i], user.RecoveryCodes[i+1:]...)
 			s.save()
@@ -1369,17 +1726,20 @@ func (s *UserStore) RegenerateRecoveryCodes(username string, password string) ([
 	}
 
 	// Generate new recovery codes
-	recoveryCodes := make([]string, 10)
+	rawCodes := make([]string, 10)
+	hashedCodes := make([]string, 10)
 	for i := 0; i < 10; i++ {
-		code := make([]byte, 8)
-		rand.Read(code)
-		recoveryCodes[i] = fmt.Sprintf("%x", code)[:16]
+		b := make([]byte, 8)
+		rand.Read(b)
+		raw := fmt.Sprintf("%x", b)[:16]
+		rawCodes[i] = raw
+		hashedCodes[i] = hashRecoveryCode(raw)
 	}
 
-	user.RecoveryCodes = recoveryCodes
+	user.RecoveryCodes = hashedCodes // store hashed
 	s.save()
 
-	return recoveryCodes, nil
+	return rawCodes, nil // return raw to caller (shown once)
 }
 
 // Generate a temporary token for 2FA verification step
@@ -1497,6 +1857,66 @@ func adminOnly() fiber.Handler {
 		if user.Role != "admin" {
 			return c.Status(403).JSON(fiber.Map{"error": "admin access required"})
 		}
+		return c.Next()
+	}
+}
+
+func (s *UserStore) CreateAPIKey(username, description string) (string, *APIKey, error) {
+	raw := make([]byte, 32)
+	rand.Read(raw)
+	rawKey := "dv_" + base64.RawURLEncoding.EncodeToString(raw)
+
+	h := sha256.Sum256([]byte(rawKey))
+	digest := fmt.Sprintf("%x", h)
+
+	key := APIKey{
+		ID:          fmt.Sprintf("%d", time.Now().UnixNano()),
+		UserID:      username,
+		Description: description,
+		Prefix:      rawKey[:10],
+		Digest:      digest,
+		CreatedAt:   time.Now(),
+	}
+
+	s.mu.Lock()
+	s.APIKeys = append(s.APIKeys, key)
+	s.mu.Unlock()
+	s.save()
+
+	return rawKey, &key, nil
+}
+
+func (s *UserStore) ValidateAPIKey(rawKey string) (*User, *APIKey, error) {
+	h := sha256.Sum256([]byte(rawKey))
+	digest := fmt.Sprintf("%x", h)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.APIKeys {
+		if s.APIKeys[i].Digest == digest {
+			user, ok := s.Users[s.APIKeys[i].UserID]
+			if !ok {
+				return nil, nil, fmt.Errorf("user not found")
+			}
+			s.APIKeys[i].LastUsed = time.Now()
+			keyCopy := s.APIKeys[i]
+			return user, &keyCopy, nil
+		}
+	}
+	return nil, nil, fmt.Errorf("invalid api key")
+}
+
+func apiKeyAuth(store *UserStore) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		key := c.Get("X-API-Key")
+		if key == "" {
+			return c.Next()
+		}
+		user, _, err := store.ValidateAPIKey(key)
+		if err != nil {
+			return c.Status(401).JSON(fiber.Map{"error": "invalid api key"})
+		}
+		store.save() // persist LastUsed
+		c.Locals("user", user)
 		return c.Next()
 	}
 }
@@ -3351,15 +3771,259 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 	// Auth routes (no auth required)
 	// =========================
 
+	// GET /api/auth/providers — list enabled providers (public)
+	api.Get("/auth/providers", func(c *fiber.Ctx) error {
+		providers := []fiber.Map{{"id": "local", "name": "Local"}}
+		if ldapCfg.Enabled {
+			providers = append(providers, fiber.Map{"id": "ldap", "name": "LDAP"})
+		}
+		if oidcCfg.Enabled && oidcCfg.ProviderURL != "" && oidcCfg.ClientID != "" {
+			providers = append(providers, fiber.Map{"id": "oidc", "name": "OIDC"})
+		}
+		return c.JSON(fiber.Map{"providers": providers, "default": authCfg.DefaultProvider})
+	})
+
+	// POST /api/auth/oidc/start — initiate OIDC login with PKCE
+	api.Post("/auth/oidc/start", func(c *fiber.Ctx) error {
+		if !oidcCfg.Enabled || oidcCfg.ProviderURL == "" || oidcCfg.ClientID == "" {
+			return c.Status(400).JSON(fiber.Map{"error": "OIDC not configured"})
+		}
+
+		// Generate PKCE code verifier (43-128 chars, base64url without padding)
+		verifierBytes := make([]byte, 32)
+		if _, err := rand.Read(verifierBytes); err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "failed to generate verifier"})
+		}
+		codeVerifier := base64.RawURLEncoding.EncodeToString(verifierBytes)
+
+		// code_challenge = BASE64URL(SHA256(code_verifier))
+		h := sha256.Sum256([]byte(codeVerifier))
+		codeChallenge := base64.RawURLEncoding.EncodeToString(h[:])
+
+		// Generate state
+		stateBytes := make([]byte, 16)
+		if _, err := rand.Read(stateBytes); err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "failed to generate state"})
+		}
+		state := base64.RawURLEncoding.EncodeToString(stateBytes)
+
+		// Store state -> verifier mapping (expires naturally when used or after TTL)
+		oidcStateMu.Lock()
+		oidcStates[state] = codeVerifier
+		oidcStateMu.Unlock()
+
+		// Build oauth2 config
+		scopes := oidcCfg.Scopes
+		if len(scopes) == 0 {
+			scopes = []string{"openid", "email", "profile"}
+		}
+		oauth2Config := oauth2.Config{
+			ClientID:     oidcCfg.ClientID,
+			ClientSecret: oidcCfg.ClientSecret,
+			RedirectURL:  oidcCfg.RedirectURL,
+			Scopes:       scopes,
+			Endpoint: oauth2.Endpoint{
+				AuthURL:  oidcCfg.ProviderURL + "/authorize",
+				TokenURL: oidcCfg.ProviderURL + "/token",
+			},
+		}
+
+		// Try to discover endpoints from provider
+		ctx := context.Background()
+		if provider, err := gooidc.NewProvider(ctx, oidcCfg.ProviderURL); err == nil {
+			oauth2Config.Endpoint = provider.Endpoint()
+		}
+
+		authURL := oauth2Config.AuthCodeURL(state,
+			oauth2.AccessTypeOnline,
+			oauth2.SetAuthURLParam("code_challenge", codeChallenge),
+			oauth2.SetAuthURLParam("code_challenge_method", "S256"),
+		)
+
+		return c.JSON(fiber.Map{"redirectURL": authURL, "state": state})
+	})
+
+	// GET /api/auth/oidc/callback — exchange code, create session
+	api.Get("/auth/oidc/callback", func(c *fiber.Ctx) error {
+		state := c.Query("state")
+		code := c.Query("code")
+		if state == "" || code == "" {
+			return c.Status(400).JSON(fiber.Map{"error": "missing state or code"})
+		}
+
+		oidcStateMu.Lock()
+		codeVerifier, ok := oidcStates[state]
+		if ok {
+			delete(oidcStates, state)
+		}
+		oidcStateMu.Unlock()
+
+		if !ok {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid or expired state"})
+		}
+
+		ctx := context.Background()
+		provider, err := gooidc.NewProvider(ctx, oidcCfg.ProviderURL)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "failed to connect to OIDC provider"})
+		}
+
+		scopes := oidcCfg.Scopes
+		if len(scopes) == 0 {
+			scopes = []string{"openid", "email", "profile"}
+		}
+		oauth2Config := oauth2.Config{
+			ClientID:     oidcCfg.ClientID,
+			ClientSecret: oidcCfg.ClientSecret,
+			RedirectURL:  oidcCfg.RedirectURL,
+			Scopes:       scopes,
+			Endpoint:     provider.Endpoint(),
+		}
+
+		token, err := oauth2Config.Exchange(ctx, code,
+			oauth2.SetAuthURLParam("code_verifier", codeVerifier),
+		)
+		if err != nil {
+			return c.Status(401).JSON(fiber.Map{"error": "token exchange failed"})
+		}
+
+		// Verify ID token
+		verifier := provider.Verifier(&gooidc.Config{ClientID: oidcCfg.ClientID})
+		rawIDToken, ok := token.Extra("id_token").(string)
+		if !ok {
+			return c.Status(401).JSON(fiber.Map{"error": "no id_token in response"})
+		}
+		idToken, err := verifier.Verify(ctx, rawIDToken)
+		if err != nil {
+			return c.Status(401).JSON(fiber.Map{"error": "invalid id_token"})
+		}
+
+		// Extract claims
+		var claims map[string]interface{}
+		if err := idToken.Claims(&claims); err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "failed to parse claims"})
+		}
+
+		email, _ := claims["email"].(string)
+		sub, _ := claims["sub"].(string)
+		name, _ := claims["name"].(string)
+		if email == "" {
+			email = sub
+		}
+		username := email
+		if username == "" {
+			return c.Status(400).JSON(fiber.Map{"error": "no email in OIDC claims"})
+		}
+
+		// Check admin via group claim
+		isAdmin := false
+		if oidcCfg.AdminGroupClaim != "" && oidcCfg.AdminGroupValue != "" {
+			if groups, ok := claims[oidcCfg.AdminGroupClaim].([]interface{}); ok {
+				for _, g := range groups {
+					if gs, ok := g.(string); ok && gs == oidcCfg.AdminGroupValue {
+						isAdmin = true
+						break
+					}
+				}
+			}
+		}
+
+		// Find or create user
+		user, _ := store.FindUser(username)
+		if user == nil {
+			if !oidcCfg.AutoCreateUsers {
+				return c.Status(403).JSON(fiber.Map{"error": "user not found and auto-create is disabled"})
+			}
+			role := "user"
+			if isAdmin {
+				role = "admin"
+			}
+			newUser := &User{
+				Username:     username,
+				Email:        email,
+				FirstName:    name,
+				Role:         role,
+				AuthProvider: "oidc",
+				CreatedAt:    time.Now(),
+			}
+			if err := store.CreateLdapUser(newUser); err != nil {
+				return c.Status(500).JSON(fiber.Map{"error": "failed to provision user"})
+			}
+			user, _ = store.FindUser(username)
+		}
+
+		if user == nil {
+			return c.Status(500).JSON(fiber.Map{"error": "user provision failed"})
+		}
+
+		// Sync admin role
+		if isAdmin && user.Role != "admin" {
+			store.SetRole(user.Username, "admin")
+			user.Role = "admin"
+		}
+
+		clearFailedLogins(username)
+		tokens, err := generateTokens(user, false)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "failed to generate tokens"})
+		}
+		return c.JSON(LoginResponse{User: user.SafeUser(), Tokens: *tokens})
+	})
+
 	api.Post("/auth/login", func(c *fiber.Ctx) error {
 		var req LoginRequest
 		if err := c.BodyParser(&req); err != nil {
 			return c.Status(400).JSON(fiber.Map{"error": "invalid request"})
 		}
 
+		if isLockedOut(req.Username) {
+			return c.Status(429).JSON(fiber.Map{
+				"error":   "account temporarily locked",
+				"message": fmt.Sprintf("Too many failed attempts. Try again in %d minutes.", authCfg.LockoutDurationSecs/60),
+			})
+		}
+
 		user, err := store.ValidateLogin(req.Username, req.Password)
 		if err != nil {
-			return c.Status(401).JSON(fiber.Map{"error": "invalid credentials"})
+			// Try LDAP fallback if enabled
+			if ldapCfg.Enabled {
+				ldapInfo, ldapErr := authenticateLdap(ldapCfg, req.Username, req.Password)
+				if ldapErr == nil {
+					// LDAP auth succeeded — find or create local user record
+					user, _ = store.FindUser(ldapInfo.Username)
+					if user == nil && ldapCfg.AutoCreateUsers {
+						newUser := &User{
+							ID:           ldapInfo.Username,
+							Username:     ldapInfo.Username,
+							Email:        ldapInfo.Email,
+							FirstName:    ldapInfo.DisplayName,
+							Role:         "user",
+							AuthProvider: "ldap",
+							CreatedAt:    time.Now(),
+						}
+						if ldapInfo.IsAdmin {
+							newUser.Role = "admin"
+						}
+						if createErr := store.CreateLdapUser(newUser); createErr != nil {
+							recordFailedLogin(req.Username)
+							return c.Status(500).JSON(fiber.Map{"error": "failed to provision LDAP user"})
+						}
+						user, _ = store.FindUser(ldapInfo.Username)
+					}
+					if user != nil {
+						// Update role from LDAP admin group on each login
+						if ldapInfo.IsAdmin && user.Role != "admin" {
+							store.SetRole(user.Username, "admin")
+							user.Role = "admin"
+						}
+						err = nil // clear error so login proceeds
+					}
+				}
+			}
+			if err != nil || user == nil {
+				recordFailedLogin(req.Username)
+				return c.Status(401).JSON(fiber.Map{"error": "invalid credentials"})
+			}
 		}
 
 		// Check if user has TOTP enabled
@@ -3388,17 +4052,20 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 				})
 				log.Printf("2FA attempt for %s: valid=%v err=%v", user.Username, valid, validErr)
 				if !valid || validErr != nil {
+					recordFailedLogin(req.Username)
 					return c.Status(401).JSON(fiber.Map{"error": "invalid 2FA code"})
 				}
 			} else if req.RecoveryCode != "" {
 				// Check recovery code
 				valid, err := store.UseRecoveryCode(user.Username, req.RecoveryCode)
 				if err != nil || !valid {
+					recordFailedLogin(req.Username)
 					return c.Status(401).JSON(fiber.Map{"error": "invalid recovery code"})
 				}
 			}
 		}
 
+		clearFailedLogins(req.Username)
 		tokens, err := generateTokens(user, req.RememberMe)
 		if err != nil {
 			return c.Status(500).JSON(fiber.Map{"error": "failed to generate tokens"})
@@ -3621,7 +4288,80 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 	// Protected routes
 	// =========================
 
-	protected := api.Group("", jwtMiddleware(store))
+	protected := api.Group("", apiKeyAuth(store), jwtMiddleware(store))
+
+	// =========================
+	// API Key routes
+	// =========================
+
+	// GET /api/auth/api-keys — list own keys
+	protected.Get("/auth/api-keys", func(c *fiber.Ctx) error {
+		user := c.Locals("user").(*User)
+		var keys []APIKey
+		store.mu.RLock()
+		for _, k := range store.APIKeys {
+			if k.UserID == user.Username {
+				k.Digest = "" // never expose
+				keys = append(keys, k)
+			}
+		}
+		store.mu.RUnlock()
+		if keys == nil {
+			keys = []APIKey{}
+		}
+		return c.JSON(keys)
+	})
+
+	// POST /api/auth/api-keys — create key
+	protected.Post("/auth/api-keys", func(c *fiber.Ctx) error {
+		user := c.Locals("user").(*User)
+		var req struct {
+			Description string `json:"description"`
+			Password    string `json:"password"`
+		}
+		if err := c.BodyParser(&req); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid body"})
+		}
+		if len(req.Description) == 0 || len(req.Description) > 128 {
+			return c.Status(400).JSON(fiber.Map{"error": "description must be 1-128 characters"})
+		}
+		// Password confirmation is optional — verify only if provided
+		if req.Password != "" && (user.AuthProvider == "local" || user.AuthProvider == "") {
+			if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
+				return c.Status(401).JSON(fiber.Map{"error": "invalid password"})
+			}
+		}
+		rawKey, key, err := store.CreateAPIKey(user.Username, req.Description)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "failed to create key"})
+		}
+		safeKey := *key
+		safeKey.Digest = ""
+		return c.JSON(fiber.Map{"rawKey": rawKey, "apiKey": safeKey})
+	})
+
+	// DELETE /api/auth/api-keys/:id — revoke key
+	protected.Delete("/auth/api-keys/:id", func(c *fiber.Ctx) error {
+		user := c.Locals("user").(*User)
+		id := c.Params("id")
+		store.mu.Lock()
+		newKeys := make([]APIKey, 0, len(store.APIKeys))
+		found := false
+		for _, k := range store.APIKeys {
+			if k.ID == id && k.UserID == user.Username {
+				found = true
+				continue
+			}
+			newKeys = append(newKeys, k)
+		}
+		store.APIKeys = newKeys
+		store.mu.Unlock()
+		if !found {
+			return c.Status(404).JSON(fiber.Map{"error": "not found"})
+		}
+		store.save()
+		return c.JSON(fiber.Map{"success": true})
+	})
 
 	// =========================
 	// TOTP/2FA routes (require auth)
@@ -3913,6 +4653,85 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 		}
 		store.UpdateSettings(settings)
 		return c.JSON(settings)
+	})
+
+	protected.Get("/settings/auth", adminOnly(), func(c *fiber.Ctx) error {
+		return c.JSON(authCfg)
+	})
+
+	protected.Put("/settings/auth", adminOnly(), func(c *fiber.Ctx) error {
+		var updated AuthConfig
+		if err := c.BodyParser(&updated); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid body"})
+		}
+		// Clamp values to sane ranges
+		if updated.SessionTimeoutSecs < 300 {
+			updated.SessionTimeoutSecs = 300
+		}
+		if updated.MaxLoginAttempts < 1 {
+			updated.MaxLoginAttempts = 1
+		}
+		if updated.LockoutDurationSecs < 60 {
+			updated.LockoutDurationSecs = 60
+		}
+		authCfg = updated
+		if err := saveAuthConfig(authCfg); err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "failed to save"})
+		}
+		return c.JSON(authCfg)
+	})
+
+	protected.Get("/settings/ldap", adminOnly(), func(c *fiber.Ctx) error {
+		safe := ldapCfg
+		safe.BindPassword = ""
+		return c.JSON(safe)
+	})
+
+	protected.Put("/settings/ldap", adminOnly(), func(c *fiber.Ctx) error {
+		var updated LdapConfig
+		if err := c.BodyParser(&updated); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid body"})
+		}
+		if updated.BindPassword == "" {
+			updated.BindPassword = ldapCfg.BindPassword
+		}
+		ldapCfg = updated
+		if err := saveLdapConfig(ldapCfg); err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "failed to save"})
+		}
+		return c.JSON(fiber.Map{"success": true})
+	})
+
+	protected.Post("/settings/ldap/test", adminOnly(), func(c *fiber.Ctx) error {
+		if err := testLdapConnection(ldapCfg); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+		}
+		return c.JSON(fiber.Map{"success": true, "message": "LDAP connection successful"})
+	})
+
+	// OIDC settings (admin)
+	protected.Get("/settings/oidc", adminOnly(), func(c *fiber.Ctx) error {
+		safe := oidcCfg
+		safe.ClientSecret = "" // never expose secret
+		return c.JSON(safe)
+	})
+
+	protected.Put("/settings/oidc", adminOnly(), func(c *fiber.Ctx) error {
+		var updated OidcConfig
+		if err := c.BodyParser(&updated); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid request"})
+		}
+		if updated.ClientSecret == "" {
+			updated.ClientSecret = oidcCfg.ClientSecret
+		}
+		if len(updated.Scopes) == 0 {
+			updated.Scopes = []string{"openid", "email", "profile"}
+		}
+		oidcCfg = updated
+		if err := saveOidcConfig(oidcCfg); err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "failed to save"})
+		}
+		return c.JSON(fiber.Map{"success": true})
 	})
 
 	// =========================
@@ -5477,6 +6296,22 @@ func startBroadcaster(dm *DockerManager, hub *WSHub) {
 func main() {
 	// Initialize stores
 	userStore := NewUserStore()
+	authCfg = loadAuthConfig()
+	ldapCfg = loadLdapConfig()
+	oidcCfg = loadOidcConfig()
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		for range ticker.C {
+			loginAttemptsMu.Lock()
+			cutoff := time.Duration(authCfg.LockoutDurationSecs) * time.Second * 2
+			for k, a := range loginAttempts {
+				if time.Since(a.firstSeen) > cutoff {
+					delete(loginAttempts, k)
+				}
+			}
+			loginAttemptsMu.Unlock()
+		}
+	}()
 	notifySvc := NewNotificationService(userStore)
 	emailSvc := NewEmailService()
 	envStore := NewEnvironmentStore(filepath.Join(dataDir, "environments.json"))

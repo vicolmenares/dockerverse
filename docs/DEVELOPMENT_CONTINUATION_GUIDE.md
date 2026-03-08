@@ -1,3 +1,27 @@
+### 2026-03-08 - feature/auth-system: Sistema de autenticación completo (LDAP, OIDC, API Keys)
+
+- **Branch**: `feature/auth-system` (worktree en `~/.config/superpowers/worktrees/dockerverse/feature-auth-system/`)
+- **Estado**: ✅ DEPLOYED Y VALIDADO en raspi (2026-03-08). Listo para merge a main.
+- **Deploy**: Unified container en `docker-compose.unified.yml` (puerto 3007). Fixes aplicados: `golang:1.24`, `COPY backend/models/`.
+- **Validación Playwright** (raspi 192.168.1.145:3007): Login ✅, Auth Config buttons ✅, Change Password ✅, API Keys ✅, 2FA/TOTP ✅
+- **Cambios principales** (15 commits):
+  - Backend: TOTP/2FA, recovery codes, LDAP auth con auto-provisioning, OIDC/PKCE flow, API Keys, configuración persistente en JSON
+  - Frontend settings/authentication: tabs para Admin Config, LDAP, OIDC, API Keys
+  - Login.svelte: botón OIDC, estado de 2FA
+  - Nueva ruta `auth/oidc/callback/+page.svelte`
+  - `auth.ts` store: método `handleOidcCallback`
+- **Bugs corregidos** (commit `31fd55c`):
+  - LdapConfig JSON tags alineados con frontend: `serverURL`, `bindDN`, `baseDN`, `groupBaseDN`, `startTLS`
+  - LDAP auto-provisioning: `User.ID` ahora se asigna al crear usuario LDAP
+  - Login.svelte: variable `password` declarada como `$state("")` (causaba build failure)
+- **Verificación**: `go build ./...` OK, `npm run build` OK (0 errores)
+- **Archivos clave**:
+  - `backend/main.go` — structs: LdapConfig, OidcConfig, ApiKey; handlers: /api/auth/ldap/config, /api/auth/oidc/*, /api/keys/*
+  - `frontend/src/routes/settings/authentication/+page.svelte` — UI completa
+  - `frontend/src/lib/stores/auth.ts` — handleOidcCallback
+  - `frontend/src/routes/auth/oidc/callback/+page.svelte` — callback OIDC
+- **Pendiente**: merge a main, deploy a raspi, prueba de integración con LDAP/OIDC real
+
 ### 2026-02-12 - Fix SSH/IP real en DOCKER_HOSTS y backend
 
 - Cambios:

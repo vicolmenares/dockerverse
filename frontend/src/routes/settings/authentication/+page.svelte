@@ -6,10 +6,15 @@
     Key,
     LogOut,
     RefreshCw,
+    Settings,
+    AlertTriangle,
+    Clock,
+    Server,
   } from 'lucide-svelte';
   import { language } from '$lib/stores/docker';
   import {
     auth,
+    currentUser,
     getAutoLogoutMinutes,
     setAutoLogoutMinutes,
   } from '$lib/stores/auth';
@@ -17,6 +22,171 @@
   import { settingsText } from '$lib/settings';
 
   let st = $derived(settingsText[$language]);
+  let isAdmin = $derived($currentUser?.roles?.includes('admin') ?? false);
+
+  // ── Admin: Auth Config ──────────────────────────────────────────────────────
+  type AuthConfig = {
+    authEnabled: boolean;
+    sessionTimeoutSecs: number;
+    maxLoginAttempts: number;
+    lockoutDurationSecs: number;
+    defaultProvider: string;
+  };
+
+  let authConfig = $state<AuthConfig>({
+    authEnabled: true,
+    sessionTimeoutSecs: 86400,
+    maxLoginAttempts: 5,
+    lockoutDurationSecs: 900,
+    defaultProvider: 'local',
+  });
+  let authConfigLoading = $state(false);
+  let authConfigSaved = $state(false);
+  let authConfigError = $state<string | null>(null);
+
+  async function loadAuthConfig() {
+    if (!isAdmin) return;
+    const token = localStorage.getItem('auth_access_token');
+    try {
+      const res = await fetch(`${API_BASE}/api/settings/auth`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) authConfig = await res.json();
+    } catch {
+      // non-critical
+    }
+  }
+
+  async function saveAuthConfig() {
+    authConfigLoading = true;
+    authConfigError = null;
+    const token = localStorage.getItem('auth_access_token');
+    try {
+      const res = await fetch(`${API_BASE}/api/settings/auth`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(authConfig),
+      });
+      if (res.ok) {
+        authConfigSaved = true;
+        setTimeout(() => (authConfigSaved = false), 3000);
+      } else {
+        const err = await res.json();
+        authConfigError = err.error || 'Failed to save';
+      }
+    } catch {
+      authConfigError = 'Connection error';
+    } finally {
+      authConfigLoading = false;
+    }
+  }
+
+  // ── Admin: LDAP Config ───────────────────────────────────────────────────────
+  type LdapConfig = {
+    enabled: boolean;
+    serverURL: string;
+    bindDN: string;
+    bindPassword: string;
+    baseDN: string;
+    userFilter: string;
+    usernameAttr: string;
+    emailAttr: string;
+    displayNameAttr: string;
+    groupBaseDN: string;
+    groupFilter: string;
+    adminGroup: string;
+    autoCreateUsers: boolean;
+    tlsEnabled: boolean;
+    startTLS: boolean;
+  };
+
+  let ldapConfig = $state<LdapConfig>({
+    enabled: false,
+    serverURL: '',
+    bindDN: '',
+    bindPassword: '',
+    baseDN: '',
+    userFilter: '(uid=%s)',
+    usernameAttr: 'uid',
+    emailAttr: 'mail',
+    displayNameAttr: 'cn',
+    groupBaseDN: '',
+    groupFilter: '',
+    adminGroup: '',
+    autoCreateUsers: false,
+    tlsEnabled: false,
+    startTLS: false,
+  });
+  let ldapLoading = $state(false);
+  let ldapSaved = $state(false);
+  let ldapError = $state<string | null>(null);
+  let ldapTestResult = $state<{ success: boolean; message: string } | null>(null);
+  let ldapTesting = $state(false);
+  let ldapShowAdvanced = $state(false);
+
+  async function loadLdapConfig() {
+    if (!isAdmin) return;
+    const token = localStorage.getItem('auth_access_token');
+    try {
+      const res = await fetch(`${API_BASE}/api/settings/ldap`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        ldapConfig = { ...ldapConfig, ...data, bindPassword: '' };
+      }
+    } catch {
+      // non-critical
+    }
+  }
+
+  async function saveLdapConfig() {
+    ldapLoading = true;
+    ldapError = null;
+    ldapSaved = false;
+    const token = localStorage.getItem('auth_access_token');
+    try {
+      const res = await fetch(`${API_BASE}/api/settings/ldap`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(ldapConfig),
+      });
+      if (res.ok) {
+        ldapSaved = true;
+        ldapConfig.bindPassword = '';
+        setTimeout(() => (ldapSaved = false), 3000);
+      } else {
+        const err = await res.json();
+        ldapError = err.error || ($language === 'es' ? 'Error al guardar' : 'Failed to save');
+      }
+    } catch {
+      ldapError = $language === 'es' ? 'Error de conexión' : 'Connection error';
+    } finally {
+      ldapLoading = false;
+    }
+  }
+
+  async function testLdapConnection() {
+    ldapTesting = true;
+    ldapTestResult = null;
+    const token = localStorage.getItem('auth_access_token');
+    try {
+      const res = await fetch(`${API_BASE}/api/settings/ldap/test`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        ldapTestResult = { success: true, message: data.message || ($language === 'es' ? 'Conexión exitosa' : 'Connection successful') };
+      } else {
+        ldapTestResult = { success: false, message: data.error || ($language === 'es' ? 'Falló la conexión' : 'Connection failed') };
+      }
+    } catch {
+      ldapTestResult = { success: false, message: $language === 'es' ? 'Error de conexión' : 'Connection error' };
+    } finally {
+      ldapTesting = false;
+    }
+  }
 
   // TOTP/2FA State
   let totpState = $state({
@@ -247,9 +417,120 @@
     return `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(otpauthUrl)}`;
   }
 
-  // Load TOTP status on mount
+  // ── Admin: OIDC Config ───────────────────────────────────────────────────────
+  type OidcConfig = {
+    enabled: boolean;
+    providerURL: string;
+    clientId: string;
+    clientSecret: string;
+    scopes: string[];
+    redirectURL: string;
+    autoCreateUsers: boolean;
+    adminGroupClaim: string;
+    adminGroupValue: string;
+  };
+
+  let oidcConfig = $state<OidcConfig>({
+    enabled: false,
+    providerURL: '',
+    clientId: '',
+    clientSecret: '',
+    scopes: ['openid', 'email', 'profile'],
+    redirectURL: '',
+    autoCreateUsers: false,
+    adminGroupClaim: '',
+    adminGroupValue: '',
+  });
+  let oidcLoading = $state(false);
+  let oidcSaved = $state(false);
+  let oidcError = $state<string | null>(null);
+
+  async function loadOidcConfig() {
+    if (!isAdmin) return;
+    const token = localStorage.getItem('auth_access_token');
+    try {
+      const res = await fetch(`${API_BASE}/api/settings/oidc`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        oidcConfig = { ...oidcConfig, ...data, clientSecret: '' };
+      }
+    } catch { /* non-critical */ }
+  }
+
+  async function saveOidcConfig() {
+    oidcLoading = true;
+    oidcError = null;
+    const token = localStorage.getItem('auth_access_token');
+    try {
+      const res = await fetch(`${API_BASE}/api/settings/oidc`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(oidcConfig),
+      });
+      if (res.ok) {
+        oidcSaved = true;
+        oidcConfig.clientSecret = '';
+        setTimeout(() => (oidcSaved = false), 3000);
+      } else {
+        const err = await res.json();
+        oidcError = err.error || 'Failed to save';
+      }
+    } catch {
+      oidcError = 'Connection error';
+    } finally {
+      oidcLoading = false;
+    }
+  }
+
+  // ── API Keys ─────────────────────────────────────────────────────────────────
+  type ApiKey = { id: string; description: string; prefix: string; createdAt: string };
+  let apiKeys = $state<ApiKey[]>([]);
+  let apiKeyDesc = $state('');
+  let apiKeyCreated = $state('');
+  let apiKeyLoading = $state(false);
+  let apiKeyError = $state<string | null>(null);
+
+  async function loadApiKeys() {
+    const token = localStorage.getItem('auth_access_token');
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/api-keys`, { headers: { Authorization: `Bearer ${token}` } });
+      if (res.ok) apiKeys = await res.json();
+    } catch { /* non-critical */ }
+  }
+
+  async function createApiKey() {
+    apiKeyLoading = true; apiKeyError = null;
+    const token = localStorage.getItem('auth_access_token');
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/api-keys`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ description: apiKeyDesc }),
+      });
+      const data = await res.json();
+      if (res.ok) { apiKeyCreated = data.rawKey; apiKeyDesc = ''; await loadApiKeys(); }
+      else apiKeyError = data.error || 'Failed to create key';
+    } catch { apiKeyError = 'Connection error'; }
+    finally { apiKeyLoading = false; }
+  }
+
+  async function deleteApiKey(id: string) {
+    const token = localStorage.getItem('auth_access_token');
+    try {
+      await fetch(`${API_BASE}/api/auth/api-keys/${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
+      await loadApiKeys();
+    } catch { /* non-critical */ }
+  }
+
+  // Load on mount
   $effect(() => {
     loadTOTPStatus();
+    loadAuthConfig();
+    loadLdapConfig();
+    loadOidcConfig();
+    loadApiKeys();
   });
 </script>
 
@@ -257,6 +538,590 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <!-- svelte-ignore a11y_label_has_associated_control -->
 <div class="p-4 space-y-6">
+
+  <!-- Admin: Auth Configuration (admin only) -->
+  {#if isAdmin}
+    <div class="space-y-4">
+      <h3 class="text-lg font-semibold text-foreground flex items-center gap-2">
+        <Settings class="w-5 h-5 text-primary" />
+        {$language === 'es' ? 'Configuración de Autenticación' : 'Authentication Configuration'}
+      </h3>
+
+      {#if authConfigSaved}
+        <div class="flex items-center gap-2 p-3 bg-running/10 border border-running/30 rounded-lg text-running text-sm">
+          <Check class="w-4 h-4" />
+          {$language === 'es' ? 'Guardado correctamente' : 'Saved successfully'}
+        </div>
+      {/if}
+
+      {#if authConfigError}
+        <div class="flex items-center gap-2 p-3 bg-stopped/10 border border-stopped/30 rounded-lg text-stopped text-sm">
+          <AlertTriangle class="w-4 h-4" />
+          {authConfigError}
+        </div>
+      {/if}
+
+      <!-- Auth enabled toggle -->
+      <div class="flex items-center justify-between p-3 rounded-lg bg-background-tertiary/30 border border-border">
+        <div>
+          <p class="text-sm font-medium text-foreground">
+            {$language === 'es' ? 'Autenticación requerida' : 'Require authentication'}
+          </p>
+          <p class="text-xs text-foreground-muted">
+            {$language === 'es'
+              ? 'Proteger la aplicación con inicio de sesión'
+              : 'Protect the application with a login screen'}
+          </p>
+        </div>
+        <button
+          class="relative w-11 h-6 rounded-full transition-colors {authConfig.authEnabled ? 'bg-primary' : 'bg-background-tertiary'}"
+          onclick={() => (authConfig.authEnabled = !authConfig.authEnabled)}
+          aria-label={authConfig.authEnabled ? 'Disable auth' : 'Enable auth'}
+        >
+          <span class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform shadow-sm {authConfig.authEnabled ? 'translate-x-5' : ''}"></span>
+        </button>
+      </div>
+
+      <!-- Session timeout -->
+      <div class="p-3 rounded-lg bg-background-tertiary/30 border border-border">
+        <div class="flex items-center gap-2 mb-2">
+          <Clock class="w-4 h-4 text-foreground-muted" />
+          <p class="text-sm font-medium text-foreground">
+            {$language === 'es' ? 'Tiempo de sesión (horas)' : 'Session timeout (hours)'}
+          </p>
+        </div>
+        <div class="flex gap-2">
+          {#each [1, 8, 24, 72, 168] as hours}
+            <button
+              class="flex-1 px-2 py-1.5 text-sm rounded-lg transition-colors {authConfig.sessionTimeoutSecs === hours * 3600 ? 'bg-primary text-white' : 'bg-background text-foreground-muted hover:bg-background-tertiary'}"
+              onclick={() => (authConfig.sessionTimeoutSecs = hours * 3600)}
+            >
+              {hours}h
+            </button>
+          {/each}
+        </div>
+      </div>
+
+      <!-- Login attempts -->
+      <div class="grid grid-cols-2 gap-3">
+        <div class="p-3 rounded-lg bg-background-tertiary/30 border border-border">
+          <p class="text-sm font-medium text-foreground mb-2">
+            {$language === 'es' ? 'Intentos máximos' : 'Max login attempts'}
+          </p>
+          <div class="flex gap-1">
+            {#each [3, 5, 10] as n}
+              <button
+                class="flex-1 py-1.5 text-sm rounded-lg transition-colors {authConfig.maxLoginAttempts === n ? 'bg-primary text-white' : 'bg-background text-foreground-muted hover:bg-background-tertiary'}"
+                onclick={() => (authConfig.maxLoginAttempts = n)}
+              >
+                {n}
+              </button>
+            {/each}
+          </div>
+        </div>
+
+        <div class="p-3 rounded-lg bg-background-tertiary/30 border border-border">
+          <p class="text-sm font-medium text-foreground mb-2">
+            {$language === 'es' ? 'Bloqueo (minutos)' : 'Lockout (minutes)'}
+          </p>
+          <div class="flex gap-1">
+            {#each [5, 15, 30] as min}
+              <button
+                class="flex-1 py-1.5 text-sm rounded-lg transition-colors {authConfig.lockoutDurationSecs === min * 60 ? 'bg-primary text-white' : 'bg-background text-foreground-muted hover:bg-background-tertiary'}"
+                onclick={() => (authConfig.lockoutDurationSecs = min * 60)}
+              >
+                {min}m
+              </button>
+            {/each}
+          </div>
+        </div>
+      </div>
+
+      <!-- Default provider -->
+      <div class="p-3 rounded-lg bg-background-tertiary/30 border border-border">
+        <p class="text-sm font-medium text-foreground mb-2">
+          {$language === 'es' ? 'Proveedor predeterminado' : 'Default provider'}
+        </p>
+        <div class="flex gap-2">
+          {#each [{ id: 'local', label: $language === 'es' ? 'Local' : 'Local' }, { id: 'ldap', label: 'LDAP' }, { id: 'oidc', label: 'OIDC' }] as p}
+            <button
+              class="flex-1 py-1.5 text-sm rounded-lg transition-colors {authConfig.defaultProvider === p.id ? 'bg-primary text-white' : 'bg-background text-foreground-muted hover:bg-background-tertiary'}"
+              onclick={() => (authConfig.defaultProvider = p.id)}
+            >
+              {p.label}
+            </button>
+          {/each}
+        </div>
+      </div>
+
+      <button
+        onclick={saveAuthConfig}
+        disabled={authConfigLoading}
+        class="w-full py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+      >
+        {#if authConfigLoading}
+          <RefreshCw class="w-4 h-4 animate-spin" />
+          {$language === 'es' ? 'Guardando...' : 'Saving...'}
+        {:else}
+          {st.save}
+        {/if}
+      </button>
+    </div>
+
+    <hr class="border-border" />
+  {/if}
+
+  <!-- LDAP Configuration (admin only) -->
+  {#if isAdmin}
+    <div class="space-y-4">
+      <h3 class="text-lg font-semibold text-foreground flex items-center gap-2">
+        <Server class="w-5 h-5 text-primary" />
+        {$language === 'es' ? 'Configuración LDAP' : 'LDAP Configuration'}
+      </h3>
+
+      {#if ldapSaved}
+        <div class="flex items-center gap-2 p-3 bg-running/10 border border-running/30 rounded-lg text-running text-sm">
+          <Check class="w-4 h-4" />
+          {$language === 'es' ? 'Guardado correctamente' : 'Saved successfully'}
+        </div>
+      {/if}
+
+      {#if ldapError}
+        <div class="flex items-center gap-2 p-3 bg-stopped/10 border border-stopped/30 rounded-lg text-stopped text-sm">
+          <AlertTriangle class="w-4 h-4" />
+          {ldapError}
+        </div>
+      {/if}
+
+      {#if ldapTestResult}
+        <div class="flex items-center gap-2 p-3 rounded-lg text-sm {ldapTestResult.success ? 'bg-running/10 border border-running/30 text-running' : 'bg-stopped/10 border border-stopped/30 text-stopped'}">
+          {#if ldapTestResult.success}
+            <Check class="w-4 h-4 shrink-0" />
+          {:else}
+            <AlertTriangle class="w-4 h-4 shrink-0" />
+          {/if}
+          {ldapTestResult.message}
+        </div>
+      {/if}
+
+      <!-- Enable toggle -->
+      <div class="flex items-center justify-between p-3 rounded-lg bg-background-tertiary/30 border border-border">
+        <div>
+          <p class="text-sm font-medium text-foreground">
+            {$language === 'es' ? 'Habilitar LDAP' : 'Enable LDAP'}
+          </p>
+          <p class="text-xs text-foreground-muted">
+            {$language === 'es' ? 'Autenticar usuarios mediante un servidor LDAP' : 'Authenticate users via an LDAP server'}
+          </p>
+        </div>
+        <button
+          class="relative w-11 h-6 rounded-full transition-colors {ldapConfig.enabled ? 'bg-primary' : 'bg-background-tertiary'}"
+          onclick={() => (ldapConfig.enabled = !ldapConfig.enabled)}
+          aria-label={ldapConfig.enabled ? 'Disable LDAP' : 'Enable LDAP'}
+        >
+          <span class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform shadow-sm {ldapConfig.enabled ? 'translate-x-5' : ''}"></span>
+        </button>
+      </div>
+
+      {#if ldapConfig.enabled}
+        <!-- Server URL -->
+        <div>
+          <label class="block text-sm font-medium text-foreground mb-1">
+            {$language === 'es' ? 'URL del servidor' : 'Server URL'}
+          </label>
+          <input
+            type="text"
+            bind:value={ldapConfig.serverURL}
+            placeholder="ldap://192.168.1.1:389"
+            class="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground focus:border-primary focus:outline-none"
+          />
+        </div>
+
+        <!-- Bind DN -->
+        <div>
+          <label class="block text-sm font-medium text-foreground mb-1">
+            {$language === 'es' ? 'DN de enlace' : 'Bind DN'}
+          </label>
+          <input
+            type="text"
+            bind:value={ldapConfig.bindDN}
+            placeholder="cn=admin,dc=example,dc=com"
+            class="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground focus:border-primary focus:outline-none"
+          />
+        </div>
+
+        <!-- Bind Password -->
+        <div>
+          <label class="block text-sm font-medium text-foreground mb-1">
+            {$language === 'es' ? 'Contraseña de enlace' : 'Bind Password'}
+          </label>
+          <input
+            type="password"
+            bind:value={ldapConfig.bindPassword}
+            placeholder={$language === 'es' ? 'Dejar vacío para conservar la actual' : 'Leave empty to keep current'}
+            class="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground focus:border-primary focus:outline-none"
+          />
+        </div>
+
+        <!-- Base DN -->
+        <div>
+          <label class="block text-sm font-medium text-foreground mb-1">
+            {$language === 'es' ? 'DN base' : 'Base DN'}
+          </label>
+          <input
+            type="text"
+            bind:value={ldapConfig.baseDN}
+            placeholder="dc=example,dc=com"
+            class="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground focus:border-primary focus:outline-none"
+          />
+        </div>
+
+        <!-- TLS Enabled toggle -->
+        <div class="flex items-center justify-between p-3 rounded-lg bg-background-tertiary/30 border border-border">
+          <div>
+            <p class="text-sm font-medium text-foreground">
+              {$language === 'es' ? 'TLS habilitado' : 'TLS Enabled'}
+            </p>
+            <p class="text-xs text-foreground-muted">
+              {$language === 'es' ? 'Usar ldaps:// para conexión segura' : 'Use ldaps:// for a secure connection'}
+            </p>
+          </div>
+          <button
+            class="relative w-11 h-6 rounded-full transition-colors {ldapConfig.tlsEnabled ? 'bg-primary' : 'bg-background-tertiary'}"
+            onclick={() => (ldapConfig.tlsEnabled = !ldapConfig.tlsEnabled)}
+            aria-label={ldapConfig.tlsEnabled ? 'Disable TLS' : 'Enable TLS'}
+          >
+            <span class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform shadow-sm {ldapConfig.tlsEnabled ? 'translate-x-5' : ''}"></span>
+          </button>
+        </div>
+
+        <!-- StartTLS toggle -->
+        <div class="flex items-center justify-between p-3 rounded-lg bg-background-tertiary/30 border border-border">
+          <div>
+            <p class="text-sm font-medium text-foreground">StartTLS</p>
+            <p class="text-xs text-foreground-muted">
+              {$language === 'es' ? 'Actualizar conexión LDAP sin cifrar a TLS' : 'Upgrade plain LDAP connection to TLS'}
+            </p>
+          </div>
+          <button
+            class="relative w-11 h-6 rounded-full transition-colors {ldapConfig.startTLS ? 'bg-primary' : 'bg-background-tertiary'}"
+            onclick={() => (ldapConfig.startTLS = !ldapConfig.startTLS)}
+            aria-label={ldapConfig.startTLS ? 'Disable StartTLS' : 'Enable StartTLS'}
+          >
+            <span class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform shadow-sm {ldapConfig.startTLS ? 'translate-x-5' : ''}"></span>
+          </button>
+        </div>
+
+        <!-- Auto-create users toggle -->
+        <div class="flex items-center justify-between p-3 rounded-lg bg-background-tertiary/30 border border-border">
+          <div>
+            <p class="text-sm font-medium text-foreground">
+              {$language === 'es' ? 'Crear usuarios automáticamente' : 'Auto-create users'}
+            </p>
+            <p class="text-xs text-foreground-muted">
+              {$language === 'es' ? 'Crear cuenta local al primer inicio de sesión LDAP' : 'Create a local account on first LDAP login'}
+            </p>
+          </div>
+          <button
+            class="relative w-11 h-6 rounded-full transition-colors {ldapConfig.autoCreateUsers ? 'bg-primary' : 'bg-background-tertiary'}"
+            onclick={() => (ldapConfig.autoCreateUsers = !ldapConfig.autoCreateUsers)}
+            aria-label={ldapConfig.autoCreateUsers ? 'Disable auto-create' : 'Enable auto-create'}
+          >
+            <span class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform shadow-sm {ldapConfig.autoCreateUsers ? 'translate-x-5' : ''}"></span>
+          </button>
+        </div>
+
+        <!-- Advanced fields toggle -->
+        <button
+          onclick={() => (ldapShowAdvanced = !ldapShowAdvanced)}
+          class="w-full py-2 border border-border text-foreground-muted rounded-lg hover:bg-background-tertiary transition-colors text-sm flex items-center justify-center gap-2"
+        >
+          {ldapShowAdvanced
+            ? ($language === 'es' ? 'Ocultar campos avanzados' : 'Hide advanced fields')
+            : ($language === 'es' ? 'Mostrar campos avanzados' : 'Show advanced fields')}
+        </button>
+
+        {#if ldapShowAdvanced}
+          <div class="space-y-3 p-3 rounded-lg bg-background-tertiary/20 border border-border">
+            <p class="text-xs font-medium text-foreground-muted uppercase tracking-wide">
+              {$language === 'es' ? 'Campos avanzados' : 'Advanced fields'}
+            </p>
+
+            <div>
+              <label class="block text-sm font-medium text-foreground mb-1">
+                {$language === 'es' ? 'Filtro de usuario' : 'User Filter'}
+              </label>
+              <input
+                type="text"
+                bind:value={ldapConfig.userFilter}
+                placeholder="(uid=%s)"
+                class="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground focus:border-primary focus:outline-none"
+              />
+            </div>
+
+            <div class="grid grid-cols-3 gap-2">
+              <div>
+                <label class="block text-sm font-medium text-foreground mb-1">
+                  {$language === 'es' ? 'Atrib. usuario' : 'Username Attr'}
+                </label>
+                <input
+                  type="text"
+                  bind:value={ldapConfig.usernameAttr}
+                  placeholder="uid"
+                  class="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground focus:border-primary focus:outline-none"
+                />
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-foreground mb-1">
+                  {$language === 'es' ? 'Atrib. email' : 'Email Attr'}
+                </label>
+                <input
+                  type="text"
+                  bind:value={ldapConfig.emailAttr}
+                  placeholder="mail"
+                  class="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground focus:border-primary focus:outline-none"
+                />
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-foreground mb-1">
+                  {$language === 'es' ? 'Atrib. nombre' : 'Display Name Attr'}
+                </label>
+                <input
+                  type="text"
+                  bind:value={ldapConfig.displayNameAttr}
+                  placeholder="cn"
+                  class="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground focus:border-primary focus:outline-none"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label class="block text-sm font-medium text-foreground mb-1">
+                {$language === 'es' ? 'DN base de grupos' : 'Group Base DN'}
+              </label>
+              <input
+                type="text"
+                bind:value={ldapConfig.groupBaseDN}
+                placeholder="ou=groups,dc=example,dc=com"
+                class="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground focus:border-primary focus:outline-none"
+              />
+            </div>
+
+            <div>
+              <label class="block text-sm font-medium text-foreground mb-1">
+                {$language === 'es' ? 'Filtro de grupo' : 'Group Filter'}
+              </label>
+              <input
+                type="text"
+                bind:value={ldapConfig.groupFilter}
+                placeholder="(member=%s)"
+                class="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground focus:border-primary focus:outline-none"
+              />
+            </div>
+
+            <div>
+              <label class="block text-sm font-medium text-foreground mb-1">
+                {$language === 'es' ? 'Grupo de administradores' : 'Admin Group'}
+              </label>
+              <input
+                type="text"
+                bind:value={ldapConfig.adminGroup}
+                placeholder="cn=admins,ou=groups,dc=example,dc=com"
+                class="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground focus:border-primary focus:outline-none"
+              />
+            </div>
+          </div>
+        {/if}
+
+        <!-- Test Connection + Save buttons -->
+        <div class="flex gap-2">
+          <button
+            onclick={testLdapConnection}
+            disabled={ldapTesting || !ldapConfig.serverURL}
+            class="flex-1 py-2 border border-border text-foreground rounded-lg hover:bg-background-tertiary transition-colors disabled:opacity-50 flex items-center justify-center gap-2 text-sm"
+          >
+            {#if ldapTesting}
+              <RefreshCw class="w-4 h-4 animate-spin" />
+            {:else}
+              <Server class="w-4 h-4" />
+            {/if}
+            {$language === 'es' ? 'Probar conexión' : 'Test Connection'}
+          </button>
+
+          <button
+            onclick={saveLdapConfig}
+            disabled={ldapLoading}
+            class="flex-1 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2 text-sm"
+          >
+            {#if ldapLoading}
+              <RefreshCw class="w-4 h-4 animate-spin" />
+              {$language === 'es' ? 'Guardando...' : 'Saving...'}
+            {:else}
+              {st.save}
+            {/if}
+          </button>
+        </div>
+      {/if}
+    </div>
+
+    <hr class="border-border" />
+  {/if}
+
+  <!-- OIDC Configuration (admin only) -->
+  {#if isAdmin}
+    <div class="space-y-4">
+      <h3 class="text-lg font-semibold text-foreground flex items-center gap-2">
+        <Key class="w-5 h-5 text-primary" />
+        {$language === 'es' ? 'Configuración OIDC' : 'OIDC Configuration'}
+      </h3>
+
+      {#if oidcSaved}
+        <div class="flex items-center gap-2 p-3 bg-running/10 border border-running/30 rounded-lg text-running text-sm">
+          <Check class="w-4 h-4" />
+          {$language === 'es' ? 'Guardado correctamente' : 'Saved successfully'}
+        </div>
+      {/if}
+
+      {#if oidcError}
+        <div class="flex items-center gap-2 p-3 bg-stopped/10 border border-stopped/30 rounded-lg text-stopped text-sm">
+          <AlertTriangle class="w-4 h-4" />
+          {oidcError}
+        </div>
+      {/if}
+
+      <!-- Enable toggle -->
+      <div class="flex items-center justify-between p-3 rounded-lg bg-background-tertiary/30 border border-border">
+        <div>
+          <p class="text-sm font-medium text-foreground">
+            {$language === 'es' ? 'Habilitar OIDC' : 'Enable OIDC'}
+          </p>
+          <p class="text-xs text-foreground-muted">
+            {$language === 'es'
+              ? 'Autenticar usuarios mediante un proveedor OIDC (Google, Keycloak, Auth0…)'
+              : 'Authenticate users via an OIDC provider (Google, Keycloak, Auth0…)'}
+          </p>
+        </div>
+        <button
+          class="relative w-11 h-6 rounded-full transition-colors {oidcConfig.enabled ? 'bg-primary' : 'bg-background-tertiary'}"
+          onclick={() => (oidcConfig.enabled = !oidcConfig.enabled)}
+          aria-label={oidcConfig.enabled ? 'Disable OIDC' : 'Enable OIDC'}
+        >
+          <span class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform shadow-sm {oidcConfig.enabled ? 'translate-x-5' : ''}"></span>
+        </button>
+      </div>
+
+      {#if oidcConfig.enabled}
+        <div>
+          <label class="block text-sm font-medium text-foreground mb-1">
+            {$language === 'es' ? 'URL del proveedor' : 'Provider URL'}
+          </label>
+          <input
+            type="url"
+            bind:value={oidcConfig.providerURL}
+            placeholder="https://accounts.google.com"
+            class="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground focus:border-primary focus:outline-none"
+          />
+          <p class="text-xs text-foreground-muted mt-1">
+            {$language === 'es' ? 'URL base del proveedor (se usará para descubrimiento automático)' : 'Base URL of the provider (used for auto-discovery)'}
+          </p>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-sm font-medium text-foreground mb-1">Client ID</label>
+            <input
+              type="text"
+              bind:value={oidcConfig.clientId}
+              placeholder="your-client-id"
+              class="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground focus:border-primary focus:outline-none"
+            />
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-foreground mb-1">Client Secret</label>
+            <input
+              type="password"
+              bind:value={oidcConfig.clientSecret}
+              placeholder={$language === 'es' ? 'Dejar vacío para conservar' : 'Leave empty to keep current'}
+              class="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground focus:border-primary focus:outline-none"
+            />
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium text-foreground mb-1">
+            {$language === 'es' ? 'URL de redirección (Redirect URI)' : 'Redirect URI'}
+          </label>
+          <input
+            type="url"
+            bind:value={oidcConfig.redirectURL}
+            placeholder="http://localhost:3007/auth/oidc/callback"
+            class="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground focus:border-primary focus:outline-none"
+          />
+        </div>
+
+        <!-- Auto-create users -->
+        <div class="flex items-center justify-between p-3 rounded-lg bg-background-tertiary/30 border border-border">
+          <div>
+            <p class="text-sm font-medium text-foreground">
+              {$language === 'es' ? 'Crear usuarios automáticamente' : 'Auto-create users'}
+            </p>
+            <p class="text-xs text-foreground-muted">
+              {$language === 'es' ? 'Crear cuenta local al primer inicio de sesión OIDC' : 'Create a local account on first OIDC login'}
+            </p>
+          </div>
+          <button
+            class="relative w-11 h-6 rounded-full transition-colors {oidcConfig.autoCreateUsers ? 'bg-primary' : 'bg-background-tertiary'}"
+            onclick={() => (oidcConfig.autoCreateUsers = !oidcConfig.autoCreateUsers)}
+            aria-label={oidcConfig.autoCreateUsers ? 'Disable auto-create' : 'Enable auto-create'}
+          >
+            <span class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform shadow-sm {oidcConfig.autoCreateUsers ? 'translate-x-5' : ''}"></span>
+          </button>
+        </div>
+
+        <!-- Admin group claim -->
+        <div class="grid grid-cols-2 gap-3 p-3 rounded-lg bg-background-tertiary/20 border border-border">
+          <div>
+            <label class="block text-sm font-medium text-foreground mb-1">
+              {$language === 'es' ? 'Claim de grupo admin' : 'Admin group claim'}
+            </label>
+            <input
+              type="text"
+              bind:value={oidcConfig.adminGroupClaim}
+              placeholder="groups"
+              class="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground focus:border-primary focus:outline-none"
+            />
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-foreground mb-1">
+              {$language === 'es' ? 'Valor del grupo admin' : 'Admin group value'}
+            </label>
+            <input
+              type="text"
+              bind:value={oidcConfig.adminGroupValue}
+              placeholder="admins"
+              class="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground focus:border-primary focus:outline-none"
+            />
+          </div>
+        </div>
+
+        <button
+          onclick={saveOidcConfig}
+          disabled={oidcLoading}
+          class="w-full py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+        >
+          {#if oidcLoading}
+            <RefreshCw class="w-4 h-4 animate-spin" />
+            {$language === 'es' ? 'Guardando...' : 'Saving...'}
+          {:else}
+            {st.save}
+          {/if}
+        </button>
+      {/if}
+    </div>
+
+    <hr class="border-border" />
+  {/if}
+
   <!-- Auto-Logout Section -->
   <div class="space-y-4">
     <h3 class="text-lg font-semibold text-foreground flex items-center gap-2">
@@ -542,6 +1407,83 @@
           {$language === 'es' ? 'Entendido, los guardé' : 'Got it, I saved them'}
         </button>
       </div>
+    {/if}
+  </div>
+
+  <hr class="border-border" />
+
+  <!-- API Keys Section -->
+  <div class="space-y-4" id="api-keys-section">
+    <h3 class="text-lg font-semibold text-foreground flex items-center gap-2">
+      <Key class="w-5 h-5 text-primary" />
+      {$language === 'es' ? 'Claves de API' : 'API Keys'}
+    </h3>
+    <p class="text-sm text-foreground-muted">
+      {$language === 'es'
+        ? 'Genera claves para acceder a la API sin contraseña (scripts, CI/CD).'
+        : 'Generate keys for passwordless API access (scripts, CI/CD pipelines).'}
+    </p>
+
+    {#if apiKeyCreated}
+      <div class="p-3 bg-running/10 border border-running/30 rounded-lg space-y-2">
+        <p class="text-sm font-medium text-running">
+          {$language === 'es' ? '¡Copia tu clave ahora! No se mostrará de nuevo.' : 'Copy your key now — it will not be shown again.'}
+        </p>
+        <div class="flex gap-2">
+          <code class="flex-1 px-3 py-2 bg-background border border-border rounded-lg text-sm font-mono break-all select-all">{apiKeyCreated}</code>
+          <button
+            onclick={() => { navigator.clipboard.writeText(apiKeyCreated); }}
+            class="px-3 py-2 bg-primary text-white rounded-lg text-sm hover:bg-primary/90 transition-colors shrink-0"
+          >{$language === 'es' ? 'Copiar' : 'Copy'}</button>
+        </div>
+        <button onclick={() => (apiKeyCreated = '')} class="text-xs text-foreground-muted hover:text-foreground transition-colors">
+          {$language === 'es' ? 'Entendido, la guardé' : 'Got it, I saved it'}
+        </button>
+      </div>
+    {/if}
+
+    {#if apiKeyError}
+      <div class="p-3 bg-stopped/10 border border-stopped/30 rounded-lg text-stopped text-sm">{apiKeyError}</div>
+    {/if}
+
+    <!-- Create new key -->
+    <div class="flex gap-2">
+      <input
+        type="text"
+        bind:value={apiKeyDesc}
+        placeholder={$language === 'es' ? 'Descripción (ej: CI/CD)' : 'Description (e.g., CI/CD)'}
+        class="flex-1 px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground focus:border-primary focus:outline-none"
+      />
+      <button
+        onclick={createApiKey}
+        disabled={apiKeyLoading || !apiKeyDesc}
+        class="px-4 py-2 bg-primary text-white rounded-lg text-sm hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-2"
+      >
+        {#if apiKeyLoading}<RefreshCw class="w-4 h-4 animate-spin" />{/if}
+        {$language === 'es' ? 'Crear' : 'Create'}
+      </button>
+    </div>
+
+    <!-- Existing keys -->
+    {#if apiKeys.length > 0}
+      <div class="space-y-2">
+        {#each apiKeys as key}
+          <div class="flex items-center justify-between p-3 rounded-lg bg-background-tertiary/30 border border-border">
+            <div>
+              <p class="text-sm font-medium text-foreground">{key.description}</p>
+              <p class="text-xs text-foreground-muted font-mono">{key.prefix}… · {new Date(key.createdAt).toLocaleDateString()}</p>
+            </div>
+            <button
+              onclick={() => deleteApiKey(key.id)}
+              class="px-3 py-1.5 text-xs border border-stopped/50 text-stopped rounded-lg hover:bg-stopped/10 transition-colors"
+            >{$language === 'es' ? 'Revocar' : 'Revoke'}</button>
+          </div>
+        {/each}
+      </div>
+    {:else}
+      <p class="text-sm text-foreground-muted italic">
+        {$language === 'es' ? 'Sin claves de API. Crea una arriba.' : 'No API keys. Create one above.'}
+      </p>
     {/if}
   </div>
 </div>

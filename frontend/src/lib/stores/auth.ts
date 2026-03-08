@@ -421,6 +421,16 @@ function createAuthStore() {
 			return state.user?.roles.includes(role) || false;
 		},
 
+		// Handle OIDC callback — save tokens returned by backend
+		handleOidcCallback: async (data: { user: any; tokens: AuthTokens }) => {
+			const user = { ...data.user, roles: data.user.role ? [data.user.role] : ['user'] };
+			const newState = { user, tokens: data.tokens, isAuthenticated: true, isLoading: false, error: null };
+			update(() => newState);
+			if (data.tokens.accessToken) localStorage.setItem('auth_access_token', data.tokens.accessToken);
+			if (data.tokens.refreshToken) localStorage.setItem('auth_refresh_token', data.tokens.refreshToken);
+			localStorage.setItem('auth', JSON.stringify(newState));
+		},
+
 		// Clear error
 		clearError: () => {
 			update(s => ({ ...s, error: null }));

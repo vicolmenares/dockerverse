@@ -16,6 +16,36 @@
     Shield,
   } from "lucide-svelte";
 
+  // OIDC providers
+  let oidcEnabled = $state(false);
+  let oidcLoading = $state(false);
+
+  async function loadProviders() {
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/providers`);
+      if (res.ok) {
+        const data = await res.json();
+        oidcEnabled = data.providers?.some((p: { id: string }) => p.id === 'oidc') ?? false;
+      }
+    } catch { /* non-critical */ }
+  }
+
+  async function loginWithOidc() {
+    oidcLoading = true;
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/oidc/start`, { method: 'POST' });
+      if (res.ok) {
+        const data = await res.json();
+        window.location.href = data.redirectURL;
+      }
+    } catch {
+      error = lt.errorNetwork;
+      oidcLoading = false;
+    }
+  }
+
+  $effect(() => { loadProviders(); });
+
   let username = $state("");
   let password = $state("");
   let rememberMe = $state(false);
@@ -556,7 +586,29 @@
               </button>
             </div>
 
-            <!-- Submit Button -->
+            <!-- OIDC Sign In -->
+          {#if oidcEnabled}
+            <div class="relative flex items-center gap-3">
+              <div class="flex-1 border-t border-border"></div>
+              <span class="text-xs text-foreground-muted">{$language === 'es' ? 'o continuar con' : 'or continue with'}</span>
+              <div class="flex-1 border-t border-border"></div>
+            </div>
+            <button
+              type="button"
+              onclick={loginWithOidc}
+              disabled={oidcLoading}
+              class="w-full py-3 border border-border text-foreground rounded-lg hover:bg-background-tertiary transition-colors disabled:opacity-50 flex items-center justify-center gap-2 font-medium"
+            >
+              {#if oidcLoading}
+                <Loader2 class="w-5 h-5 animate-spin" />
+              {:else}
+                <Shield class="w-5 h-5" />
+              {/if}
+              {$language === 'es' ? 'Iniciar sesión con OIDC' : 'Sign in with OIDC'}
+            </button>
+          {/if}
+
+          <!-- Submit Button -->
             <button
               type="submit"
               disabled={isLoading || !username || !password}
