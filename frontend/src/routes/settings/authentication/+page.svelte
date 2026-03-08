@@ -417,11 +417,79 @@
     return `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(otpauthUrl)}`;
   }
 
+  // ── Admin: OIDC Config ───────────────────────────────────────────────────────
+  type OidcConfig = {
+    enabled: boolean;
+    providerURL: string;
+    clientId: string;
+    clientSecret: string;
+    scopes: string[];
+    redirectURL: string;
+    autoCreateUsers: boolean;
+    adminGroupClaim: string;
+    adminGroupValue: string;
+  };
+
+  let oidcConfig = $state<OidcConfig>({
+    enabled: false,
+    providerURL: '',
+    clientId: '',
+    clientSecret: '',
+    scopes: ['openid', 'email', 'profile'],
+    redirectURL: '',
+    autoCreateUsers: false,
+    adminGroupClaim: '',
+    adminGroupValue: '',
+  });
+  let oidcLoading = $state(false);
+  let oidcSaved = $state(false);
+  let oidcError = $state<string | null>(null);
+
+  async function loadOidcConfig() {
+    if (!isAdmin) return;
+    const token = localStorage.getItem('auth_access_token');
+    try {
+      const res = await fetch(`${API_BASE}/api/settings/oidc`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        oidcConfig = { ...oidcConfig, ...data, clientSecret: '' };
+      }
+    } catch { /* non-critical */ }
+  }
+
+  async function saveOidcConfig() {
+    oidcLoading = true;
+    oidcError = null;
+    const token = localStorage.getItem('auth_access_token');
+    try {
+      const res = await fetch(`${API_BASE}/api/settings/oidc`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(oidcConfig),
+      });
+      if (res.ok) {
+        oidcSaved = true;
+        oidcConfig.clientSecret = '';
+        setTimeout(() => (oidcSaved = false), 3000);
+      } else {
+        const err = await res.json();
+        oidcError = err.error || 'Failed to save';
+      }
+    } catch {
+      oidcError = 'Connection error';
+    } finally {
+      oidcLoading = false;
+    }
+  }
+
   // Load on mount
   $effect(() => {
     loadTOTPStatus();
     loadAuthConfig();
     loadLdapConfig();
+    loadOidcConfig();
   });
 </script>
 
@@ -852,6 +920,161 @@
             {/if}
           </button>
         </div>
+      {/if}
+    </div>
+
+    <hr class="border-border" />
+  {/if}
+
+  <!-- OIDC Configuration (admin only) -->
+  {#if isAdmin}
+    <div class="space-y-4">
+      <h3 class="text-lg font-semibold text-foreground flex items-center gap-2">
+        <Key class="w-5 h-5 text-primary" />
+        {$language === 'es' ? 'Configuración OIDC' : 'OIDC Configuration'}
+      </h3>
+
+      {#if oidcSaved}
+        <div class="flex items-center gap-2 p-3 bg-running/10 border border-running/30 rounded-lg text-running text-sm">
+          <Check class="w-4 h-4" />
+          {$language === 'es' ? 'Guardado correctamente' : 'Saved successfully'}
+        </div>
+      {/if}
+
+      {#if oidcError}
+        <div class="flex items-center gap-2 p-3 bg-stopped/10 border border-stopped/30 rounded-lg text-stopped text-sm">
+          <AlertTriangle class="w-4 h-4" />
+          {oidcError}
+        </div>
+      {/if}
+
+      <!-- Enable toggle -->
+      <div class="flex items-center justify-between p-3 rounded-lg bg-background-tertiary/30 border border-border">
+        <div>
+          <p class="text-sm font-medium text-foreground">
+            {$language === 'es' ? 'Habilitar OIDC' : 'Enable OIDC'}
+          </p>
+          <p class="text-xs text-foreground-muted">
+            {$language === 'es'
+              ? 'Autenticar usuarios mediante un proveedor OIDC (Google, Keycloak, Auth0…)'
+              : 'Authenticate users via an OIDC provider (Google, Keycloak, Auth0…)'}
+          </p>
+        </div>
+        <button
+          class="relative w-11 h-6 rounded-full transition-colors {oidcConfig.enabled ? 'bg-primary' : 'bg-background-tertiary'}"
+          onclick={() => (oidcConfig.enabled = !oidcConfig.enabled)}
+          aria-label={oidcConfig.enabled ? 'Disable OIDC' : 'Enable OIDC'}
+        >
+          <span class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform shadow-sm {oidcConfig.enabled ? 'translate-x-5' : ''}"></span>
+        </button>
+      </div>
+
+      {#if oidcConfig.enabled}
+        <div>
+          <label class="block text-sm font-medium text-foreground mb-1">
+            {$language === 'es' ? 'URL del proveedor' : 'Provider URL'}
+          </label>
+          <input
+            type="url"
+            bind:value={oidcConfig.providerURL}
+            placeholder="https://accounts.google.com"
+            class="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground focus:border-primary focus:outline-none"
+          />
+          <p class="text-xs text-foreground-muted mt-1">
+            {$language === 'es' ? 'URL base del proveedor (se usará para descubrimiento automático)' : 'Base URL of the provider (used for auto-discovery)'}
+          </p>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-sm font-medium text-foreground mb-1">Client ID</label>
+            <input
+              type="text"
+              bind:value={oidcConfig.clientId}
+              placeholder="your-client-id"
+              class="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground focus:border-primary focus:outline-none"
+            />
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-foreground mb-1">Client Secret</label>
+            <input
+              type="password"
+              bind:value={oidcConfig.clientSecret}
+              placeholder={$language === 'es' ? 'Dejar vacío para conservar' : 'Leave empty to keep current'}
+              class="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground focus:border-primary focus:outline-none"
+            />
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium text-foreground mb-1">
+            {$language === 'es' ? 'URL de redirección (Redirect URI)' : 'Redirect URI'}
+          </label>
+          <input
+            type="url"
+            bind:value={oidcConfig.redirectURL}
+            placeholder="http://localhost:3007/auth/oidc/callback"
+            class="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground focus:border-primary focus:outline-none"
+          />
+        </div>
+
+        <!-- Auto-create users -->
+        <div class="flex items-center justify-between p-3 rounded-lg bg-background-tertiary/30 border border-border">
+          <div>
+            <p class="text-sm font-medium text-foreground">
+              {$language === 'es' ? 'Crear usuarios automáticamente' : 'Auto-create users'}
+            </p>
+            <p class="text-xs text-foreground-muted">
+              {$language === 'es' ? 'Crear cuenta local al primer inicio de sesión OIDC' : 'Create a local account on first OIDC login'}
+            </p>
+          </div>
+          <button
+            class="relative w-11 h-6 rounded-full transition-colors {oidcConfig.autoCreateUsers ? 'bg-primary' : 'bg-background-tertiary'}"
+            onclick={() => (oidcConfig.autoCreateUsers = !oidcConfig.autoCreateUsers)}
+            aria-label={oidcConfig.autoCreateUsers ? 'Disable auto-create' : 'Enable auto-create'}
+          >
+            <span class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform shadow-sm {oidcConfig.autoCreateUsers ? 'translate-x-5' : ''}"></span>
+          </button>
+        </div>
+
+        <!-- Admin group claim -->
+        <div class="grid grid-cols-2 gap-3 p-3 rounded-lg bg-background-tertiary/20 border border-border">
+          <div>
+            <label class="block text-sm font-medium text-foreground mb-1">
+              {$language === 'es' ? 'Claim de grupo admin' : 'Admin group claim'}
+            </label>
+            <input
+              type="text"
+              bind:value={oidcConfig.adminGroupClaim}
+              placeholder="groups"
+              class="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground focus:border-primary focus:outline-none"
+            />
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-foreground mb-1">
+              {$language === 'es' ? 'Valor del grupo admin' : 'Admin group value'}
+            </label>
+            <input
+              type="text"
+              bind:value={oidcConfig.adminGroupValue}
+              placeholder="admins"
+              class="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground focus:border-primary focus:outline-none"
+            />
+          </div>
+        </div>
+
+        <button
+          onclick={saveOidcConfig}
+          disabled={oidcLoading}
+          class="w-full py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+        >
+          {#if oidcLoading}
+            <RefreshCw class="w-4 h-4 animate-spin" />
+            {$language === 'es' ? 'Guardando...' : 'Saving...'}
+          {:else}
+            {st.save}
+          {/if}
+        </button>
       {/if}
     </div>
 
