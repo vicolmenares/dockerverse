@@ -9,6 +9,7 @@
     Settings,
     AlertTriangle,
     Clock,
+    Server,
   } from 'lucide-svelte';
   import { language } from '$lib/stores/docker';
   import {
@@ -77,6 +78,113 @@
       authConfigError = 'Connection error';
     } finally {
       authConfigLoading = false;
+    }
+  }
+
+  // ── Admin: LDAP Config ───────────────────────────────────────────────────────
+  type LdapConfig = {
+    enabled: boolean;
+    serverURL: string;
+    bindDN: string;
+    bindPassword: string;
+    baseDN: string;
+    userFilter: string;
+    usernameAttr: string;
+    emailAttr: string;
+    displayNameAttr: string;
+    groupBaseDN: string;
+    groupFilter: string;
+    adminGroup: string;
+    autoCreateUsers: boolean;
+    tlsEnabled: boolean;
+    startTLS: boolean;
+  };
+
+  let ldapConfig = $state<LdapConfig>({
+    enabled: false,
+    serverURL: '',
+    bindDN: '',
+    bindPassword: '',
+    baseDN: '',
+    userFilter: '(uid=%s)',
+    usernameAttr: 'uid',
+    emailAttr: 'mail',
+    displayNameAttr: 'cn',
+    groupBaseDN: '',
+    groupFilter: '',
+    adminGroup: '',
+    autoCreateUsers: false,
+    tlsEnabled: false,
+    startTLS: false,
+  });
+  let ldapLoading = $state(false);
+  let ldapSaved = $state(false);
+  let ldapError = $state<string | null>(null);
+  let ldapTestResult = $state<{ success: boolean; message: string } | null>(null);
+  let ldapTesting = $state(false);
+  let ldapShowAdvanced = $state(false);
+
+  async function loadLdapConfig() {
+    if (!isAdmin) return;
+    const token = localStorage.getItem('auth_access_token');
+    try {
+      const res = await fetch(`${API_BASE}/api/settings/ldap`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        ldapConfig = { ...ldapConfig, ...data, bindPassword: '' };
+      }
+    } catch {
+      // non-critical
+    }
+  }
+
+  async function saveLdapConfig() {
+    ldapLoading = true;
+    ldapError = null;
+    ldapSaved = false;
+    const token = localStorage.getItem('auth_access_token');
+    try {
+      const res = await fetch(`${API_BASE}/api/settings/ldap`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(ldapConfig),
+      });
+      if (res.ok) {
+        ldapSaved = true;
+        ldapConfig.bindPassword = '';
+        setTimeout(() => (ldapSaved = false), 3000);
+      } else {
+        const err = await res.json();
+        ldapError = err.error || ($language === 'es' ? 'Error al guardar' : 'Failed to save');
+      }
+    } catch {
+      ldapError = $language === 'es' ? 'Error de conexión' : 'Connection error';
+    } finally {
+      ldapLoading = false;
+    }
+  }
+
+  async function testLdapConnection() {
+    ldapTesting = true;
+    ldapTestResult = null;
+    const token = localStorage.getItem('auth_access_token');
+    try {
+      const res = await fetch(`${API_BASE}/api/settings/ldap/test`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        ldapTestResult = { success: true, message: data.message || ($language === 'es' ? 'Conexión exitosa' : 'Connection successful') };
+      } else {
+        ldapTestResult = { success: false, message: data.error || ($language === 'es' ? 'Falló la conexión' : 'Connection failed') };
+      }
+    } catch {
+      ldapTestResult = { success: false, message: $language === 'es' ? 'Error de conexión' : 'Connection error' };
+    } finally {
+      ldapTesting = false;
     }
   }
 
@@ -313,6 +421,7 @@
   $effect(() => {
     loadTOTPStatus();
     loadAuthConfig();
+    loadLdapConfig();
   });
 </script>
 
@@ -448,6 +557,302 @@
           {st.save}
         {/if}
       </button>
+    </div>
+
+    <hr class="border-border" />
+  {/if}
+
+  <!-- LDAP Configuration (admin only) -->
+  {#if isAdmin}
+    <div class="space-y-4">
+      <h3 class="text-lg font-semibold text-foreground flex items-center gap-2">
+        <Server class="w-5 h-5 text-primary" />
+        {$language === 'es' ? 'Configuración LDAP' : 'LDAP Configuration'}
+      </h3>
+
+      {#if ldapSaved}
+        <div class="flex items-center gap-2 p-3 bg-running/10 border border-running/30 rounded-lg text-running text-sm">
+          <Check class="w-4 h-4" />
+          {$language === 'es' ? 'Guardado correctamente' : 'Saved successfully'}
+        </div>
+      {/if}
+
+      {#if ldapError}
+        <div class="flex items-center gap-2 p-3 bg-stopped/10 border border-stopped/30 rounded-lg text-stopped text-sm">
+          <AlertTriangle class="w-4 h-4" />
+          {ldapError}
+        </div>
+      {/if}
+
+      {#if ldapTestResult}
+        <div class="flex items-center gap-2 p-3 rounded-lg text-sm {ldapTestResult.success ? 'bg-running/10 border border-running/30 text-running' : 'bg-stopped/10 border border-stopped/30 text-stopped'}">
+          {#if ldapTestResult.success}
+            <Check class="w-4 h-4 shrink-0" />
+          {:else}
+            <AlertTriangle class="w-4 h-4 shrink-0" />
+          {/if}
+          {ldapTestResult.message}
+        </div>
+      {/if}
+
+      <!-- Enable toggle -->
+      <div class="flex items-center justify-between p-3 rounded-lg bg-background-tertiary/30 border border-border">
+        <div>
+          <p class="text-sm font-medium text-foreground">
+            {$language === 'es' ? 'Habilitar LDAP' : 'Enable LDAP'}
+          </p>
+          <p class="text-xs text-foreground-muted">
+            {$language === 'es' ? 'Autenticar usuarios mediante un servidor LDAP' : 'Authenticate users via an LDAP server'}
+          </p>
+        </div>
+        <button
+          class="relative w-11 h-6 rounded-full transition-colors {ldapConfig.enabled ? 'bg-primary' : 'bg-background-tertiary'}"
+          onclick={() => (ldapConfig.enabled = !ldapConfig.enabled)}
+          aria-label={ldapConfig.enabled ? 'Disable LDAP' : 'Enable LDAP'}
+        >
+          <span class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform shadow-sm {ldapConfig.enabled ? 'translate-x-5' : ''}"></span>
+        </button>
+      </div>
+
+      {#if ldapConfig.enabled}
+        <!-- Server URL -->
+        <div>
+          <label class="block text-sm font-medium text-foreground mb-1">
+            {$language === 'es' ? 'URL del servidor' : 'Server URL'}
+          </label>
+          <input
+            type="text"
+            bind:value={ldapConfig.serverURL}
+            placeholder="ldap://192.168.1.1:389"
+            class="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground focus:border-primary focus:outline-none"
+          />
+        </div>
+
+        <!-- Bind DN -->
+        <div>
+          <label class="block text-sm font-medium text-foreground mb-1">
+            {$language === 'es' ? 'DN de enlace' : 'Bind DN'}
+          </label>
+          <input
+            type="text"
+            bind:value={ldapConfig.bindDN}
+            placeholder="cn=admin,dc=example,dc=com"
+            class="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground focus:border-primary focus:outline-none"
+          />
+        </div>
+
+        <!-- Bind Password -->
+        <div>
+          <label class="block text-sm font-medium text-foreground mb-1">
+            {$language === 'es' ? 'Contraseña de enlace' : 'Bind Password'}
+          </label>
+          <input
+            type="password"
+            bind:value={ldapConfig.bindPassword}
+            placeholder={$language === 'es' ? 'Dejar vacío para conservar la actual' : 'Leave empty to keep current'}
+            class="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground focus:border-primary focus:outline-none"
+          />
+        </div>
+
+        <!-- Base DN -->
+        <div>
+          <label class="block text-sm font-medium text-foreground mb-1">
+            {$language === 'es' ? 'DN base' : 'Base DN'}
+          </label>
+          <input
+            type="text"
+            bind:value={ldapConfig.baseDN}
+            placeholder="dc=example,dc=com"
+            class="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground focus:border-primary focus:outline-none"
+          />
+        </div>
+
+        <!-- TLS Enabled toggle -->
+        <div class="flex items-center justify-between p-3 rounded-lg bg-background-tertiary/30 border border-border">
+          <div>
+            <p class="text-sm font-medium text-foreground">
+              {$language === 'es' ? 'TLS habilitado' : 'TLS Enabled'}
+            </p>
+            <p class="text-xs text-foreground-muted">
+              {$language === 'es' ? 'Usar ldaps:// para conexión segura' : 'Use ldaps:// for a secure connection'}
+            </p>
+          </div>
+          <button
+            class="relative w-11 h-6 rounded-full transition-colors {ldapConfig.tlsEnabled ? 'bg-primary' : 'bg-background-tertiary'}"
+            onclick={() => (ldapConfig.tlsEnabled = !ldapConfig.tlsEnabled)}
+            aria-label={ldapConfig.tlsEnabled ? 'Disable TLS' : 'Enable TLS'}
+          >
+            <span class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform shadow-sm {ldapConfig.tlsEnabled ? 'translate-x-5' : ''}"></span>
+          </button>
+        </div>
+
+        <!-- StartTLS toggle -->
+        <div class="flex items-center justify-between p-3 rounded-lg bg-background-tertiary/30 border border-border">
+          <div>
+            <p class="text-sm font-medium text-foreground">StartTLS</p>
+            <p class="text-xs text-foreground-muted">
+              {$language === 'es' ? 'Actualizar conexión LDAP sin cifrar a TLS' : 'Upgrade plain LDAP connection to TLS'}
+            </p>
+          </div>
+          <button
+            class="relative w-11 h-6 rounded-full transition-colors {ldapConfig.startTLS ? 'bg-primary' : 'bg-background-tertiary'}"
+            onclick={() => (ldapConfig.startTLS = !ldapConfig.startTLS)}
+            aria-label={ldapConfig.startTLS ? 'Disable StartTLS' : 'Enable StartTLS'}
+          >
+            <span class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform shadow-sm {ldapConfig.startTLS ? 'translate-x-5' : ''}"></span>
+          </button>
+        </div>
+
+        <!-- Auto-create users toggle -->
+        <div class="flex items-center justify-between p-3 rounded-lg bg-background-tertiary/30 border border-border">
+          <div>
+            <p class="text-sm font-medium text-foreground">
+              {$language === 'es' ? 'Crear usuarios automáticamente' : 'Auto-create users'}
+            </p>
+            <p class="text-xs text-foreground-muted">
+              {$language === 'es' ? 'Crear cuenta local al primer inicio de sesión LDAP' : 'Create a local account on first LDAP login'}
+            </p>
+          </div>
+          <button
+            class="relative w-11 h-6 rounded-full transition-colors {ldapConfig.autoCreateUsers ? 'bg-primary' : 'bg-background-tertiary'}"
+            onclick={() => (ldapConfig.autoCreateUsers = !ldapConfig.autoCreateUsers)}
+            aria-label={ldapConfig.autoCreateUsers ? 'Disable auto-create' : 'Enable auto-create'}
+          >
+            <span class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform shadow-sm {ldapConfig.autoCreateUsers ? 'translate-x-5' : ''}"></span>
+          </button>
+        </div>
+
+        <!-- Advanced fields toggle -->
+        <button
+          onclick={() => (ldapShowAdvanced = !ldapShowAdvanced)}
+          class="w-full py-2 border border-border text-foreground-muted rounded-lg hover:bg-background-tertiary transition-colors text-sm flex items-center justify-center gap-2"
+        >
+          {ldapShowAdvanced
+            ? ($language === 'es' ? 'Ocultar campos avanzados' : 'Hide advanced fields')
+            : ($language === 'es' ? 'Mostrar campos avanzados' : 'Show advanced fields')}
+        </button>
+
+        {#if ldapShowAdvanced}
+          <div class="space-y-3 p-3 rounded-lg bg-background-tertiary/20 border border-border">
+            <p class="text-xs font-medium text-foreground-muted uppercase tracking-wide">
+              {$language === 'es' ? 'Campos avanzados' : 'Advanced fields'}
+            </p>
+
+            <div>
+              <label class="block text-sm font-medium text-foreground mb-1">
+                {$language === 'es' ? 'Filtro de usuario' : 'User Filter'}
+              </label>
+              <input
+                type="text"
+                bind:value={ldapConfig.userFilter}
+                placeholder="(uid=%s)"
+                class="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground focus:border-primary focus:outline-none"
+              />
+            </div>
+
+            <div class="grid grid-cols-3 gap-2">
+              <div>
+                <label class="block text-sm font-medium text-foreground mb-1">
+                  {$language === 'es' ? 'Atrib. usuario' : 'Username Attr'}
+                </label>
+                <input
+                  type="text"
+                  bind:value={ldapConfig.usernameAttr}
+                  placeholder="uid"
+                  class="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground focus:border-primary focus:outline-none"
+                />
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-foreground mb-1">
+                  {$language === 'es' ? 'Atrib. email' : 'Email Attr'}
+                </label>
+                <input
+                  type="text"
+                  bind:value={ldapConfig.emailAttr}
+                  placeholder="mail"
+                  class="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground focus:border-primary focus:outline-none"
+                />
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-foreground mb-1">
+                  {$language === 'es' ? 'Atrib. nombre' : 'Display Name Attr'}
+                </label>
+                <input
+                  type="text"
+                  bind:value={ldapConfig.displayNameAttr}
+                  placeholder="cn"
+                  class="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground focus:border-primary focus:outline-none"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label class="block text-sm font-medium text-foreground mb-1">
+                {$language === 'es' ? 'DN base de grupos' : 'Group Base DN'}
+              </label>
+              <input
+                type="text"
+                bind:value={ldapConfig.groupBaseDN}
+                placeholder="ou=groups,dc=example,dc=com"
+                class="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground focus:border-primary focus:outline-none"
+              />
+            </div>
+
+            <div>
+              <label class="block text-sm font-medium text-foreground mb-1">
+                {$language === 'es' ? 'Filtro de grupo' : 'Group Filter'}
+              </label>
+              <input
+                type="text"
+                bind:value={ldapConfig.groupFilter}
+                placeholder="(member=%s)"
+                class="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground focus:border-primary focus:outline-none"
+              />
+            </div>
+
+            <div>
+              <label class="block text-sm font-medium text-foreground mb-1">
+                {$language === 'es' ? 'Grupo de administradores' : 'Admin Group'}
+              </label>
+              <input
+                type="text"
+                bind:value={ldapConfig.adminGroup}
+                placeholder="cn=admins,ou=groups,dc=example,dc=com"
+                class="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground focus:border-primary focus:outline-none"
+              />
+            </div>
+          </div>
+        {/if}
+
+        <!-- Test Connection + Save buttons -->
+        <div class="flex gap-2">
+          <button
+            onclick={testLdapConnection}
+            disabled={ldapTesting || !ldapConfig.serverURL}
+            class="flex-1 py-2 border border-border text-foreground rounded-lg hover:bg-background-tertiary transition-colors disabled:opacity-50 flex items-center justify-center gap-2 text-sm"
+          >
+            {#if ldapTesting}
+              <RefreshCw class="w-4 h-4 animate-spin" />
+            {:else}
+              <Server class="w-4 h-4" />
+            {/if}
+            {$language === 'es' ? 'Probar conexión' : 'Test Connection'}
+          </button>
+
+          <button
+            onclick={saveLdapConfig}
+            disabled={ldapLoading}
+            class="flex-1 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2 text-sm"
+          >
+            {#if ldapLoading}
+              <RefreshCw class="w-4 h-4 animate-spin" />
+              {$language === 'es' ? 'Guardando...' : 'Saving...'}
+            {:else}
+              {st.save}
+            {/if}
+          </button>
+        </div>
+      {/if}
     </div>
 
     <hr class="border-border" />
