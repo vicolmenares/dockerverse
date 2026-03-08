@@ -41,6 +41,8 @@ import (
 	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
 	ldap "github.com/go-ldap/ldap/v3"
+	gooidc "github.com/coreos/go-oidc/v3/oidc"
+	"golang.org/x/oauth2"
 	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/crypto/ssh"
 
@@ -3779,6 +3781,193 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 			providers = append(providers, fiber.Map{"id": "oidc", "name": "OIDC"})
 		}
 		return c.JSON(fiber.Map{"providers": providers, "default": authCfg.DefaultProvider})
+	})
+
+	// POST /api/auth/oidc/start — initiate OIDC login with PKCE
+	api.Post("/auth/oidc/start", func(c *fiber.Ctx) error {
+		if !oidcCfg.Enabled || oidcCfg.ProviderURL == "" || oidcCfg.ClientID == "" {
+			return c.Status(400).JSON(fiber.Map{"error": "OIDC not configured"})
+		}
+
+		// Generate PKCE code verifier (43-128 chars, base64url without padding)
+		verifierBytes := make([]byte, 32)
+		if _, err := rand.Read(verifierBytes); err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "failed to generate verifier"})
+		}
+		codeVerifier := base64.RawURLEncoding.EncodeToString(verifierBytes)
+
+		// code_challenge = BASE64URL(SHA256(code_verifier))
+		h := sha256.Sum256([]byte(codeVerifier))
+		codeChallenge := base64.RawURLEncoding.EncodeToString(h[:])
+
+		// Generate state
+		stateBytes := make([]byte, 16)
+		if _, err := rand.Read(stateBytes); err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "failed to generate state"})
+		}
+		state := base64.RawURLEncoding.EncodeToString(stateBytes)
+
+		// Store state -> verifier mapping (expires naturally when used or after TTL)
+		oidcStateMu.Lock()
+		oidcStates[state] = codeVerifier
+		oidcStateMu.Unlock()
+
+		// Build oauth2 config
+		scopes := oidcCfg.Scopes
+		if len(scopes) == 0 {
+			scopes = []string{"openid", "email", "profile"}
+		}
+		oauth2Config := oauth2.Config{
+			ClientID:     oidcCfg.ClientID,
+			ClientSecret: oidcCfg.ClientSecret,
+			RedirectURL:  oidcCfg.RedirectURL,
+			Scopes:       scopes,
+			Endpoint: oauth2.Endpoint{
+				AuthURL:  oidcCfg.ProviderURL + "/authorize",
+				TokenURL: oidcCfg.ProviderURL + "/token",
+			},
+		}
+
+		// Try to discover endpoints from provider
+		ctx := context.Background()
+		if provider, err := gooidc.NewProvider(ctx, oidcCfg.ProviderURL); err == nil {
+			oauth2Config.Endpoint = provider.Endpoint()
+		}
+
+		authURL := oauth2Config.AuthCodeURL(state,
+			oauth2.AccessTypeOnline,
+			oauth2.SetAuthURLParam("code_challenge", codeChallenge),
+			oauth2.SetAuthURLParam("code_challenge_method", "S256"),
+		)
+
+		return c.JSON(fiber.Map{"redirectURL": authURL, "state": state})
+	})
+
+	// GET /api/auth/oidc/callback — exchange code, create session
+	api.Get("/auth/oidc/callback", func(c *fiber.Ctx) error {
+		state := c.Query("state")
+		code := c.Query("code")
+		if state == "" || code == "" {
+			return c.Status(400).JSON(fiber.Map{"error": "missing state or code"})
+		}
+
+		oidcStateMu.Lock()
+		codeVerifier, ok := oidcStates[state]
+		if ok {
+			delete(oidcStates, state)
+		}
+		oidcStateMu.Unlock()
+
+		if !ok {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid or expired state"})
+		}
+
+		ctx := context.Background()
+		provider, err := gooidc.NewProvider(ctx, oidcCfg.ProviderURL)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "failed to connect to OIDC provider"})
+		}
+
+		scopes := oidcCfg.Scopes
+		if len(scopes) == 0 {
+			scopes = []string{"openid", "email", "profile"}
+		}
+		oauth2Config := oauth2.Config{
+			ClientID:     oidcCfg.ClientID,
+			ClientSecret: oidcCfg.ClientSecret,
+			RedirectURL:  oidcCfg.RedirectURL,
+			Scopes:       scopes,
+			Endpoint:     provider.Endpoint(),
+		}
+
+		token, err := oauth2Config.Exchange(ctx, code,
+			oauth2.SetAuthURLParam("code_verifier", codeVerifier),
+		)
+		if err != nil {
+			return c.Status(401).JSON(fiber.Map{"error": "token exchange failed"})
+		}
+
+		// Verify ID token
+		verifier := provider.Verifier(&gooidc.Config{ClientID: oidcCfg.ClientID})
+		rawIDToken, ok := token.Extra("id_token").(string)
+		if !ok {
+			return c.Status(401).JSON(fiber.Map{"error": "no id_token in response"})
+		}
+		idToken, err := verifier.Verify(ctx, rawIDToken)
+		if err != nil {
+			return c.Status(401).JSON(fiber.Map{"error": "invalid id_token"})
+		}
+
+		// Extract claims
+		var claims map[string]interface{}
+		if err := idToken.Claims(&claims); err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "failed to parse claims"})
+		}
+
+		email, _ := claims["email"].(string)
+		sub, _ := claims["sub"].(string)
+		name, _ := claims["name"].(string)
+		if email == "" {
+			email = sub
+		}
+		username := email
+		if username == "" {
+			return c.Status(400).JSON(fiber.Map{"error": "no email in OIDC claims"})
+		}
+
+		// Check admin via group claim
+		isAdmin := false
+		if oidcCfg.AdminGroupClaim != "" && oidcCfg.AdminGroupValue != "" {
+			if groups, ok := claims[oidcCfg.AdminGroupClaim].([]interface{}); ok {
+				for _, g := range groups {
+					if gs, ok := g.(string); ok && gs == oidcCfg.AdminGroupValue {
+						isAdmin = true
+						break
+					}
+				}
+			}
+		}
+
+		// Find or create user
+		user, _ := store.FindUser(username)
+		if user == nil {
+			if !oidcCfg.AutoCreateUsers {
+				return c.Status(403).JSON(fiber.Map{"error": "user not found and auto-create is disabled"})
+			}
+			role := "user"
+			if isAdmin {
+				role = "admin"
+			}
+			newUser := &User{
+				Username:     username,
+				Email:        email,
+				FirstName:    name,
+				Role:         role,
+				AuthProvider: "oidc",
+				CreatedAt:    time.Now(),
+			}
+			if err := store.CreateLdapUser(newUser); err != nil {
+				return c.Status(500).JSON(fiber.Map{"error": "failed to provision user"})
+			}
+			user, _ = store.FindUser(username)
+		}
+
+		if user == nil {
+			return c.Status(500).JSON(fiber.Map{"error": "user provision failed"})
+		}
+
+		// Sync admin role
+		if isAdmin && user.Role != "admin" {
+			store.SetRole(user.Username, "admin")
+			user.Role = "admin"
+		}
+
+		clearFailedLogins(username)
+		tokens, err := generateTokens(user, false)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "failed to generate tokens"})
+		}
+		return c.JSON(LoginResponse{User: user.SafeUser(), Tokens: *tokens})
 	})
 
 	api.Post("/auth/login", func(c *fiber.Ctx) error {
