@@ -1,8 +1,10 @@
 ### 2026-03-08 - feature/auth-system: Sistema de autenticación completo (LDAP, OIDC, API Keys)
 
 - **Branch**: `feature/auth-system` (worktree en `~/.config/superpowers/worktrees/dockerverse/feature-auth-system/`)
-- **Estado**: Implementación completa, bugs corregidos, build limpio. Listo para merge.
-- **Cambios principales** (14 commits):
+- **Estado**: ✅ DEPLOYED Y VALIDADO en raspi (2026-03-08). Listo para merge a main.
+- **Deploy**: Unified container en `docker-compose.unified.yml` (puerto 3007). Fixes aplicados: `golang:1.24`, `COPY backend/models/`.
+- **Validación Playwright** (raspi 192.168.1.145:3007): Login ✅, Auth Config buttons ✅, Change Password ✅, API Keys ✅, 2FA/TOTP ✅
+- **Cambios principales** (15 commits):
   - Backend: TOTP/2FA, recovery codes, LDAP auth con auto-provisioning, OIDC/PKCE flow, API Keys, configuración persistente en JSON
   - Frontend settings/authentication: tabs para Admin Config, LDAP, OIDC, API Keys
   - Login.svelte: botón OIDC, estado de 2FA
