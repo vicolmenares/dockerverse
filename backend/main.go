@@ -5294,6 +5294,16 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 		}
 		updateCacheMu.Unlock()
 
+		user := c.Locals("user").(*User)
+		auditLog.Add(AuditEntry{
+			Username:     user.Username,
+			Action:       "container.update",
+			ResourceType: "container",
+			ResourceID:   containerID + "@" + hostID,
+			IP:           c.IP(),
+			Success:      true,
+		})
+
 		return c.JSON(fiber.Map{
 			"success": true,
 			"message": "Container updated successfully with health validation",
