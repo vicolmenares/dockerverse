@@ -3,7 +3,7 @@
   import { goto } from '$app/navigation';
   import { browser } from '$app/environment';
   import {
-    Server, User, KeyRound, Bell, Palette, Database, Info, Users, Settings
+    Server, User, KeyRound, Bell, Palette, Database, Info, Users, Settings, Shield
   } from 'lucide-svelte';
   import { language } from '$lib/stores/docker';
   import { isAuthenticated, currentUser } from '$lib/stores/auth';
@@ -23,7 +23,10 @@
   let tabs = $derived([
     { id: 'environments', label: st.environments, icon: Server, href: '/settings/environments' },
     ...($currentUser?.roles?.includes('admin')
-      ? [{ id: 'users', label: st.users, icon: Users, href: '/settings/users' }]
+      ? [
+          { id: 'users', label: st.users, icon: Users, href: '/settings/users' },
+          { id: 'audit', label: $language === 'es' ? 'Auditoría' : 'Audit Log', icon: Shield, href: '/settings/audit' },
+        ]
       : []),
     { id: 'profile', label: st.profile, icon: User, href: '/settings/profile' },
     { id: 'authentication', label: st.authentication, icon: KeyRound, href: '/settings/authentication' },
@@ -43,6 +46,7 @@
     if (path.startsWith('/settings/general') || path.startsWith('/settings/appearance')) return 'general';
     if (path.startsWith('/settings/data')) return 'data';
     if (path.startsWith('/settings/about')) return 'about';
+    if (path.startsWith('/settings/audit')) return 'audit';
     return 'environments';
   });
 </script>
