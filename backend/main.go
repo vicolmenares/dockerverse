@@ -568,6 +568,90 @@ type User struct {
 	LastLogin      time.Time `json:"lastLogin,omitempty"`
 }
 
+// AuditEntry records a single user action
+type AuditEntry struct {
+	ID           string    `json:"id"`
+	Timestamp    time.Time `json:"timestamp"`
+	Username     string    `json:"username"`
+	Action       string    `json:"action"`       // "login", "container.start", "container.stop", etc.
+	ResourceType string    `json:"resourceType"` // "container", "user", "auth", "apikey"
+	ResourceID   string    `json:"resourceId"`
+	Details      string    `json:"details,omitempty"`
+	IP           string    `json:"ip"`
+	Success      bool      `json:"success"`
+}
+
+// AuditLog manages audit entries with JSON persistence
+type AuditLog struct {
+	mu       sync.Mutex
+	entries  []AuditEntry
+	filePath string
+	maxSize  int
+}
+
+func NewAuditLog(filePath string) *AuditLog {
+	al := &AuditLog{filePath: filePath, maxSize: 2000}
+	al.load()
+	return al
+}
+
+func (al *AuditLog) load() {
+	data, err := os.ReadFile(al.filePath)
+	if err != nil {
+		return
+	}
+	json.Unmarshal(data, &al.entries)
+}
+
+func (al *AuditLog) save() {
+	data, err := json.Marshal(al.entries)
+	if err != nil {
+		return
+	}
+	os.WriteFile(al.filePath, data, 0644)
+}
+
+func (al *AuditLog) Add(entry AuditEntry) {
+	al.mu.Lock()
+	defer al.mu.Unlock()
+	if entry.ID == "" {
+		entry.ID = fmt.Sprintf("%d", time.Now().UnixNano())
+	}
+	if entry.Timestamp.IsZero() {
+		entry.Timestamp = time.Now()
+	}
+	al.entries = append(al.entries, entry)
+	if len(al.entries) > al.maxSize {
+		al.entries = al.entries[len(al.entries)-al.maxSize:]
+	}
+	al.save()
+}
+
+func (al *AuditLog) GetEntries(limit, offset int) []AuditEntry {
+	al.mu.Lock()
+	defer al.mu.Unlock()
+	total := len(al.entries)
+	// Return in reverse (newest first)
+	reversed := make([]AuditEntry, total)
+	for i, e := range al.entries {
+		reversed[total-1-i] = e
+	}
+	if offset >= total {
+		return []AuditEntry{}
+	}
+	end := offset + limit
+	if end > total {
+		end = total
+	}
+	return reversed[offset:end]
+}
+
+func (al *AuditLog) Total() int {
+	al.mu.Lock()
+	defer al.mu.Unlock()
+	return len(al.entries)
+}
+
 type ResetCode struct {
 	Code      string
 	UserID    string
@@ -3754,7 +3838,7 @@ func (h *WSHub) Broadcast(msgType string, data interface{}) {
 // HTTP Handlers
 // =============================================================================
 
-func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc *NotificationService, hub *WSHub, emailSvc *EmailService, envStore *EnvironmentStore) {
+func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc *NotificationService, hub *WSHub, emailSvc *EmailService, envStore *EnvironmentStore, auditLog *AuditLog) {
 	// Health check endpoint
 	app.Get("/health", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"status": "ok"})
@@ -6315,6 +6399,7 @@ func main() {
 	notifySvc := NewNotificationService(userStore)
 	emailSvc := NewEmailService()
 	envStore := NewEnvironmentStore(filepath.Join(dataDir, "environments.json"))
+	auditLog := NewAuditLog(filepath.Join(dataDir, "audit-log.json"))
 	dm := NewDockerManager(notifySvc)
 	hub := NewWSHub()
 
@@ -6371,7 +6456,7 @@ func main() {
 	app.Static("/", "./public")
 
 	// Setup API routes
-	setupRoutes(app, dm, userStore, notifySvc, hub, emailSvc, envStore)
+	setupRoutes(app, dm, userStore, notifySvc, hub, emailSvc, envStore, auditLog)
 
 	// Debug: expose recent backend logs for easier collection from the container.
 	// Query params: ?lines=200 (default 200)
