@@ -4809,8 +4809,14 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 	protected.Get("/audit", adminOnly(), func(c *fiber.Ctx) error {
 		limit := c.QueryInt("limit", 50)
 		offset := c.QueryInt("offset", 0)
+		if limit < 1 {
+			limit = 50
+		}
 		if limit > 200 {
 			limit = 200
+		}
+		if offset < 0 {
+			offset = 0
 		}
 		entries := auditLog.GetEntries(limit, offset)
 		return c.JSON(fiber.Map{
