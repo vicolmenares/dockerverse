@@ -4106,6 +4106,15 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 			}
 			if err != nil || user == nil {
 				recordFailedLogin(req.Username)
+				auditLog.Add(AuditEntry{
+					Username:     req.Username,
+					Action:       "login",
+					ResourceType: "auth",
+					ResourceID:   req.Username,
+					Details:      "invalid credentials",
+					IP:           c.IP(),
+					Success:      false,
+				})
 				return c.Status(401).JSON(fiber.Map{"error": "invalid credentials"})
 			}
 		}
@@ -4137,6 +4146,15 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 				log.Printf("2FA attempt for %s: valid=%v err=%v", user.Username, valid, validErr)
 				if !valid || validErr != nil {
 					recordFailedLogin(req.Username)
+					auditLog.Add(AuditEntry{
+						Username:     req.Username,
+						Action:       "login",
+						ResourceType: "auth",
+						ResourceID:   req.Username,
+						Details:      "invalid 2FA code",
+						IP:           c.IP(),
+						Success:      false,
+					})
 					return c.Status(401).JSON(fiber.Map{"error": "invalid 2FA code"})
 				}
 			} else if req.RecoveryCode != "" {
@@ -4144,6 +4162,15 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 				valid, err := store.UseRecoveryCode(user.Username, req.RecoveryCode)
 				if err != nil || !valid {
 					recordFailedLogin(req.Username)
+					auditLog.Add(AuditEntry{
+						Username:     req.Username,
+						Action:       "login",
+						ResourceType: "auth",
+						ResourceID:   req.Username,
+						Details:      "invalid recovery code",
+						IP:           c.IP(),
+						Success:      false,
+					})
 					return c.Status(401).JSON(fiber.Map{"error": "invalid recovery code"})
 				}
 			}
@@ -4155,6 +4182,14 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 			return c.Status(500).JSON(fiber.Map{"error": "failed to generate tokens"})
 		}
 
+		auditLog.Add(AuditEntry{
+			Username:     user.Username,
+			Action:       "login",
+			ResourceType: "auth",
+			ResourceID:   user.Username,
+			IP:           c.IP(),
+			Success:      true,
+		})
 		return c.JSON(LoginResponse{
 			User:   user.SafeUser(),
 			Tokens: *tokens,
@@ -4468,7 +4503,8 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 
 	// Enable TOTP - Verify code and activate 2FA
 	protected.Post("/auth/totp/enable", func(c *fiber.Ctx) error {
-		username := c.Locals("user").(*User).Username
+		user := c.Locals("user").(*User)
+		username := user.Username
 
 		var req struct {
 			Code string `json:"code"`
@@ -4482,6 +4518,15 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 			return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 		}
 
+		auditLog.Add(AuditEntry{
+			Username:     user.Username,
+			Action:       "totp.enable",
+			ResourceType: "auth",
+			ResourceID:   user.Username,
+			IP:           c.IP(),
+			Success:      true,
+		})
+
 		return c.JSON(fiber.Map{
 			"success":       true,
 			"recoveryCodes": recoveryCodes,
@@ -4490,7 +4535,8 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 
 	// Disable TOTP - Requires password confirmation
 	protected.Post("/auth/totp/disable", func(c *fiber.Ctx) error {
-		username := c.Locals("user").(*User).Username
+		user := c.Locals("user").(*User)
+		username := user.Username
 
 		var req struct {
 			Password string `json:"password"`
@@ -4503,6 +4549,15 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 		if err != nil {
 			return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 		}
+
+		auditLog.Add(AuditEntry{
+			Username:     user.Username,
+			Action:       "totp.disable",
+			ResourceType: "auth",
+			ResourceID:   user.Username,
+			IP:           c.IP(),
+			Success:      true,
+		})
 
 		return c.JSON(fiber.Map{"success": true})
 	})
@@ -4650,6 +4705,15 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 			}()
 		}
 
+		auditLog.Add(AuditEntry{
+			Username:     user.Username,
+			Action:       "password.change",
+			ResourceType: "auth",
+			ResourceID:   user.Username,
+			IP:           c.IP(),
+			Success:      true,
+		})
+
 		return c.JSON(fiber.Map{"success": true})
 	})
 
@@ -4696,6 +4760,16 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 			}()
 		}
 
+		actingUser := c.Locals("user").(*User)
+		auditLog.Add(AuditEntry{
+			Username:     actingUser.Username,
+			Action:       "user.create",
+			ResourceType: "user",
+			ResourceID:   req.Username,
+			IP:           c.IP(),
+			Success:      true,
+		})
+
 		return c.Status(201).JSON(user.SafeUser())
 	})
 
@@ -4719,6 +4793,15 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 		if err := store.DeleteUser(username); err != nil {
 			return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 		}
+		actingUser := c.Locals("user").(*User)
+		auditLog.Add(AuditEntry{
+			Username:     actingUser.Username,
+			Action:       "user.delete",
+			ResourceType: "user",
+			ResourceID:   username,
+			IP:           c.IP(),
+			Success:      true,
+		})
 		return c.JSON(fiber.Map{"success": true})
 	})
 
@@ -5282,6 +5365,16 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 		if err := dm.ContainerAction(ctx, hostID, containerID, action); err != nil {
 			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 		}
+
+		user := c.Locals("user").(*User)
+		auditLog.Add(AuditEntry{
+			Username:     user.Username,
+			Action:       "container." + action,
+			ResourceType: "container",
+			ResourceID:   containerID + "@" + hostID,
+			IP:           c.IP(),
+			Success:      true,
+		})
 
 		// Broadcast the state change immediately
 		go func() {
