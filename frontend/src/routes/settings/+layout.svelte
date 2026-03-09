@@ -25,7 +25,7 @@
     ...($currentUser?.roles?.includes('admin')
       ? [
           { id: 'users', label: st.users, icon: Users, href: '/settings/users' },
-          { id: 'audit', label: $language === 'es' ? 'Auditoría' : 'Audit Log', icon: Shield, href: '/settings/audit' },
+          { id: 'audit', label: st.audit, icon: Shield, href: '/settings/audit' },
         ]
       : []),
     { id: 'profile', label: st.profile, icon: User, href: '/settings/profile' },

@@ -2,6 +2,8 @@
   import { Shield, RefreshCw, ChevronLeft, ChevronRight } from 'lucide-svelte';
   import { language } from '$lib/stores/docker';
   import { API_BASE, getAuthHeaders } from '$lib/api/docker';
+  import { goto } from '$app/navigation';
+  import { currentUser } from '$lib/stores/auth';
 
   type AuditEntry = {
     id: string;
@@ -14,6 +16,12 @@
     ip: string;
     success: boolean;
   };
+
+  $effect(() => {
+    if ($currentUser && !$currentUser.roles?.includes('admin')) {
+      goto('/settings');
+    }
+  });
 
   let entries = $state<AuditEntry[]>([]);
   let total = $state(0);
@@ -40,13 +48,17 @@
     }
   }
 
-  $effect(() => { loadEntries(); });
+  $effect(() => {
+    // reactive to offset changes
+    const _offset = offset;
+    loadEntries();
+  });
 
   function prevPage() {
-    if (offset >= limit) { offset -= limit; loadEntries(); }
+    if (offset >= limit) offset -= limit;
   }
   function nextPage() {
-    if (offset + limit < total) { offset += limit; loadEntries(); }
+    if (offset + limit < total) offset += limit;
   }
 
   function actionColor(action: string, success: boolean): string {
@@ -124,7 +136,7 @@
               <td class="px-3 py-2 text-foreground-muted whitespace-nowrap">{formatDate(entry.timestamp)}</td>
               <td class="px-3 py-2 font-medium text-foreground">{entry.username}</td>
               <td class="px-3 py-2 font-mono {actionColor(entry.action, entry.success)}">{entry.action}</td>
-              <td class="px-3 py-2 text-foreground-muted truncate max-w-32">{entry.resourceId}</td>
+              <td class="px-3 py-2 text-foreground-muted truncate max-w-32" title={entry.resourceId}>{entry.resourceId}</td>
               <td class="px-3 py-2 text-foreground-muted font-mono">{entry.ip}</td>
               <td class="px-3 py-2">
                 <span class="px-1.5 py-0.5 rounded text-xs font-medium {entry.success ? 'bg-running/10 text-running' : 'bg-stopped/10 text-stopped'}">

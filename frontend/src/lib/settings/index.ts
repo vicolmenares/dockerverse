@@ -31,6 +31,7 @@ export const settingsText: Record<Language, Record<string, string>> = {
 		// Users
 		users: 'Usuarios',
 		usersDesc: 'Gestionar usuarios del sistema',
+		audit: 'Auditoría',
 		addUser: '+ Agregar Usuario',
 		loading: 'Cargando...',
 		// Profile
@@ -197,6 +198,7 @@ export const settingsText: Record<Language, Record<string, string>> = {
 		// Users
 		users: 'Users',
 		usersDesc: 'Manage system users',
+		audit: 'Audit Log',
 		addUser: '+ Add User',
 		loading: 'Loading...',
 		// Profile
