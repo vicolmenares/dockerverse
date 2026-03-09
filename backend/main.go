@@ -652,6 +652,52 @@ func (al *AuditLog) Total() int {
 	return len(al.entries)
 }
 
+// ContainerEvent tracks discrete container lifecycle actions for the activity chart
+type ContainerEvent struct {
+	Timestamp   time.Time `json:"timestamp"`
+	HostID      string    `json:"hostId"`
+	ContainerID string    `json:"containerId"`
+	Name        string    `json:"name"`
+	Action      string    `json:"action"` // "start", "stop", "restart", "update", "pull"
+}
+
+// ContainerEventBuffer holds recent events in memory (no persistence needed)
+type ContainerEventBuffer struct {
+	mu     sync.Mutex
+	events []ContainerEvent
+	max    int
+}
+
+func NewContainerEventBuffer() *ContainerEventBuffer {
+	return &ContainerEventBuffer{max: 500}
+}
+
+func (b *ContainerEventBuffer) Add(e ContainerEvent) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if e.Timestamp.IsZero() {
+		e.Timestamp = time.Now()
+	}
+	b.events = append(b.events, e)
+	if len(b.events) > b.max {
+		b.events = b.events[len(b.events)-b.max:]
+	}
+}
+
+// GetSince returns events within the last `hours` hours
+func (b *ContainerEventBuffer) GetSince(hours int) []ContainerEvent {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
+	var result []ContainerEvent
+	for _, e := range b.events {
+		if e.Timestamp.After(cutoff) {
+			result = append(result, e)
+		}
+	}
+	return result
+}
+
 type ResetCode struct {
 	Code      string
 	UserID    string
@@ -3838,7 +3884,7 @@ func (h *WSHub) Broadcast(msgType string, data interface{}) {
 // HTTP Handlers
 // =============================================================================
 
-func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc *NotificationService, hub *WSHub, emailSvc *EmailService, envStore *EnvironmentStore, auditLog *AuditLog) {
+func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc *NotificationService, hub *WSHub, emailSvc *EmailService, envStore *EnvironmentStore, auditLog *AuditLog, eventBuffer *ContainerEventBuffer) {
 	// Health check endpoint
 	app.Get("/health", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"status": "ok"})
@@ -4827,6 +4873,25 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 		})
 	})
 
+	// Container activity events (for dashboard chart)
+	protected.Get("/container-events", func(c *fiber.Ctx) error {
+		hours := c.QueryInt("hours", 24)
+		if hours < 1 {
+			hours = 24
+		}
+		if hours > 168 {
+			hours = 168
+		}
+		events := eventBuffer.GetSince(hours)
+		if events == nil {
+			events = []ContainerEvent{}
+		}
+		return c.JSON(fiber.Map{
+			"events": events,
+			"hours":  hours,
+		})
+	})
+
 	// =========================
 	// Settings
 	// =========================
@@ -5325,6 +5390,12 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 			IP:           c.IP(),
 			Success:      true,
 		})
+		eventBuffer.Add(ContainerEvent{
+			HostID:      hostID,
+			ContainerID: containerID,
+			Name:        containerID,
+			Action:      "update",
+		})
 
 		return c.JSON(fiber.Map{
 			"success": true,
@@ -5406,6 +5477,12 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 			ResourceID:   containerID + "@" + hostID,
 			IP:           c.IP(),
 			Success:      true,
+		})
+		eventBuffer.Add(ContainerEvent{
+			HostID:      hostID,
+			ContainerID: containerID,
+			Name:        containerID,
+			Action:      action,
 		})
 
 		// Broadcast the state change immediately
@@ -6525,6 +6602,7 @@ func main() {
 	emailSvc := NewEmailService()
 	envStore := NewEnvironmentStore(filepath.Join(dataDir, "environments.json"))
 	auditLog := NewAuditLog(filepath.Join(dataDir, "audit-log.json"))
+	eventBuffer := NewContainerEventBuffer()
 	dm := NewDockerManager(notifySvc)
 	hub := NewWSHub()
 
@@ -6581,7 +6659,7 @@ func main() {
 	app.Static("/", "./public")
 
 	// Setup API routes
-	setupRoutes(app, dm, userStore, notifySvc, hub, emailSvc, envStore, auditLog)
+	setupRoutes(app, dm, userStore, notifySvc, hub, emailSvc, envStore, auditLog, eventBuffer)
 
 	// Debug: expose recent backend logs for easier collection from the container.
 	// Query params: ?lines=200 (default 200)
