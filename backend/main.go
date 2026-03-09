@@ -663,7 +663,7 @@ type ContainerEvent struct {
 
 // ContainerEventBuffer holds recent events in memory (no persistence needed)
 type ContainerEventBuffer struct {
-	mu     sync.Mutex
+	mu     sync.RWMutex
 	events []ContainerEvent
 	max    int
 }
@@ -686,8 +686,8 @@ func (b *ContainerEventBuffer) Add(e ContainerEvent) {
 
 // GetSince returns events within the last `hours` hours
 func (b *ContainerEventBuffer) GetSince(hours int) []ContainerEvent {
-	b.mu.Lock()
-	defer b.mu.Unlock()
+	b.mu.RLock()
+	defer b.mu.RUnlock()
 	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
 	var result []ContainerEvent
 	for _, e := range b.events {
@@ -5390,10 +5390,16 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 			IP:           c.IP(),
 			Success:      true,
 		})
+		containerName := containerID
+		if cli, err := dm.GetClient(hostID); err == nil {
+			if info, err2 := cli.ContainerInspect(context.Background(), containerID); err2 == nil {
+				containerName = strings.TrimPrefix(info.Name, "/")
+			}
+		}
 		eventBuffer.Add(ContainerEvent{
 			HostID:      hostID,
 			ContainerID: containerID,
-			Name:        containerID,
+			Name:        containerName,
 			Action:      "update",
 		})
 
@@ -5478,10 +5484,16 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 			IP:           c.IP(),
 			Success:      true,
 		})
+		eventContainerName := containerID
+		if cli2, err2 := dm.GetClient(hostID); err2 == nil {
+			if info2, err3 := cli2.ContainerInspect(context.Background(), containerID); err3 == nil {
+				eventContainerName = strings.TrimPrefix(info2.Name, "/")
+			}
+		}
 		eventBuffer.Add(ContainerEvent{
 			HostID:      hostID,
 			ContainerID: containerID,
-			Name:        containerID,
+			Name:        eventContainerName,
 			Action:      action,
 		})
 
