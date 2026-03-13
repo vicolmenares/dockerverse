@@ -5343,7 +5343,7 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 	})
 
 	// GET /api/stacks?hostId=raspi1
-	// Returns Docker Compose stacks grouped by com.docker.compose.project label
+	// Returns Docker Compose stacks with type, file path, and service status
 	protected.Get("/stacks", func(c *fiber.Ctx) error {
 		hostID := c.Query("hostId")
 		if hostID == "" {
@@ -5355,42 +5355,60 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 			return c.Status(404).JSON(fiber.Map{"error": "Host not found"})
 		}
 
-		// List all containers
 		ctx := context.Background()
 		containers, err := cli.ContainerList(ctx, container.ListOptions{All: true})
 		if err != nil {
 			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 		}
 
-		// Group by com.docker.compose.project label
-		stacks := make(map[string][]map[string]interface{})
-		standalone := []map[string]interface{}{}
+		// Group containers by compose project
+		stackMap := make(map[string]*StackInfo)
 
 		for _, ctr := range containers {
 			project := ctr.Labels["com.docker.compose.project"]
-			service := ctr.Labels["com.docker.compose.service"]
-
-			containerInfo := map[string]interface{}{
-				"id":      ctr.ID,
-				"name":    strings.TrimPrefix(ctr.Names[0], "/"),
-				"state":   ctr.State,
-				"service": service,
+			if project == "" {
+				continue
 			}
 
-			if project != "" {
-				if _, exists := stacks[project]; !exists {
-					stacks[project] = []map[string]interface{}{}
+			if _, exists := stackMap[project]; !exists {
+				rawPath := ctr.Labels["com.docker.compose.project.config_files"]
+				rawDir := ctr.Labels["com.docker.compose.project.working_dir"]
+				stackType := detectStackType(rawPath)
+				hostPath := translateStackPath(rawPath)
+				hostDir := translateStackPath(rawDir)
+
+				stackMap[project] = &StackInfo{
+					Name:           project,
+					Type:           stackType,
+					HasFile:        rawPath != "",
+					ConfigFilePath: hostPath,
+					WorkingDir:     hostDir,
+					Services:       []ServiceInfo{},
 				}
-				stacks[project] = append(stacks[project], containerInfo)
-			} else {
-				standalone = append(standalone, containerInfo)
 			}
+
+			svc := ServiceInfo{
+				ID:      ctr.ID[:12],
+				Name:    strings.TrimPrefix(ctr.Names[0], "/"),
+				State:   ctr.State,
+				Service: ctr.Labels["com.docker.compose.service"],
+			}
+			stackMap[project].Services = append(stackMap[project].Services, svc)
 		}
 
-		return c.JSON(fiber.Map{
-			"stacks":     stacks,
-			"standalone": standalone,
+		// Compute status and build result slice
+		result := make([]StackInfo, 0, len(stackMap))
+		for _, stack := range stackMap {
+			stack.Status = computeStackStatus(stack.Services)
+			result = append(result, *stack)
+		}
+
+		// Sort alphabetically by name
+		sort.Slice(result, func(i, j int) bool {
+			return result[i].Name < result[j].Name
 		})
+
+		return c.JSON(result)
 	})
 
 	// Stats
