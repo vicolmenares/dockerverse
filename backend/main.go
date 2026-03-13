@@ -5366,6 +5366,19 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 		return c.JSON(containers)
 	})
 
+	// GET /api/hosts/names — fast list of host IDs and names (no stats)
+	protected.Get("/hosts/names", func(c *fiber.Ctx) error {
+		type HostName struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		}
+		result := make([]HostName, len(hosts))
+		for i, h := range hosts {
+			result[i] = HostName{ID: h.ID, Name: h.Name}
+		}
+		return c.JSON(result)
+	})
+
 	// GET /api/stacks?hostId=raspi1
 	// Returns Docker Compose stacks with type, file path, and service status
 	protected.Get("/stacks", func(c *fiber.Ctx) error {
