@@ -783,6 +783,30 @@ func runComposeCmd(hostID, configFilePath, stackName, subCmd string) (string, er
 	return runSSHCommand(hostID, cmd)
 }
 
+// resolveStackFilePath looks up the compose file path for a stack from Docker container labels.
+// Returns the translated (host-filesystem) path, or an error if the stack is not found.
+func resolveStackFilePath(dm *DockerManager, hostID, stackName string) (string, error) {
+	cli, err := dm.GetClient(hostID)
+	if err != nil {
+		return "", fmt.Errorf("host not found: %w", err)
+	}
+	ctx := context.Background()
+	containers, err := cli.ContainerList(ctx, container.ListOptions{All: true})
+	if err != nil {
+		return "", fmt.Errorf("list containers: %w", err)
+	}
+	for _, ctr := range containers {
+		if ctr.Labels["com.docker.compose.project"] == stackName {
+			raw := ctr.Labels["com.docker.compose.project.config_files"]
+			if raw == "" {
+				return "", fmt.Errorf("stack has no config_files label")
+			}
+			return translateStackPath(raw), nil
+		}
+	}
+	return "", fmt.Errorf("stack '%s' not found", stackName)
+}
+
 // computeStackStatus returns "running", "partial", or "stopped" based on services
 func computeStackStatus(services []ServiceInfo) string {
 	if len(services) == 0 {
@@ -5462,7 +5486,7 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 
 	// PUT /api/stacks/:name/file?hostId=X
 	// Writes the compose file for a stack via SSH
-	// Body: { "content": "...", "configFilePath": "..." }
+	// Body: { "content": "..." }  (configFilePath is resolved server-side from Docker labels)
 	protected.Put("/stacks/:name/file", func(c *fiber.Ctx) error {
 		hostID := c.Query("hostId")
 		stackName := c.Params("name")
@@ -5471,17 +5495,18 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 		}
 
 		var body struct {
-			Content        string `json:"content"`
-			ConfigFilePath string `json:"configFilePath"`
+			Content string `json:"content"`
 		}
-		if err := c.BodyParser(&body); err != nil {
-			return c.Status(400).JSON(fiber.Map{"error": "Invalid body"})
-		}
-		if body.Content == "" || body.ConfigFilePath == "" {
-			return c.Status(400).JSON(fiber.Map{"error": "content and configFilePath required"})
+		if err := c.BodyParser(&body); err != nil || body.Content == "" {
+			return c.Status(400).JSON(fiber.Map{"error": "content required"})
 		}
 
-		if err := writeFileSSH(hostID, body.ConfigFilePath, body.Content); err != nil {
+		configFilePath, err := resolveStackFilePath(dm, hostID, stackName)
+		if err != nil {
+			return c.Status(404).JSON(fiber.Map{"error": err.Error()})
+		}
+
+		if err := writeFileSSH(hostID, configFilePath, body.Content); err != nil {
 			return c.Status(500).JSON(fiber.Map{"error": "Failed to write file: " + err.Error()})
 		}
 
@@ -5541,7 +5566,7 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 
 	// POST /api/stacks/:name/up?hostId=X
 	// Runs docker compose up -d for an existing stack
-	// Body: { "configFilePath": "..." }
+	// configFilePath is resolved server-side from Docker labels
 	protected.Post("/stacks/:name/up", func(c *fiber.Ctx) error {
 		hostID := c.Query("hostId")
 		stackName := c.Params("name")
@@ -5549,14 +5574,12 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 			return c.Status(400).JSON(fiber.Map{"error": "hostId required"})
 		}
 
-		var body struct {
-			ConfigFilePath string `json:"configFilePath"`
-		}
-		if err := c.BodyParser(&body); err != nil || body.ConfigFilePath == "" {
-			return c.Status(400).JSON(fiber.Map{"error": "configFilePath required"})
+		configFilePath, err := resolveStackFilePath(dm, hostID, stackName)
+		if err != nil {
+			return c.Status(404).JSON(fiber.Map{"error": err.Error()})
 		}
 
-		output, err := runComposeCmd(hostID, body.ConfigFilePath, stackName, "up -d")
+		output, err := runComposeCmd(hostID, configFilePath, stackName, "up -d")
 		if err != nil {
 			return c.Status(500).JSON(fiber.Map{"error": err.Error(), "output": output})
 		}
@@ -5565,7 +5588,7 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 
 	// POST /api/stacks/:name/down?hostId=X
 	// Runs docker compose down for an existing stack
-	// Body: { "configFilePath": "..." }
+	// configFilePath is resolved server-side from Docker labels
 	protected.Post("/stacks/:name/down", func(c *fiber.Ctx) error {
 		hostID := c.Query("hostId")
 		stackName := c.Params("name")
@@ -5573,14 +5596,12 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 			return c.Status(400).JSON(fiber.Map{"error": "hostId required"})
 		}
 
-		var body struct {
-			ConfigFilePath string `json:"configFilePath"`
-		}
-		if err := c.BodyParser(&body); err != nil || body.ConfigFilePath == "" {
-			return c.Status(400).JSON(fiber.Map{"error": "configFilePath required"})
+		configFilePath, err := resolveStackFilePath(dm, hostID, stackName)
+		if err != nil {
+			return c.Status(404).JSON(fiber.Map{"error": err.Error()})
 		}
 
-		output, err := runComposeCmd(hostID, body.ConfigFilePath, stackName, "down")
+		output, err := runComposeCmd(hostID, configFilePath, stackName, "down")
 		if err != nil {
 			return c.Status(500).JSON(fiber.Map{"error": err.Error(), "output": output})
 		}
@@ -5589,7 +5610,7 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 
 	// POST /api/stacks/:name/pull?hostId=X
 	// Runs docker compose pull then up -d for an existing stack
-	// Body: { "configFilePath": "..." }
+	// configFilePath is resolved server-side from Docker labels
 	protected.Post("/stacks/:name/pull", func(c *fiber.Ctx) error {
 		hostID := c.Query("hostId")
 		stackName := c.Params("name")
@@ -5597,15 +5618,13 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 			return c.Status(400).JSON(fiber.Map{"error": "hostId required"})
 		}
 
-		var body struct {
-			ConfigFilePath string `json:"configFilePath"`
-		}
-		if err := c.BodyParser(&body); err != nil || body.ConfigFilePath == "" {
-			return c.Status(400).JSON(fiber.Map{"error": "configFilePath required"})
+		configFilePath, err := resolveStackFilePath(dm, hostID, stackName)
+		if err != nil {
+			return c.Status(404).JSON(fiber.Map{"error": err.Error()})
 		}
 
-		pullOut, _ := runComposeCmd(hostID, body.ConfigFilePath, stackName, "pull")
-		upOut, err := runComposeCmd(hostID, body.ConfigFilePath, stackName, "up -d")
+		pullOut, _ := runComposeCmd(hostID, configFilePath, stackName, "pull")
+		upOut, err := runComposeCmd(hostID, configFilePath, stackName, "up -d")
 		output := pullOut + "\n" + upOut
 		if err != nil {
 			return c.Status(500).JSON(fiber.Map{"error": err.Error(), "output": output})
@@ -5623,7 +5642,17 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 			return c.Status(400).JSON(fiber.Map{"error": "hostId and name required"})
 		}
 
+		// Validate stackName to prevent path traversal
+		for _, ch := range stackName {
+			if !((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '-' || ch == '_') {
+				return c.Status(400).JSON(fiber.Map{"error": "Invalid stack name"})
+			}
+		}
+		// Verify the computed directory is within the expected base path
 		stackDir := "/home/pi/dockerverse-stacks/" + stackName
+		if !strings.HasPrefix(stackDir, "/home/pi/dockerverse-stacks/") {
+			return c.Status(400).JSON(fiber.Map{"error": "Invalid stack name"})
+		}
 		configFilePath := stackDir + "/docker-compose.yml"
 
 		downOut, _ := runComposeCmd(hostID, configFilePath, stackName, "down")

@@ -125,6 +125,9 @@
       });
       if (res.ok) {
         stacks = await res.json();
+      } else {
+        console.error("fetchStacks error:", res.status, res.statusText);
+        // stacks stays as empty array — user sees "No stacks found"
       }
     } catch (e) { console.error("Failed to fetch stacks:", e); }
     loading = false;
@@ -149,7 +152,7 @@
       const res = await fetch(`${API_BASE}/api/stacks/${stack.name}/${action}?hostId=${selectedHostId}`, {
         method: "POST",
         headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
-        body: JSON.stringify({ configFilePath: stack.configFilePath })
+        body: JSON.stringify({})
       });
       const data = await res.json();
       actionOutput = data.output || "";
@@ -215,7 +218,7 @@
         {
           method: "PUT",
           headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
-          body: JSON.stringify({ content: editContent, configFilePath: editingStack.configFilePath })
+          body: JSON.stringify({ content: editContent })
         }
       );
       if (!saveRes.ok) {
@@ -230,7 +233,7 @@
           {
             method: "POST",
             headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
-            body: JSON.stringify({ configFilePath: editingStack.configFilePath })
+            body: JSON.stringify({})
           }
         );
         const upData = await upRes.json();
