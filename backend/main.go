@@ -755,7 +755,13 @@ func readFileSSH(hostID, path string) (string, error) {
 // to avoid shell escaping issues with special characters in YAML
 func writeFileSSH(hostID, path, content string) error {
 	encoded := base64.StdEncoding.EncodeToString([]byte(content))
-	dirPath := filepath.Dir(path)
+	// Extract parent directory using strings to avoid filepath vs path package confusion
+	// (filepath is OS-specific; we need POSIX semantics for remote Linux paths)
+	lastSlash := strings.LastIndex(path, "/")
+	dirPath := path[:lastSlash]
+	if dirPath == "" {
+		dirPath = "/"
+	}
 	cmd := fmt.Sprintf("mkdir -p %s && echo %s | base64 -d > %s",
 		shellEscape(dirPath),
 		shellEscape(encoded),
@@ -765,7 +771,9 @@ func writeFileSSH(hostID, path, content string) error {
 	return err
 }
 
-// runComposeCmd runs a docker compose subcommand on a remote host via SSH
+// runComposeCmd runs a docker compose subcommand on a remote host via SSH.
+// IMPORTANT: subCmd must always be a hardcoded literal (e.g., "up -d", "down", "pull").
+// Never pass user-supplied input as subCmd to avoid shell injection on remote hosts.
 func runComposeCmd(hostID, configFilePath, stackName, subCmd string) (string, error) {
 	cmd := fmt.Sprintf("docker compose -f %s -p %s %s 2>&1",
 		shellEscape(configFilePath),
