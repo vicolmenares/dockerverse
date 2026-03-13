@@ -5387,9 +5387,17 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 				}
 			}
 
+			ctrID := ctr.ID
+			if len(ctrID) > 12 {
+				ctrID = ctrID[:12]
+			}
+			ctrName := ""
+			if len(ctr.Names) > 0 {
+				ctrName = strings.TrimPrefix(ctr.Names[0], "/")
+			}
 			svc := ServiceInfo{
-				ID:      ctr.ID[:12],
-				Name:    strings.TrimPrefix(ctr.Names[0], "/"),
+				ID:      ctrID,
+				Name:    ctrName,
 				State:   ctr.State,
 				Service: ctr.Labels["com.docker.compose.service"],
 			}
