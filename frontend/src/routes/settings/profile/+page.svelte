@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import {
     User,
     Check,
@@ -125,6 +126,159 @@
       profileForm.loading = false;
     }
   }
+
+  // Change password state
+  let pwForm = $state({
+    current: '',
+    next: '',
+    confirm: '',
+    loading: false,
+    success: false,
+    error: null as string | null,
+  });
+
+  async function changePassword() {
+    pwForm.error = null;
+    pwForm.success = false;
+
+    if (pwForm.next !== pwForm.confirm) {
+      pwForm.error = $language === 'es' ? 'Las contraseñas no coinciden' : 'Passwords do not match';
+      return;
+    }
+    if (pwForm.next.length < 8) {
+      pwForm.error = $language === 'es' ? 'Mínimo 8 caracteres' : 'Minimum 8 characters';
+      return;
+    }
+
+    pwForm.loading = true;
+    try {
+      const token = localStorage.getItem('auth_access_token');
+      const res = await fetch(`${API_BASE}/api/auth/password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ currentPassword: pwForm.current, newPassword: pwForm.next }),
+      });
+      if (res.ok) {
+        pwForm.success = true;
+        pwForm.current = '';
+        pwForm.next = '';
+        pwForm.confirm = '';
+        setTimeout(() => (pwForm.success = false), 3000);
+      } else {
+        const err = await res.json();
+        pwForm.error = err.error || ($language === 'es' ? 'Error al cambiar contraseña' : 'Failed to change password');
+      }
+    } catch {
+      pwForm.error = $language === 'es' ? 'Error de conexión' : 'Connection error';
+    } finally {
+      pwForm.loading = false;
+    }
+  }
+
+  // 2FA state
+  let totpStatus = $state({ enabled: false });
+  let totpSetup = $state({
+    active: false,
+    secret: '',
+    qrUrl: '',
+    code: '',
+    loading: false,
+    error: null as string | null,
+    recoveryCodes: [] as string[],
+    showCodes: false,
+  });
+  let totpDisable = $state({
+    active: false,
+    password: '',
+    loading: false,
+    error: null as string | null,
+  });
+
+  async function loadTotpStatus() {
+    const token = localStorage.getItem('auth_access_token');
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/totp/status`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        totpStatus.enabled = data.enabled ?? false;
+      }
+    } catch { /* ignore */ }
+  }
+
+  async function startTotpSetup() {
+    totpSetup.loading = true;
+    totpSetup.error = null;
+    const token = localStorage.getItem('auth_access_token');
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/totp/setup`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        totpSetup.secret = data.secret;
+        totpSetup.qrUrl = data.url;
+        totpSetup.active = true;
+      }
+    } catch {
+      totpSetup.error = 'Failed to start 2FA setup';
+    } finally {
+      totpSetup.loading = false;
+    }
+  }
+
+  async function confirmTotpEnable() {
+    totpSetup.loading = true;
+    totpSetup.error = null;
+    const token = localStorage.getItem('auth_access_token');
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/totp/enable`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ code: totpSetup.code }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        totpStatus.enabled = true;
+        totpSetup.active = false;
+        totpSetup.code = '';
+        totpSetup.recoveryCodes = data.recoveryCodes ?? [];
+        totpSetup.showCodes = true;
+      } else {
+        const err = await res.json();
+        totpSetup.error = err.error || 'Invalid code';
+      }
+    } finally {
+      totpSetup.loading = false;
+    }
+  }
+
+  async function confirmTotpDisable() {
+    totpDisable.loading = true;
+    totpDisable.error = null;
+    const token = localStorage.getItem('auth_access_token');
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/totp/disable`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ password: totpDisable.password }),
+      });
+      if (res.ok) {
+        totpStatus.enabled = false;
+        totpDisable.active = false;
+        totpDisable.password = '';
+      } else {
+        const err = await res.json();
+        totpDisable.error = err.error || 'Failed to disable 2FA';
+      }
+    } finally {
+      totpDisable.loading = false;
+    }
+  }
+
+  onMount(() => { loadTotpStatus(); });
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -258,4 +412,189 @@
     {/if}
     {st.save}
   </button>
+
+  <!-- Change Password -->
+  <div class="border-t border-border pt-4">
+    <h4 class="text-sm font-semibold text-foreground mb-3">
+      {$language === 'es' ? 'Cambiar contraseña' : 'Change Password'}
+    </h4>
+
+    {#if pwForm.success}
+      <div class="flex items-center gap-2 p-3 bg-running/10 border border-running/30 rounded-lg text-running text-sm mb-3">
+        <Check class="w-4 h-4" />
+        <span>{$language === 'es' ? 'Contraseña actualizada' : 'Password updated'}</span>
+      </div>
+    {/if}
+    {#if pwForm.error}
+      <div class="p-3 bg-stopped/10 border border-stopped/30 rounded-lg text-stopped text-sm mb-3">{pwForm.error}</div>
+    {/if}
+
+    <div class="space-y-3">
+      <!-- svelte-ignore a11y_label_has_associated_control -->
+      <div>
+        <label class="block text-sm font-medium text-foreground mb-1">
+          {$language === 'es' ? 'Contraseña actual' : 'Current Password'}
+        </label>
+        <input
+          type="password"
+          bind:value={pwForm.current}
+          class="w-full px-3 py-2 bg-background border border-border rounded-lg text-foreground"
+        />
+      </div>
+      <!-- svelte-ignore a11y_label_has_associated_control -->
+      <div>
+        <label class="block text-sm font-medium text-foreground mb-1">
+          {$language === 'es' ? 'Nueva contraseña' : 'New Password'}
+        </label>
+        <input
+          type="password"
+          bind:value={pwForm.next}
+          class="w-full px-3 py-2 bg-background border border-border rounded-lg text-foreground"
+        />
+      </div>
+      <!-- svelte-ignore a11y_label_has_associated_control -->
+      <div>
+        <label class="block text-sm font-medium text-foreground mb-1">
+          {$language === 'es' ? 'Confirmar contraseña' : 'Confirm Password'}
+        </label>
+        <input
+          type="password"
+          bind:value={pwForm.confirm}
+          class="w-full px-3 py-2 bg-background border border-border rounded-lg text-foreground"
+        />
+      </div>
+      <button
+        onclick={changePassword}
+        disabled={pwForm.loading || !pwForm.current || !pwForm.next || !pwForm.confirm}
+        class="w-full py-2 bg-background-secondary border border-border text-foreground rounded-lg hover:bg-background-tertiary transition-colors disabled:opacity-50 flex items-center justify-center gap-2 text-sm"
+      >
+        {#if pwForm.loading}<RefreshCw class="w-4 h-4 animate-spin" />{/if}
+        {$language === 'es' ? 'Cambiar contraseña' : 'Change Password'}
+      </button>
+    </div>
+  </div>
+
+  <!-- 2FA Management -->
+  <div class="border-t border-border pt-4">
+    <div class="flex items-center justify-between mb-3">
+      <div>
+        <h4 class="text-sm font-semibold text-foreground">
+          {$language === 'es' ? 'Autenticación de dos factores' : 'Two-Factor Authentication'}
+        </h4>
+        <p class="text-xs text-foreground-muted mt-0.5">
+          {$language === 'es' ? 'Protege tu cuenta con TOTP (Google Authenticator, Authy)' : 'Protect your account with TOTP (Google Authenticator, Authy)'}
+        </p>
+      </div>
+      <span class="px-2 py-0.5 rounded text-xs font-medium {totpStatus.enabled ? 'bg-running/10 text-running' : 'bg-background-tertiary text-foreground-muted'}">
+        {totpStatus.enabled ? ($language === 'es' ? 'Activo' : 'Enabled') : ($language === 'es' ? 'Inactivo' : 'Disabled')}
+      </span>
+    </div>
+
+    {#if totpSetup.showCodes}
+      <div class="p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg mb-3">
+        <p class="text-xs font-semibold text-amber-400 mb-2">
+          {$language === 'es' ? 'Guarda estos códigos de recuperación' : 'Save these recovery codes'}
+        </p>
+        <div class="grid grid-cols-2 gap-1">
+          {#each totpSetup.recoveryCodes as code}
+            <code class="text-xs font-mono text-foreground bg-background px-2 py-1 rounded">{code}</code>
+          {/each}
+        </div>
+        <button
+          onclick={() => (totpSetup.showCodes = false)}
+          class="mt-2 text-xs text-foreground-muted hover:text-foreground"
+        >
+          {$language === 'es' ? 'He guardado mis códigos ✓' : "I've saved my codes ✓"}
+        </button>
+      </div>
+    {/if}
+
+    {#if !totpStatus.enabled && !totpSetup.active}
+      <button
+        onclick={startTotpSetup}
+        disabled={totpSetup.loading}
+        class="flex items-center gap-2 text-sm text-primary hover:text-primary/80 disabled:opacity-50"
+      >
+        {#if totpSetup.loading}<RefreshCw class="w-4 h-4 animate-spin" />{/if}
+        {$language === 'es' ? 'Activar 2FA' : 'Enable 2FA'}
+      </button>
+    {/if}
+
+    {#if totpSetup.active}
+      <div class="space-y-3">
+        <p class="text-xs text-foreground-muted">
+          {$language === 'es' ? 'Escanea este código QR con tu app de autenticación:' : 'Scan this QR code with your authenticator app:'}
+        </p>
+        <img
+          src={`https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(totpSetup.qrUrl)}`}
+          alt="QR Code"
+          class="w-40 h-40 rounded-lg border border-border"
+        />
+        <p class="text-xs text-foreground-muted">
+          {$language === 'es' ? 'O ingresa el secreto manualmente:' : 'Or enter the secret manually:'}
+          <code class="font-mono text-foreground bg-background-tertiary px-1.5 py-0.5 rounded ml-1">{totpSetup.secret}</code>
+        </p>
+        {#if totpSetup.error}
+          <div class="p-2 bg-stopped/10 border border-stopped/30 rounded text-stopped text-xs">{totpSetup.error}</div>
+        {/if}
+        <div class="flex gap-2">
+          <input
+            type="text"
+            placeholder={$language === 'es' ? 'Código de 6 dígitos' : '6-digit code'}
+            bind:value={totpSetup.code}
+            maxlength="6"
+            class="flex-1 px-3 py-2 bg-background border border-border rounded-lg text-foreground text-sm font-mono tracking-widest"
+          />
+          <button
+            onclick={confirmTotpEnable}
+            disabled={totpSetup.loading || totpSetup.code.length !== 6}
+            class="px-4 py-2 bg-primary text-white rounded-lg text-sm hover:bg-primary/90 disabled:opacity-50"
+          >
+            {$language === 'es' ? 'Verificar' : 'Verify'}
+          </button>
+        </div>
+        <button onclick={() => (totpSetup.active = false)} class="text-xs text-foreground-muted hover:text-foreground">
+          {$language === 'es' ? 'Cancelar' : 'Cancel'}
+        </button>
+      </div>
+    {/if}
+
+    {#if totpStatus.enabled && !totpDisable.active && !totpSetup.showCodes}
+      <button
+        onclick={() => (totpDisable.active = true)}
+        class="text-sm text-stopped hover:text-stopped/80"
+      >
+        {$language === 'es' ? 'Desactivar 2FA' : 'Disable 2FA'}
+      </button>
+    {/if}
+
+    {#if totpDisable.active}
+      <div class="space-y-3">
+        <p class="text-xs text-foreground-muted">
+          {$language === 'es' ? 'Ingresa tu contraseña para desactivar 2FA:' : 'Enter your password to disable 2FA:'}
+        </p>
+        {#if totpDisable.error}
+          <div class="p-2 bg-stopped/10 border border-stopped/30 rounded text-stopped text-xs">{totpDisable.error}</div>
+        {/if}
+        <div class="flex gap-2">
+          <input
+            type="password"
+            placeholder={$language === 'es' ? 'Tu contraseña actual' : 'Your current password'}
+            bind:value={totpDisable.password}
+            class="flex-1 px-3 py-2 bg-background border border-border rounded-lg text-foreground text-sm"
+          />
+          <button
+            onclick={confirmTotpDisable}
+            disabled={totpDisable.loading || !totpDisable.password}
+            class="px-4 py-2 bg-stopped text-white rounded-lg text-sm hover:bg-stopped/90 disabled:opacity-50"
+          >
+            {$language === 'es' ? 'Desactivar' : 'Disable'}
+          </button>
+        </div>
+        <button onclick={() => (totpDisable.active = false)} class="text-xs text-foreground-muted hover:text-foreground">
+          {$language === 'es' ? 'Cancelar' : 'Cancel'}
+        </button>
+      </div>
+    {/if}
+  </div>
 </div>
