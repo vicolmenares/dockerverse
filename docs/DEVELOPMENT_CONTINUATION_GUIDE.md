@@ -1142,12 +1142,18 @@ docker exec dockerverse sh -c 'echo "[NUEVO_JSON]" > /data/users.json'
 - [x] Settings sidebar: link directo; tabs horizontales con íconos dentro de settings layout
 - [x] Bug fix: LdapConfig JSON tags alineados (`serverURL`, `bindDN`, `baseDN`, `groupBaseDN`, `startTLS`)
 
-### v2.7.0 (Planificado)
+### v2.7.0 ✅ COMPLETADO (2026-03-13)
 
-- [ ] Audit log (quién hizo qué y cuándo — persistido en JSON)
-- [ ] Container Activity chart (bar chart estilo Jobs Activity en dashboard)
-- [ ] Docker Compose management (ver/editar compose files via UI)
-- [ ] Profile page completa (avatar, display name, change password, 2FA desde perfil)
+- [x] Audit log (quién hizo qué y cuándo — persistido en JSON)
+- [x] Container Activity chart (bar chart estilo Jobs Activity en dashboard)
+- [x] Docker Compose management — Stacks page (ver/editar/desplegar compose files)
+- [x] Profile page completa (change password, 2FA desde perfil)
+
+### v2.8.0 (Planificado)
+
+- [ ] QR code offline para 2FA (reemplazar api.qrserver.com con qrcode npm — más seguro)
+- [ ] Container Activity Chart: filtro por host
+- [ ] Container creation wizard
 
 ### v3.0.0 (Planificado)
 
