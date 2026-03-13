@@ -638,9 +638,10 @@
               </span>
             </div>
             <ResourceChart host={expandedHost} />
-            <div class="mt-4"><ContainerActivityChart /></div>
           </div>
         {/if}
+
+        <div class="mt-4"><ContainerActivityChart /></div>
       {/if}
     </section>
 

@@ -14,6 +14,7 @@
   type HourBucket = {
     label: string;
     hour: number;
+    _start: number;
     start: number;
     stop: number;
     restart: number;
@@ -40,28 +41,33 @@
   let buckets = $derived.by((): HourBucket[] => {
     const now = new Date();
     const result: HourBucket[] = [];
+    // Build 24 buckets, each representing a calendar hour
     for (let i = 23; i >= 0; i--) {
       const d = new Date(now);
       d.setHours(d.getHours() - i, 0, 0, 0);
       result.push({
         label: `${String(d.getHours()).padStart(2, '0')}:00`,
         hour: d.getHours(),
+        // store the start of this hour for comparison
+        _start: d.getTime(),
         start: 0, stop: 0, restart: 0, update: 0, total: 0,
       });
     }
     for (const e of events) {
       const ts = new Date(e.timestamp);
-      const hoursAgo = Math.floor((now.getTime() - ts.getTime()) / 3600000);
-      if (hoursAgo < 24) {
-        const idx = 23 - hoursAgo;
-        if (idx >= 0 && idx < result.length) {
-          const b = result[idx];
-          if (e.action === 'start') b.start++;
-          else if (e.action === 'stop') b.stop++;
-          else if (e.action === 'restart') b.restart++;
-          else if (e.action === 'update') b.update++;
-          b.total++;
-        }
+      // Floor event to its calendar hour
+      const tsHour = new Date(ts);
+      tsHour.setMinutes(0, 0, 0);
+      const tsHourMs = tsHour.getTime();
+      // Find the matching bucket by comparing floored timestamps
+      const idx = result.findIndex(b => b._start === tsHourMs);
+      if (idx !== -1) {
+        const b = result[idx];
+        if (e.action === 'start') b.start++;
+        else if (e.action === 'stop') b.stop++;
+        else if (e.action === 'restart') b.restart++;
+        else if (e.action === 'update') b.update++;
+        b.total++;
       }
     }
     return result;
@@ -86,7 +92,7 @@
     let stackY = HEIGHT - PADDING.bottom;
     for (const [key, val] of actions) {
       if (val === 0) continue;
-      const h = Math.max((val / maxTotal) * chartH, 1);
+      const h = (val / maxTotal) * chartH;
       stackY -= h;
       bars.push({ x, y: stackY, h, color: ACTION_COLORS[key] });
     }
@@ -139,14 +145,15 @@
       <span class="text-sm font-semibold text-foreground">{t.title}</span>
       <span class="text-xs text-foreground-muted">{t.last24h}</span>
     </div>
-    {#if loading}
-      <RefreshCw class="w-3.5 h-3.5 animate-spin text-foreground-muted" />
-    {/if}
   </div>
 
   {#if error}
     <div class="text-xs text-stopped py-4 text-center">{error}</div>
-  {:else if !loading && events.length === 0}
+  {:else if loading}
+    <div class="flex items-center justify-center py-8">
+      <RefreshCw class="w-4 h-4 animate-spin text-foreground-muted" />
+    </div>
+  {:else if events.length === 0}
     <div class="text-xs text-foreground-muted py-6 text-center">{t.noActivity}</div>
   {:else}
     <svg width="100%" viewBox="0 0 {WIDTH} {HEIGHT}" class="overflow-visible">
