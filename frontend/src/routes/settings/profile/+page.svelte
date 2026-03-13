@@ -176,7 +176,7 @@
   }
 
   // 2FA state
-  let totpStatus = $state({ enabled: false });
+  let totpStatus = $state({ enabled: false, loading: true });
   let totpSetup = $state({
     active: false,
     secret: '',
@@ -204,7 +204,9 @@
         const data = await res.json();
         totpStatus.enabled = data.enabled ?? false;
       }
-    } catch { /* ignore */ }
+    } catch { /* ignore */ } finally {
+      totpStatus.loading = false;
+    }
   }
 
   async function startTotpSetup() {
@@ -221,6 +223,9 @@
         totpSetup.secret = data.secret;
         totpSetup.qrUrl = data.url;
         totpSetup.active = true;
+      } else {
+        const err = await res.json().catch(() => ({}));
+        totpSetup.error = err.error || 'Failed to start 2FA setup';
       }
     } catch {
       totpSetup.error = 'Failed to start 2FA setup';
@@ -509,7 +514,7 @@
       </div>
     {/if}
 
-    {#if !totpStatus.enabled && !totpSetup.active}
+    {#if !totpStatus.loading && !totpStatus.enabled && !totpSetup.active}
       <button
         onclick={startTotpSetup}
         disabled={totpSetup.loading}
@@ -559,7 +564,7 @@
       </div>
     {/if}
 
-    {#if totpStatus.enabled && !totpDisable.active && !totpSetup.showCodes}
+    {#if !totpStatus.loading && totpStatus.enabled && !totpDisable.active && !totpSetup.showCodes}
       <button
         onclick={() => (totpDisable.active = true)}
         class="text-sm text-stopped hover:text-stopped/80"
