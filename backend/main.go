@@ -5519,7 +5519,10 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 		configFilePath := stackDir + "/docker-compose.yml"
 
 		// Check if directory already exists
-		checkOut, _ := runSSHCommand(hostID, "test -d "+shellEscape(stackDir)+" && echo exists || echo notfound")
+		checkOut, err := runSSHCommand(hostID, "test -d "+shellEscape(stackDir)+" && echo exists || echo notfound")
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "Failed to check host: " + err.Error()})
+		}
 		if strings.TrimSpace(checkOut) == "exists" {
 			return c.Status(409).JSON(fiber.Map{"error": "Stack '" + body.Name + "' already exists"})
 		}
@@ -5542,6 +5545,9 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 	protected.Post("/stacks/:name/up", func(c *fiber.Ctx) error {
 		hostID := c.Query("hostId")
 		stackName := c.Params("name")
+		if hostID == "" {
+			return c.Status(400).JSON(fiber.Map{"error": "hostId required"})
+		}
 
 		var body struct {
 			ConfigFilePath string `json:"configFilePath"`
@@ -5563,6 +5569,9 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 	protected.Post("/stacks/:name/down", func(c *fiber.Ctx) error {
 		hostID := c.Query("hostId")
 		stackName := c.Params("name")
+		if hostID == "" {
+			return c.Status(400).JSON(fiber.Map{"error": "hostId required"})
+		}
 
 		var body struct {
 			ConfigFilePath string `json:"configFilePath"`
@@ -5584,6 +5593,9 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 	protected.Post("/stacks/:name/pull", func(c *fiber.Ctx) error {
 		hostID := c.Query("hostId")
 		stackName := c.Params("name")
+		if hostID == "" {
+			return c.Status(400).JSON(fiber.Map{"error": "hostId required"})
+		}
 
 		var body struct {
 			ConfigFilePath string `json:"configFilePath"`
