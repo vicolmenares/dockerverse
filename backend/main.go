@@ -5419,6 +5419,211 @@ func setupRoutes(app *fiber.App, dm *DockerManager, store *UserStore, notifySvc 
 		return c.JSON(result)
 	})
 
+	// GET /api/stacks/:name/file?hostId=X
+	// Reads the compose file for a stack via SSH
+	protected.Get("/stacks/:name/file", func(c *fiber.Ctx) error {
+		hostID := c.Query("hostId")
+		stackName := c.Params("name")
+		if hostID == "" || stackName == "" {
+			return c.Status(400).JSON(fiber.Map{"error": "hostId and name required"})
+		}
+
+		cli, err := dm.GetClient(hostID)
+		if err != nil {
+			return c.Status(404).JSON(fiber.Map{"error": "Host not found"})
+		}
+
+		ctx := context.Background()
+		containers, err := cli.ContainerList(ctx, container.ListOptions{All: true})
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+
+		var configFilePath string
+		for _, ctr := range containers {
+			if ctr.Labels["com.docker.compose.project"] == stackName {
+				raw := ctr.Labels["com.docker.compose.project.config_files"]
+				configFilePath = translateStackPath(raw)
+				break
+			}
+		}
+
+		if configFilePath == "" {
+			return c.Status(404).JSON(fiber.Map{"error": "Compose file path not found for stack"})
+		}
+
+		fileContent, err := readFileSSH(hostID, configFilePath)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "Failed to read file: " + err.Error()})
+		}
+
+		return c.JSON(fiber.Map{"content": fileContent, "path": configFilePath})
+	})
+
+	// PUT /api/stacks/:name/file?hostId=X
+	// Writes the compose file for a stack via SSH
+	// Body: { "content": "...", "configFilePath": "..." }
+	protected.Put("/stacks/:name/file", func(c *fiber.Ctx) error {
+		hostID := c.Query("hostId")
+		stackName := c.Params("name")
+		if hostID == "" || stackName == "" {
+			return c.Status(400).JSON(fiber.Map{"error": "hostId and name required"})
+		}
+
+		var body struct {
+			Content        string `json:"content"`
+			ConfigFilePath string `json:"configFilePath"`
+		}
+		if err := c.BodyParser(&body); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "Invalid body"})
+		}
+		if body.Content == "" || body.ConfigFilePath == "" {
+			return c.Status(400).JSON(fiber.Map{"error": "content and configFilePath required"})
+		}
+
+		if err := writeFileSSH(hostID, body.ConfigFilePath, body.Content); err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "Failed to write file: " + err.Error()})
+		}
+
+		return c.JSON(fiber.Map{"ok": true})
+	})
+
+	// POST /api/stacks/create?hostId=X
+	// Creates a new DockerVerse-managed stack: writes file via SSH and runs up -d
+	// Body: { "name": "mystack", "content": "services:\n  ..." }
+	protected.Post("/stacks/create", func(c *fiber.Ctx) error {
+		hostID := c.Query("hostId")
+		if hostID == "" {
+			return c.Status(400).JSON(fiber.Map{"error": "hostId required"})
+		}
+
+		var body struct {
+			Name    string `json:"name"`
+			Content string `json:"content"`
+		}
+		if err := c.BodyParser(&body); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "Invalid body"})
+		}
+		if body.Name == "" || body.Content == "" {
+			return c.Status(400).JSON(fiber.Map{"error": "name and content required"})
+		}
+
+		// Validate name: alphanumeric + hyphens + underscores only
+		for _, ch := range body.Name {
+			if !((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '-' || ch == '_') {
+				return c.Status(400).JSON(fiber.Map{"error": "Stack name must be alphanumeric (hyphens and underscores allowed)"})
+			}
+		}
+
+		stackDir := "/home/pi/dockerverse-stacks/" + body.Name
+		configFilePath := stackDir + "/docker-compose.yml"
+
+		// Check if directory already exists
+		checkOut, _ := runSSHCommand(hostID, "test -d "+shellEscape(stackDir)+" && echo exists || echo notfound")
+		if strings.TrimSpace(checkOut) == "exists" {
+			return c.Status(409).JSON(fiber.Map{"error": "Stack '" + body.Name + "' already exists"})
+		}
+
+		if err := writeFileSSH(hostID, configFilePath, body.Content); err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "Failed to write compose file: " + err.Error()})
+		}
+
+		output, err := runComposeCmd(hostID, configFilePath, body.Name, "up -d")
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error(), "output": output})
+		}
+
+		return c.JSON(fiber.Map{"ok": true, "output": output})
+	})
+
+	// POST /api/stacks/:name/up?hostId=X
+	// Runs docker compose up -d for an existing stack
+	// Body: { "configFilePath": "..." }
+	protected.Post("/stacks/:name/up", func(c *fiber.Ctx) error {
+		hostID := c.Query("hostId")
+		stackName := c.Params("name")
+
+		var body struct {
+			ConfigFilePath string `json:"configFilePath"`
+		}
+		if err := c.BodyParser(&body); err != nil || body.ConfigFilePath == "" {
+			return c.Status(400).JSON(fiber.Map{"error": "configFilePath required"})
+		}
+
+		output, err := runComposeCmd(hostID, body.ConfigFilePath, stackName, "up -d")
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error(), "output": output})
+		}
+		return c.JSON(fiber.Map{"ok": true, "output": output})
+	})
+
+	// POST /api/stacks/:name/down?hostId=X
+	// Runs docker compose down for an existing stack
+	// Body: { "configFilePath": "..." }
+	protected.Post("/stacks/:name/down", func(c *fiber.Ctx) error {
+		hostID := c.Query("hostId")
+		stackName := c.Params("name")
+
+		var body struct {
+			ConfigFilePath string `json:"configFilePath"`
+		}
+		if err := c.BodyParser(&body); err != nil || body.ConfigFilePath == "" {
+			return c.Status(400).JSON(fiber.Map{"error": "configFilePath required"})
+		}
+
+		output, err := runComposeCmd(hostID, body.ConfigFilePath, stackName, "down")
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error(), "output": output})
+		}
+		return c.JSON(fiber.Map{"ok": true, "output": output})
+	})
+
+	// POST /api/stacks/:name/pull?hostId=X
+	// Runs docker compose pull then up -d for an existing stack
+	// Body: { "configFilePath": "..." }
+	protected.Post("/stacks/:name/pull", func(c *fiber.Ctx) error {
+		hostID := c.Query("hostId")
+		stackName := c.Params("name")
+
+		var body struct {
+			ConfigFilePath string `json:"configFilePath"`
+		}
+		if err := c.BodyParser(&body); err != nil || body.ConfigFilePath == "" {
+			return c.Status(400).JSON(fiber.Map{"error": "configFilePath required"})
+		}
+
+		pullOut, _ := runComposeCmd(hostID, body.ConfigFilePath, stackName, "pull")
+		upOut, err := runComposeCmd(hostID, body.ConfigFilePath, stackName, "up -d")
+		output := pullOut + "\n" + upOut
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error(), "output": output})
+		}
+		return c.JSON(fiber.Map{"ok": true, "output": output})
+	})
+
+	// DELETE /api/stacks/:name?hostId=X
+	// Stops and removes a DockerVerse-managed stack (down + rm directory)
+	// Only works for stacks in /home/pi/dockerverse-stacks/
+	protected.Delete("/stacks/:name", func(c *fiber.Ctx) error {
+		hostID := c.Query("hostId")
+		stackName := c.Params("name")
+		if hostID == "" || stackName == "" {
+			return c.Status(400).JSON(fiber.Map{"error": "hostId and name required"})
+		}
+
+		stackDir := "/home/pi/dockerverse-stacks/" + stackName
+		configFilePath := stackDir + "/docker-compose.yml"
+
+		downOut, _ := runComposeCmd(hostID, configFilePath, stackName, "down")
+		rmOut, err := runSSHCommand(hostID, "rm -rf "+shellEscape(stackDir))
+		output := downOut + "\n" + rmOut
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "Failed to remove stack directory: " + err.Error(), "output": output})
+		}
+
+		return c.JSON(fiber.Map{"ok": true, "output": output})
+	})
+
 	// Stats
 	protected.Get("/stats", func(c *fiber.Ctx) error {
 		ctx := context.Background()
