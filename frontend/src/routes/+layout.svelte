@@ -22,6 +22,7 @@
     SquareTerminal,
     ChevronsLeft,
     ChevronsRight,
+    Layers,
   } from "lucide-svelte";
   import CommandPalette from "$lib/components/CommandPalette.svelte";
   import Login from "$lib/components/Login.svelte";
@@ -69,6 +70,7 @@
     const pathname = $page.url.pathname;
     if (pathname.startsWith('/logs')) return 'logs';
     if (pathname.startsWith('/shell')) return 'shell';
+    if (pathname.startsWith('/stacks')) return 'stacks';
     if (pathname.startsWith('/security') && !pathname.startsWith('/settings')) return 'security-scans';
     if (pathname.startsWith('/settings')) return 'settings';
     return 'dashboard';
@@ -94,6 +96,7 @@
     { id: "dashboard", icon: Home, label: "Dashboard", href: "/" },
     { id: "logs", icon: ScrollText, label: "Logs", href: "/logs" },
     { id: "shell", icon: SquareTerminal, label: "Shell", href: "/shell" },
+    { id: "stacks", icon: Layers, label: "Stacks", href: "/stacks" },
     { id: "security-scans", icon: Shield, label: $language === "es" ? "Seguridad" : "Security", href: "/security" },
     { id: "settings", icon: SettingsIcon, label: $language === "es" ? "Configuración" : "Settings", href: "/settings" },
   ]);
