@@ -88,7 +88,7 @@
   <title>Security — DockerVerse</title>
 </svelte:head>
 
-<div class="space-y-6">
+<div class="space-y-6 px-4 sm:px-6 lg:px-8 py-6">
   <!-- Page header -->
   <div class="flex items-center gap-3">
     <div class="p-2 bg-accent-red/15 rounded-lg">

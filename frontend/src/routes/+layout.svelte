@@ -642,7 +642,7 @@
         </div>
       </div>
     {:else if $isAuthenticated}
-      <main class="flex-1 max-w-[1800px] mx-auto px-4 sm:px-6 lg:px-8 py-6">
+      <main class="flex-1 overflow-auto">
         {@render children()}
       </main>
     {:else}

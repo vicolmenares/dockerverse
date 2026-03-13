@@ -366,7 +366,7 @@
   <title>DockerVerse - Dashboard</title>
 </svelte:head>
 
-<div class="min-h-screen bg-background">
+<div class="min-h-screen bg-background px-4 sm:px-6 lg:px-8 py-6">
   <!-- Connection Error Banner -->
   {#if connectionError}
     <div
