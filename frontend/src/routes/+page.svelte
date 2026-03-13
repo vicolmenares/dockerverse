@@ -37,6 +37,7 @@
   import HostCard from "$lib/components/HostCard.svelte";
   import ContainerCard from "$lib/components/ContainerCard.svelte";
   import ResourceChart from "$lib/components/ResourceChart.svelte";
+  import ContainerActivityChart from '$lib/components/ContainerActivityChart.svelte';
   import HostFiles from "$lib/components/HostFiles.svelte";
 
   // Lazy load heavy components (xterm is ~1MB)
@@ -637,6 +638,7 @@
               </span>
             </div>
             <ResourceChart host={expandedHost} />
+            <div class="mt-4"><ContainerActivityChart /></div>
           </div>
         {/if}
       {/if}
