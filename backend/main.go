@@ -698,6 +698,103 @@ func (b *ContainerEventBuffer) GetSince(hours int) []ContainerEvent {
 	return result
 }
 
+// StackInfo represents a Docker Compose stack discovered on a host
+type StackInfo struct {
+	Name           string        `json:"name"`
+	Type           string        `json:"type"` // "portainer", "dockerverse", "external", "unknown"
+	HasFile        bool          `json:"hasFile"`
+	ConfigFilePath string        `json:"configFilePath"` // host-resolved path
+	WorkingDir     string        `json:"workingDir"`     // host-resolved path
+	Status         string        `json:"status"`         // "running", "partial", "stopped"
+	Services       []ServiceInfo `json:"services"`
+}
+
+// ServiceInfo represents a single container within a stack
+type ServiceInfo struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	State   string `json:"state"`
+	Service string `json:"service"`
+}
+
+// detectStackType classifies a stack by its config_files label path
+func detectStackType(configFilesPath string) string {
+	if configFilesPath == "" {
+		return "unknown"
+	}
+	if strings.HasPrefix(configFilesPath, "/data/compose/") {
+		return "portainer"
+	}
+	if strings.HasPrefix(configFilesPath, "/home/pi/dockerverse-stacks/") {
+		return "dockerverse"
+	}
+	return "external"
+}
+
+// translateStackPath converts Portainer-internal paths to host filesystem paths.
+// Portainer stores files in /data/compose/... inside its container, which maps
+// to /var/lib/docker/volumes/portainer_data/_data/compose/... on the host.
+func translateStackPath(path string) string {
+	if strings.HasPrefix(path, "/data/compose/") {
+		return "/var/lib/docker/volumes/portainer_data/_data" + path
+	}
+	return path
+}
+
+// shellEscape wraps a string in single quotes for safe shell use
+func shellEscape(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// readFileSSH reads a file from a remote host via SSH
+func readFileSSH(hostID, path string) (string, error) {
+	return runSSHCommand(hostID, "cat "+shellEscape(path))
+}
+
+// writeFileSSH writes content to a file on a remote host via SSH using base64
+// to avoid shell escaping issues with special characters in YAML
+func writeFileSSH(hostID, path, content string) error {
+	encoded := base64.StdEncoding.EncodeToString([]byte(content))
+	dirPath := filepath.Dir(path)
+	cmd := fmt.Sprintf("mkdir -p %s && echo %s | base64 -d > %s",
+		shellEscape(dirPath),
+		shellEscape(encoded),
+		shellEscape(path),
+	)
+	_, err := runSSHCommand(hostID, cmd)
+	return err
+}
+
+// runComposeCmd runs a docker compose subcommand on a remote host via SSH
+func runComposeCmd(hostID, configFilePath, stackName, subCmd string) (string, error) {
+	cmd := fmt.Sprintf("docker compose -f %s -p %s %s 2>&1",
+		shellEscape(configFilePath),
+		shellEscape(stackName),
+		subCmd,
+	)
+	return runSSHCommand(hostID, cmd)
+}
+
+// computeStackStatus returns "running", "partial", or "stopped" based on services
+func computeStackStatus(services []ServiceInfo) string {
+	if len(services) == 0 {
+		return "stopped"
+	}
+	running := 0
+	for _, s := range services {
+		if s.State == "running" {
+			running++
+		}
+	}
+	if running == 0 {
+		return "stopped"
+	}
+	if running == len(services) {
+		return "running"
+	}
+	return "partial"
+}
+
 type ResetCode struct {
 	Code      string
 	UserID    string
