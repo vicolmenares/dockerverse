@@ -7,7 +7,7 @@
   } from "lucide-svelte";
   import { language } from "$lib/stores/docker";
   import { API_BASE, getAuthHeaders } from "$lib/api/docker";
-  import { currentUser } from "$lib/stores/auth";
+  import { currentUser, isLoading } from "$lib/stores/auth";
   import { goto } from "$app/navigation";
 
   // ── Types ──────────────────────────────────────────────────────────────
@@ -97,7 +97,7 @@
 
   // ── Auth guard ──────────────────────────────────────────────────────────
   $effect(() => {
-    if ($currentUser && !$currentUser.roles.includes("admin")) {
+    if (!$isLoading && $currentUser && !$currentUser.roles.includes("admin")) {
       goto("/");
     }
   });
@@ -133,7 +133,6 @@
 
   onMount(async () => {
     await fetchHosts();
-    await fetchStacks();
   });
 
   $effect(() => {
