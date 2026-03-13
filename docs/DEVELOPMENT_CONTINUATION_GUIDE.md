@@ -1,3 +1,33 @@
+### 2026-03-13 - v2.7.0: Audit Log, Container Activity Chart, Profile enhancements ✅ COMPLETADO
+
+- **Branch**: `master` (11 commits desde `e71fcf9`)
+- **Estado**: ✅ DEPLOYED Y VALIDADO en raspi (2026-03-13). Contenedor healthy en puerto 3007.
+- **Commits**:
+  - `3e32b69` — feat(backend): AuditEntry struct + AuditLog persistence (JSON, max 2000)
+  - `a78b2b4` — feat(backend): hooks login/container/user/TOTP/password → auditLog.Add()
+  - `07cb848` — fix(audit): hook container.update en endpoint dedicado
+  - `ffdeb8f` — feat(audit): GET /api/audit (admin only, paginado)
+  - `b830a77` — fix(audit): validación límites en handler /api/audit
+  - `c3f893c` — feat(audit): Audit Log settings page (tabla paginada, solo admin)
+  - `7e91867` — fix(audit): admin guard, reactive pagination, settingsText translation
+  - `5cc4e7a` — feat(activity): ContainerEventBuffer + GET /api/container-events + hooks
+  - `c77b91c` — fix(activity): RWMutex en GetSince, container names via ContainerInspect
+  - `e416141` — feat(activity): ContainerActivityChart SVG bar chart component
+  - `02c307a` — feat(activity): ContainerActivityChart en dashboard
+  - `319b72d` — fix(activity): bucket logic, bar stacking, loading state, placement
+  - `67c84db` — feat(profile): change password + 2FA management en profile page
+  - `1399921` — fix(profile): totpStatus loading state, gate buttons, error handling
+- **Funcionalidades**:
+  - **Audit Log**: `AuditEntry/AuditLog` en backend persistido en `/data/audit-log.json`. Hooks en 10+ endpoints (login success/fail, container actions, user CRUD, password change, TOTP enable/disable). `GET /api/audit` (admin, paginado limit/offset). Settings tab "Auditoría" (solo admin) con tabla colorizada por acción.
+  - **Container Activity Chart**: Buffer in-memory (500 eventos) de eventos de contenedor. `GET /api/container-events?hours=N`. Componente SVG `ContainerActivityChart.svelte` — bars por hora (últimas 24h), stacked por acción (start/stop/restart/update), auto-refresh 60s. Ubicado en dashboard fuera del expandedHost block.
+  - **Profile page**: Sección "Cambiar contraseña" (validación match + min 8 chars, POST /api/auth/password). Sección "2FA" (ver estado, activar con QR + código TOTP, ver recovery codes, desactivar con password).
+- **Archivos clave**:
+  - `backend/main.go` — AuditEntry, AuditLog, ContainerEvent, ContainerEventBuffer structs + endpoints
+  - `frontend/src/lib/components/ContainerActivityChart.svelte` — nuevo componente SVG
+  - `frontend/src/routes/settings/audit/+page.svelte` — nueva página de auditoría
+  - `frontend/src/routes/settings/profile/+page.svelte` — secciones de password + 2FA añadidas
+  - `frontend/src/routes/settings/+layout.svelte` — tab "Auditoría" añadido (admin only)
+
 ### 2026-03-08 - v2.6.0: Sistema de autenticación completo (LDAP, OIDC, API Keys) ✅ COMPLETADO
 
 - **Branch**: `feature/auth-system` → mergeado a `master` (commit `af8e9aa`)
