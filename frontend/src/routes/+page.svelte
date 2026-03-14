@@ -366,420 +366,301 @@
   <title>DockerVerse - Dashboard</title>
 </svelte:head>
 
-<div class="min-h-screen bg-background px-4 sm:px-6 lg:px-8 py-6">
+<div class="min-h-screen">
   <!-- Connection Error Banner -->
   {#if connectionError}
-    <div
-      class="bg-accent-red/10 border-b border-accent-red/30 px-4 py-3 flex items-center justify-center gap-2 text-accent-red"
-    >
-      <AlertTriangle class="w-4 h-4" />
+    <div class="border-b border-red-500/30 bg-red-500/10 px-6 py-3 flex items-center gap-2 text-red-400 text-sm">
+      <AlertTriangle class="w-4 h-4 shrink-0" />
       {connectionError}
     </div>
   {/if}
 
-  <main class="container mx-auto px-4 py-6 max-w-7xl">
-    <!-- Stats Overview -->
-    <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
-      <div class="card p-4 flex items-center gap-4">
-        <div class="p-3 bg-primary/10 rounded-xl">
-          <Server class="w-6 h-6 text-primary" />
+  <!-- Stats Bar -->
+  <div class="border-b border-zinc-800 bg-zinc-950 px-6 py-3 flex items-center overflow-x-auto">
+    <div class="flex items-center gap-3 pr-5">
+      <Server class="w-4 h-4 text-zinc-500 shrink-0" />
+      <span class="text-zinc-500 uppercase tracking-widest text-[10px] font-semibold">{t.hosts}</span>
+      <span class="font-mono text-zinc-200">{onlineHosts}<span class="text-zinc-600">/{$hosts.length}</span></span>
+    </div>
+    <div class="w-px h-5 bg-zinc-800 shrink-0"></div>
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div
+      class="flex items-center gap-3 px-5 cursor-pointer hover:bg-zinc-900 transition-colors"
+      onclick={() => toggleFilter('all')}
+    >
+      <Box class="w-4 h-4 text-zinc-500 shrink-0" />
+      <span class="text-zinc-500 uppercase tracking-widest text-[10px] font-semibold">{t.total}</span>
+      <span class="font-mono {filterState === 'all' ? 'text-accent-cyan' : 'text-zinc-200'}">{totalContainers}</span>
+    </div>
+    <div class="w-px h-5 bg-zinc-800 shrink-0"></div>
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div
+      class="flex items-center gap-3 px-5 cursor-pointer hover:bg-zinc-900 transition-colors"
+      onclick={() => toggleFilter('running')}
+    >
+      <Wifi class="w-4 h-4 text-zinc-500 shrink-0" />
+      <span class="text-zinc-500 uppercase tracking-widest text-[10px] font-semibold">{t.running}</span>
+      <span class="font-mono {filterState === 'running' ? 'text-green-400' : 'text-zinc-200'}">{runningContainers}</span>
+    </div>
+    <div class="w-px h-5 bg-zinc-800 shrink-0"></div>
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div
+      class="flex items-center gap-3 px-5 cursor-pointer hover:bg-zinc-900 transition-colors"
+      onclick={() => toggleFilter('stopped')}
+    >
+      <WifiOff class="w-4 h-4 text-zinc-500 shrink-0" />
+      <span class="text-zinc-500 uppercase tracking-widest text-[10px] font-semibold">{t.stopped}</span>
+      <span class="font-mono {filterState === 'stopped' ? 'text-red-400' : 'text-zinc-200'}">{stoppedContainers}</span>
+    </div>
+    <div class="w-px h-5 bg-zinc-800 shrink-0"></div>
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div
+      class="flex items-center gap-3 px-5 cursor-pointer hover:bg-zinc-900 transition-colors"
+      onclick={() => toggleFilter('updates')}
+    >
+      <ArrowUpCircle class="w-4 h-4 text-zinc-500 shrink-0" />
+      <span class="text-zinc-500 uppercase tracking-widest text-[10px] font-semibold">{t.pendingUpdates}</span>
+      <span class="font-mono {filterState === 'updates' ? 'text-orange-400' : ($pendingUpdatesCount > 0 ? 'text-orange-400' : 'text-zinc-200')}">{$pendingUpdatesCount}</span>
+    </div>
+  </div>
+
+  <!-- Top Resources Section -->
+  {#if !isLoading && runningContainers > 0}
+    <section>
+      <div class="sticky top-0 z-10 border-b border-zinc-800 bg-zinc-950 px-6 py-3 flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <BarChart3 class="w-4 h-4 text-zinc-500" />
+          <span class="text-xs uppercase tracking-widest text-zinc-500 font-semibold">
+            {$language === "es" ? "Top Recursos" : "Top Resources"}
+          </span>
+          {#if $selectedHost}
+            <span class="text-xs font-mono px-2 py-0.5 bg-zinc-800 text-zinc-300 border border-zinc-700">{$selectedHost}</span>
+          {/if}
         </div>
-        <div>
-          <p class="metric-label">{t.hosts}</p>
-          <p class="metric-value text-foreground">
-            {onlineHosts}<span class="text-foreground-muted"
-              >/{$hosts.length}</span
+        <div class="flex items-center gap-3">
+          <div class="flex items-center gap-0 border border-zinc-800">
+            <button
+              class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-colors {resourceMetric === 'cpu' ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-500 hover:text-zinc-300'}"
+              onclick={() => (resourceMetric = "cpu")}
             >
-          </p>
+              <Cpu class="w-3 h-3" /> CPU
+            </button>
+            <button
+              class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-colors {resourceMetric === 'memory' ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-500 hover:text-zinc-300'}"
+              onclick={() => (resourceMetric = "memory")}
+            >
+              <MemoryStick class="w-3 h-3" /> {$language === "es" ? "Memoria" : "Memory"}
+            </button>
+            <button
+              class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-colors {resourceMetric === 'network' ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-500 hover:text-zinc-300'}"
+              onclick={() => (resourceMetric = "network")}
+            >
+              <ArrowUpDown class="w-3 h-3" /> {$language === "es" ? "Red" : "Net"}
+            </button>
+            <button
+              class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-colors {resourceMetric === 'restarts' ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-500 hover:text-zinc-300'}"
+              onclick={() => (resourceMetric = "restarts")}
+            >
+              <RotateCcw class="w-3 h-3" /> {$language === "es" ? "Reinicios" : "Restarts"}
+            </button>
+          </div>
+          <div class="flex items-center gap-0 border border-zinc-800">
+            {#each topNOptions as n}
+              <button
+                class="px-2.5 py-1.5 text-xs font-mono transition-colors {topN === n ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-500 hover:text-zinc-300'}"
+                onclick={() => (topN = n)}
+              >{n}</button>
+            {/each}
+          </div>
+          <button
+            class="text-xs text-zinc-600 hover:text-zinc-400 transition-colors"
+            onclick={() => (showResourceLeaderboard = !showResourceLeaderboard)}
+          >
+            {showResourceLeaderboard ? ($language === "es" ? "Ocultar" : "Hide") : ($language === "es" ? "Mostrar" : "Show")}
+          </button>
         </div>
       </div>
 
-      <!-- svelte-ignore a11y_click_events_have_key_events -->
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div class="card card-hover p-4 flex items-center gap-4 cursor-pointer {filterState === 'all' ? 'ring-2 ring-accent-cyan' : ''}" onclick={() => toggleFilter('all')}>
-        <div class="p-3 bg-accent-cyan/10 rounded-xl">
-          <Box class="w-6 h-6 text-accent-cyan" />
-        </div>
-        <div>
-          <p class="metric-label">{t.total}</p>
-          <p class="metric-value text-accent-cyan">{totalContainers}</p>
-        </div>
-      </div>
+      {#if showResourceLeaderboard}
+        {#if topContainers.length === 0}
+          <div class="px-6 py-8 text-center text-zinc-600 text-sm border-b border-zinc-800">
+            {$language === "es" ? "No hay datos de recursos disponibles" : "No resource data available"}
+          </div>
+        {:else}
+          <div class="border-b border-zinc-800">
+            {#each topContainers as item, i}
+              {@const percent = getMetricPercent(item.stats)}
+              {@const barWidth = topMaxValue > 0 ? (percent / topMaxValue) * 100 : 0}
+              <div class="flex items-center gap-4 px-6 py-2.5 border-b border-zinc-900 hover:bg-zinc-900/50 transition-colors">
+                <span class="w-5 text-right text-xs font-mono shrink-0 {i < 3 ? 'text-zinc-300' : 'text-zinc-600'}">{i + 1}</span>
+                <div class="w-36 shrink-0 min-w-0">
+                  <p class="text-sm font-mono text-zinc-200 truncate">{item.container.name}</p>
+                  <p class="text-[10px] text-zinc-600 truncate font-mono">{item.container.hostId}</p>
+                </div>
+                <div class="flex-1 h-4 bg-zinc-900 overflow-hidden">
+                  <div
+                    class="h-full transition-all duration-500 ease-out {getMetricBarColor(percent)}"
+                    style="width: {Math.max(1, barWidth)}%"
+                  ></div>
+                </div>
+                <span class="w-16 text-right text-sm font-mono tabular-nums text-zinc-300 shrink-0">{getMetricValue(item.stats)}</span>
+              </div>
+            {/each}
+          </div>
+        {/if}
+      {/if}
+    </section>
+  {/if}
 
-      <!-- svelte-ignore a11y_click_events_have_key_events -->
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div class="card card-hover p-4 flex items-center gap-4 cursor-pointer {filterState === 'running' ? 'ring-2 ring-running' : ''}" onclick={() => toggleFilter('running')}>
-        <div class="p-3 bg-running/10 rounded-xl">
-          <Wifi class="w-6 h-6 text-running" />
-        </div>
-        <div>
-          <p class="metric-label">{t.running}</p>
-          <p class="metric-value text-running">{runningContainers}</p>
-        </div>
-      </div>
+  <!-- Hosts Section -->
+  <section>
+    <div class="sticky top-0 z-10 border-b border-zinc-800 bg-zinc-950 px-6 py-3 flex items-center gap-3">
+      <Server class="w-4 h-4 text-zinc-500" />
+      <span class="text-xs uppercase tracking-widest text-zinc-500 font-semibold">{t.hosts}</span>
+      {#if $selectedHost}
+        <span class="text-xs font-mono px-2 py-0.5 bg-zinc-800 text-zinc-300 border border-zinc-700">{t.filterByHost}: {$selectedHost}</span>
+      {/if}
+    </div>
 
-      <!-- svelte-ignore a11y_click_events_have_key_events -->
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div class="card card-hover p-4 flex items-center gap-4 cursor-pointer {filterState === 'stopped' ? 'ring-2 ring-stopped' : ''}" onclick={() => toggleFilter('stopped')}>
-        <div class="p-3 bg-stopped/10 rounded-xl">
-          <WifiOff class="w-6 h-6 text-stopped" />
+    {#if isLoading}
+      {#each [1, 2] as _}
+        <div class="border-b border-zinc-800 px-6 py-4 animate-pulse flex items-center gap-6">
+          <div class="h-3 bg-zinc-800 rounded w-32"></div>
+          <div class="h-3 bg-zinc-800 rounded w-48 flex-1"></div>
         </div>
-        <div>
-          <p class="metric-label">{t.stopped}</p>
-          <p class="metric-value text-stopped">{stoppedContainers}</p>
+      {/each}
+    {:else}
+      {#each $hosts as host}
+        <div class="group border-b border-zinc-800 hover:bg-zinc-900/40 transition-colors" style="border-left: 3px solid {host.online ? '#22c55e' : '#52525b'}">
+          <HostCard
+            {host}
+            resourcesOpen={expandedHostId === host.id}
+            onToggleResources={toggleHostResources}
+            onOpenHostTerminal={openHostTerminal}
+            onOpenHostFiles={(target) => (hostFiles = target)}
+          />
         </div>
-      </div>
+      {/each}
 
-      <!-- svelte-ignore a11y_click_events_have_key_events -->
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div class="card card-hover p-4 flex items-center gap-4 cursor-pointer {filterState === 'updates' ? 'ring-2 ring-accent-orange' : ''}" onclick={() => toggleFilter('updates')}>
-        <div class="p-3 bg-accent-orange/10 rounded-xl">
-          <ArrowUpCircle class="w-6 h-6 text-accent-orange" />
+      {#if expandedHost}
+        <div class="border-b border-zinc-800 bg-zinc-900/30 px-6 py-4">
+          <div class="flex items-center justify-between mb-3">
+            <div class="flex items-center gap-3">
+              <Server class="w-4 h-4 text-zinc-500" />
+              <span class="text-sm font-mono text-zinc-200">{expandedHost.name}</span>
+              <span class="text-xs font-mono text-zinc-600">{expandedHost.id}</span>
+            </div>
+            <span class="text-xs text-zinc-600 uppercase tracking-widest">
+              {$language === "es" ? "Recursos en vivo" : "Live resources"}
+            </span>
+          </div>
+          <ResourceChart host={expandedHost} />
         </div>
-        <div>
-          <p class="metric-label">{t.pendingUpdates}</p>
-          <p class="metric-value text-accent-orange">{$pendingUpdatesCount}</p>
-        </div>
+      {/if}
+
+      <div class="border-b border-zinc-800 px-6 py-4">
+        <ContainerActivityChart />
+      </div>
+    {/if}
+  </section>
+
+  <!-- Containers Section -->
+  <section>
+    <div class="sticky top-0 z-10 border-b border-zinc-800 bg-zinc-950 px-6 py-3 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <Box class="w-4 h-4 text-zinc-500" />
+        <span class="text-xs uppercase tracking-widest text-zinc-500 font-semibold">{t.containers}</span>
+        <span class="text-xs font-mono text-zinc-600">({displayContainers.length})</span>
+      </div>
+      <div class="flex items-center gap-0 border border-zinc-800">
+        <button
+          class="px-3 py-1.5 text-xs transition-colors {filterState === 'all' ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-500 hover:text-zinc-300'}"
+          onclick={() => toggleFilter("all")}
+        >{t.all}</button>
+        <button
+          class="px-3 py-1.5 text-xs transition-colors {filterState === 'running' ? 'bg-green-500/20 text-green-400' : 'text-zinc-500 hover:text-zinc-300'}"
+          onclick={() => toggleFilter("running")}
+        >{t.running}</button>
+        <button
+          class="px-3 py-1.5 text-xs transition-colors {filterState === 'stopped' ? 'bg-red-500/20 text-red-400' : 'text-zinc-500 hover:text-zinc-300'}"
+          onclick={() => toggleFilter("stopped")}
+        >{t.stopped}</button>
       </div>
     </div>
 
-    <!-- Top Resources Bar Chart -->
-    {#if !isLoading && runningContainers > 0}
-      <section class="mb-8">
-        <div class="flex items-center justify-between mb-4">
-          <h2
-            class="text-lg font-semibold text-foreground flex items-center gap-2"
-          >
-            <BarChart3 class="w-5 h-5 text-accent-purple" />
-            {$language === "es" ? "Top Recursos" : "Top Resources"}
-            {#if $selectedHost}
-              <span
-                class="text-xs font-normal text-primary bg-primary/10 px-2 py-0.5 rounded"
-              >
-                {$selectedHost}
-              </span>
-            {/if}
-          </h2>
-          <div class="flex items-center gap-3">
-            <div class="flex items-center gap-1 p-0.5 bg-background-secondary rounded-lg border border-border">
-              {#each topNOptions as n}
-                <button
-                  class="px-2 py-1 rounded-md text-xs font-medium transition-all {topN === n
-                    ? 'bg-accent-purple text-white shadow-sm'
-                    : 'text-foreground-muted hover:text-foreground'}"
-                  onclick={() => (topN = n)}
-                >
-                  {n}
-                </button>
-              {/each}
-            </div>
-            <button
-              class="text-sm text-foreground-muted hover:text-foreground transition-colors"
-              onclick={() => (showResourceLeaderboard = !showResourceLeaderboard)}
-            >
-            {showResourceLeaderboard
-              ? $language === "es"
-                ? "Ocultar"
-                : "Hide"
-              : $language === "es"
-                ? "Mostrar"
-                : "Show"}
-            </button>
-          </div>
+    {#if isLoading}
+      {#each [1, 2, 3, 4, 5, 6] as _}
+        <div class="border-b border-zinc-800 px-6 py-4 animate-pulse flex items-center gap-6">
+          <div class="h-3 bg-zinc-800 rounded w-40"></div>
+          <div class="h-3 bg-zinc-800 rounded flex-1"></div>
+          <div class="h-3 bg-zinc-800 rounded w-20"></div>
         </div>
-
-        {#if showResourceLeaderboard}
-          <!-- Metric tabs -->
-          <div
-            class="flex gap-1 mb-4 p-1 bg-background-secondary rounded-lg border border-border w-fit"
-          >
-            <button
-              class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all {resourceMetric ===
-              'cpu'
-                ? 'bg-primary text-white shadow-sm'
-                : 'text-foreground-muted hover:text-foreground'}"
-              onclick={() => (resourceMetric = "cpu")}
-            >
-              <Cpu class="w-3.5 h-3.5" />
-              CPU
-            </button>
-            <button
-              class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all {resourceMetric ===
-              'memory'
-                ? 'bg-accent-cyan text-white shadow-sm'
-                : 'text-foreground-muted hover:text-foreground'}"
-              onclick={() => (resourceMetric = "memory")}
-            >
-              <MemoryStick class="w-3.5 h-3.5" />
-              {$language === "es" ? "Memoria" : "Memory"}
-            </button>
-            <button
-              class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all {resourceMetric ===
-              'network'
-                ? 'bg-accent-purple text-white shadow-sm'
-                : 'text-foreground-muted hover:text-foreground'}"
-              onclick={() => (resourceMetric = "network")}
-            >
-              <ArrowUpDown class="w-3.5 h-3.5" />
-              {$language === "es" ? "Red" : "Network"}
-            </button>
-            <button
-              class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all {resourceMetric ===
-              'restarts'
-                ? 'bg-paused text-white shadow-sm'
-                : 'text-foreground-muted hover:text-foreground'}"
-              onclick={() => (resourceMetric = "restarts")}
-            >
-              <RotateCcw class="w-3.5 h-3.5" />
-              {$language === "es" ? "Reinicios" : "Restarts"}
-            </button>
-          </div>
-
-          <!-- Horizontal bar chart -->
-          <div class="card p-4">
-            {#if topContainers.length === 0}
-              <div class="py-8 text-center text-foreground-muted text-sm">
-                {$language === "es"
-                  ? "No hay datos de recursos disponibles"
-                  : "No resource data available"}
-              </div>
-            {:else}
-              <div class="space-y-1.5">
-                {#each topContainers as item, i}
-                  {@const percent = getMetricPercent(item.stats)}
-                  {@const barWidth = topMaxValue > 0 ? (percent / topMaxValue) * 100 : 0}
-                  <div class="flex items-center gap-3 py-1">
-                    <span
-                      class="w-5 text-right text-xs font-bold shrink-0 {i < 3
-                        ? 'text-primary'
-                        : 'text-foreground-muted'}">{i + 1}</span
-                    >
-                    <div class="w-28 shrink-0 min-w-0">
-                      <p class="text-sm font-medium text-foreground truncate leading-tight">
-                        {item.container.name}
-                      </p>
-                      <p class="text-[11px] text-foreground-muted truncate leading-tight">
-                        {item.container.hostId}
-                      </p>
-                    </div>
-                    <div class="flex-1 h-6 bg-background-tertiary/50 rounded overflow-hidden">
-                      <div
-                        class="h-full rounded transition-all duration-500 ease-out {getMetricBarColor(percent)}"
-                        style="width: {Math.max(1, barWidth)}%"
-                      ></div>
-                    </div>
-                    <span
-                      class="w-16 text-right text-sm font-mono tabular-nums text-foreground shrink-0"
-                      >{getMetricValue(item.stats)}</span
-                    >
-                  </div>
-                {/each}
-              </div>
-            {/if}
-          </div>
-        {/if}
-      </section>
-    {/if}
-
-    <!-- Hosts Section -->
-    <section class="mb-8">
-      <h2
-        class="text-lg font-semibold text-foreground mb-4 flex items-center gap-2"
-      >
-        <Server class="w-5 h-5 text-primary" />
-        {t.hosts}
-        {#if $selectedHost}
-          <span
-            class="text-xs font-normal text-primary bg-primary/10 px-2 py-0.5 rounded"
-          >
-            {t.filterByHost}: {$selectedHost}
-          </span>
-        {/if}
-      </h2>
-
-      {#if isLoading}
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {#each [1, 2] as _}
-            <div class="card p-5 animate-pulse">
-              <div class="h-4 bg-background-tertiary rounded w-1/3 mb-4"></div>
-              <div class="h-8 bg-background-tertiary rounded w-full"></div>
-            </div>
-          {/each}
-        </div>
-      {:else}
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {#each $hosts as host}
-            <HostCard
-              {host}
-              resourcesOpen={expandedHostId === host.id}
-              onToggleResources={toggleHostResources}
-              onOpenHostTerminal={openHostTerminal}
-              onOpenHostFiles={(target) => (hostFiles = target)}
+      {/each}
+    {:else if displayContainers.length === 0}
+      <div class="px-6 py-16 text-center">
+        <Box class="w-10 h-10 text-zinc-700 mx-auto mb-3" />
+        <p class="text-zinc-600 text-sm">{t.noContainers}</p>
+      </div>
+    {:else}
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
+        {#each pagedContainers as container (container.id)}
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div onmouseenter={preloadComponents}>
+            <ContainerCard
+              {container}
+              stats={getStats(container)}
+              onTerminal={() => openTerminal(container)}
+              onLogs={() => openLogs(container)}
             />
-          {/each}
-        </div>
-
-        {#if expandedHost}
-          <div class="mt-5 card p-5 bg-gradient-to-br from-background-secondary/70 via-background-secondary/40 to-background-tertiary/10">
-            <div class="flex items-center justify-between mb-3">
-              <div class="flex items-center gap-3">
-                <div class="p-2.5 bg-background-tertiary/60 rounded-lg">
-                  <Server class="w-4.5 h-4.5 text-primary" />
-                </div>
-                <div>
-                  <p class="text-sm font-semibold text-foreground">
-                    {expandedHost.name}
-                  </p>
-                  <p class="text-xs text-foreground-muted">{expandedHost.id}</p>
-                </div>
-              </div>
-              <span class="text-xs text-foreground-muted">
-                {$language === "es" ? "Recursos en vivo" : "Live resources"}
-              </span>
-            </div>
-            <ResourceChart host={expandedHost} />
           </div>
-        {/if}
-
-        <div class="mt-4"><ContainerActivityChart /></div>
-      {/if}
-    </section>
-
-    <!-- Containers Section -->
-    <section>
-      <div class="flex items-center justify-between mb-4">
-        <h2
-          class="text-lg font-semibold text-foreground flex items-center gap-2"
-        >
-          <Box class="w-5 h-5 text-accent-cyan" />
-          {t.containers}
-          <span class="text-sm font-normal text-foreground-muted"
-            >({displayContainers.length})</span
-          >
-        </h2>
-
-        <div class="flex items-center gap-2">
-          <!-- Filter buttons -->
-          <div class="flex rounded-lg overflow-hidden border border-border">
-            <button
-              class="px-3 py-1.5 text-sm transition-colors {filterState ===
-              'all'
-                ? 'bg-primary text-white'
-                : 'bg-background-secondary text-foreground-muted hover:text-foreground'}"
-              onclick={() => toggleFilter("all")}
-            >
-              {t.all}
-            </button>
-            <button
-              class="px-3 py-1.5 text-sm transition-colors {filterState ===
-              'running'
-                ? 'bg-running text-white'
-                : 'bg-background-secondary text-foreground-muted hover:text-foreground'}"
-              onclick={() => toggleFilter("running")}
-            >
-              {t.running}
-            </button>
-            <button
-              class="px-3 py-1.5 text-sm transition-colors {filterState ===
-              'stopped'
-                ? 'bg-stopped text-white'
-                : 'bg-background-secondary text-foreground-muted hover:text-foreground'}"
-              onclick={() => toggleFilter("stopped")}
-            >
-              {t.stopped}
-            </button>
-          </div>
-        </div>
+        {/each}
       </div>
 
-      {#if isLoading}
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {#each [1, 2, 3, 4, 5, 6] as _}
-            <div class="card p-4 animate-pulse h-[280px]">
-              <div class="h-4 bg-background-tertiary rounded w-2/3 mb-3"></div>
-              <div class="h-3 bg-background-tertiary rounded w-1/2 mb-4"></div>
-              <div class="h-12 bg-background-tertiary rounded w-full"></div>
-            </div>
-          {/each}
-        </div>
-      {:else if displayContainers.length === 0}
-        <div class="card p-12 text-center">
-          <Box class="w-12 h-12 text-foreground-muted mx-auto mb-4" />
-          <p class="text-foreground-muted">{t.noContainers}</p>
-        </div>
-      {:else}
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {#each pagedContainers as container (container.id)}
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div onmouseenter={preloadComponents}>
-              <ContainerCard
-                {container}
-                stats={getStats(container)}
-                onTerminal={() => openTerminal(container)}
-                onLogs={() => openLogs(container)}
-              />
-            </div>
-          {/each}
-        </div>
-
-        {#if displayContainers.length > pageSize}
-          <div class="mt-6 card px-4 py-3 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-            <div class="text-xs text-foreground-muted">
-              {#if displayContainers.length > 0}
-                {#if $language === "es"}
-                  Mostrando {(currentPage - 1) * pageSize + 1}-{Math.min(currentPage * pageSize, displayContainers.length)} de {displayContainers.length}
-                {:else}
-                  Showing {(currentPage - 1) * pageSize + 1}-{Math.min(currentPage * pageSize, displayContainers.length)} of {displayContainers.length}
-                {/if}
+      {#if displayContainers.length > pageSize}
+        <div class="border-t border-zinc-800 px-6 py-3 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+          <div class="text-xs text-zinc-600 font-mono">
+            {#if displayContainers.length > 0}
+              {#if $language === "es"}
+                Mostrando {(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, displayContainers.length)} de {displayContainers.length}
+              {:else}
+                Showing {(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, displayContainers.length)} of {displayContainers.length}
               {/if}
-            </div>
-            <div class="flex items-center justify-center gap-1">
-              <button
-                class="px-2.5 py-1 rounded-md text-xs font-medium border border-border {currentPage === 1
-                  ? 'text-foreground-muted'
-                  : 'hover:bg-background-tertiary'}"
-                onclick={() => goToPage(currentPage - 1)}
-                disabled={currentPage === 1}
-              >
-                {$language === "es" ? "Anterior" : "Prev"}
-              </button>
-              {#each pageNumbers as page}
-                <button
-                  class="w-8 h-8 text-xs font-semibold rounded-lg border border-border transition-colors {page === currentPage
-                    ? 'bg-primary text-white'
-                    : 'text-foreground-muted hover:text-foreground hover:bg-background-tertiary'}"
-                  onclick={() => goToPage(page)}
-                >
-                  {page}
-                </button>
-              {/each}
-              <button
-                class="px-2.5 py-1 rounded-md text-xs font-medium border border-border {currentPage === totalPages
-                  ? 'text-foreground-muted'
-                  : 'hover:bg-background-tertiary'}"
-                onclick={() => goToPage(currentPage + 1)}
-                disabled={currentPage === totalPages}
-              >
-                {$language === "es" ? "Siguiente" : "Next"}
-              </button>
-            </div>
-            <div class="flex items-center justify-end gap-1">
-              {#each pageSizeOptions as size}
-                <button
-                  class="px-2.5 py-1 rounded-md text-xs font-medium border border-border {pageSize === size
-                    ? 'bg-background-tertiary text-foreground'
-                    : 'text-foreground-muted hover:text-foreground'}"
-                  onclick={() => (pageSize = size)}
-                >
-                  {size}
-                </button>
-              {/each}
-            </div>
+            {/if}
           </div>
-        {/if}
+          <div class="flex items-center justify-center gap-0 border border-zinc-800">
+            <button
+              class="px-3 py-1.5 text-xs text-zinc-500 hover:text-zinc-300 hover:bg-zinc-900 transition-colors disabled:opacity-30"
+              onclick={() => goToPage(currentPage - 1)}
+              disabled={currentPage === 1}
+            >{$language === "es" ? "Anterior" : "Prev"}</button>
+            {#each pageNumbers as page}
+              <button
+                class="w-8 h-8 text-xs font-mono transition-colors {page === currentPage ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-900'}"
+                onclick={() => goToPage(page)}
+              >{page}</button>
+            {/each}
+            <button
+              class="px-3 py-1.5 text-xs text-zinc-500 hover:text-zinc-300 hover:bg-zinc-900 transition-colors disabled:opacity-30"
+              onclick={() => goToPage(currentPage + 1)}
+              disabled={currentPage === totalPages}
+            >{$language === "es" ? "Siguiente" : "Next"}</button>
+          </div>
+          <div class="flex items-center justify-end gap-0 border border-zinc-800">
+            {#each pageSizeOptions as size}
+              <button
+                class="px-2.5 py-1.5 text-xs font-mono transition-colors {pageSize === size ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-500 hover:text-zinc-300'}"
+                onclick={() => (pageSize = size)}
+              >{size}</button>
+            {/each}
+          </div>
+        </div>
       {/if}
-    </section>
-  </main>
+    {/if}
+  </section>
 
   <!-- Terminal Modal (Lazy Loaded) -->
   {#if terminalContainer && Terminal}
